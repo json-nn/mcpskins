@@ -1,6 +1,7 @@
 {
   "parent": "minecraft:item/generated",
   "textures": {
-    "layer0": "mcpskins:item/blueprint_base"
+    "layer0": "mcpskins:item/spray",
+    "layer1": "mcpskins:item/spray_can_base"
   }
 }

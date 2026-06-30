@@ -61,7 +61,7 @@ public class SkinUnlockItem extends Item {
                 tooltipComponents.add(Component.literal("Unknown skin: " + skinId).withStyle(ChatFormatting.RED));
             }
         } else {
-            tooltipComponents.add(Component.literal("Empty Blueprint Data").withStyle(ChatFormatting.DARK_GRAY));
+            tooltipComponents.add(Component.literal("Empty Can Data").withStyle(ChatFormatting.DARK_GRAY));
         }
 
         super.appendHoverText(stack, context, tooltipComponents, tooltipFlag);

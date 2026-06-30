@@ -47,6 +47,11 @@ public class SkinViewerScreen extends Screen {
     }
 
     @Override
+    public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        // Оставляем пустым! Это полностью отключит встроенный блюр и дефолтный фон экрана.
+    }
+
+    @Override
     protected void init() {
         int bottomY = height - 35;
         int center = width / 2;
@@ -96,9 +101,8 @@ public class SkinViewerScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        // Рендерим стандартный фон без деструктивных эффектов размытия
-        this.renderTransparentBackground(guiGraphics);
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        // 1. Рисуем дефолтное затемнение вручную (фон)
+        guiGraphics.fill(0, 0, width, height, 0x99000000);
 
         if (allWeapons.isEmpty()) return;
         SkinDataModels.WeaponSkins currentWeapon = allWeapons.get(currentWeaponIndex);
@@ -107,31 +111,49 @@ public class SkinViewerScreen extends Screen {
         SkinDataModels.SkinEntry skin = currentWeapon.skins().get(currentSkinIndex);
         boolean isUnlocked = SkinAttachment.hasSkin(Minecraft.getInstance().player, skin.id());
 
-        // --- УЛУЧШЕННЫЙ ХЕДЕР И ФУТЕР ---
-        // Мягкий рассеивающийся градиент сверху вместо плотной плашки
+        if (!isDragging) autoRotY += 1.5f * partialTick;
+        float finalRotY = rotationY + autoRotY;
+
+        // 2. Рисуем 3D-модель
+        ItemStack stack = TACZSkinHelper.createGunStack(skin.id());
+        RenderHelper.render3DItem(guiGraphics, stack, width / 2, height / 2, (int)modelScale, rotationX, finalRotY);
+
+        // ВАЖНО: Принудительно отрисовываем 3D-модель на экран ПРЯМО СЕЙЧАС.
+        // Это "запечатает" её на слое позади интерфейса, несмотря на её Z-координату.
+        guiGraphics.flush();
+
+        // 3. Поднимаем Z-индекс самого GuiGraphics, чтобы всё, что мы рисуем дальше (текст, градиенты),
+        // гарантированно было поверх 3D-модели.
+        // 3. Поднимаем Z-индекс самого GuiGraphics, чтобы всё, что мы рисуем дальше (текст, градиенты),
+        // гарантированно было поверх 3D-модели.
+        guiGraphics.pose().pushPose();
+        guiGraphics.pose().translate(0, 0, 1000f); // Надежный отступ, чтобы любая модель оставалась позади UI // Должно быть больше, чем 250f из RenderHelper
+
+
+        // 4. Рисуем кнопки (перенесли сюда, чтобы они тоже были под защитой translate(0,0,300))
+        super.render(guiGraphics, mouseX, mouseY, partialTick);
+
+        // 5. Рисуем градиенты
         guiGraphics.fillGradient(0, 0, width, 45, 0xC5101010, 0x00101010);
-        // Нижнее затемнение сделано значительно прозрачнее для чистоты экрана
         guiGraphics.fillGradient(0, height - 100, width, height, 0x00000000, 0x9A000000);
 
+
+
+        // 6. Рисуем текст
         Component skinName = Component.literal(skin.name().toUpperCase()).withStyle(style -> style.withBold(true));
         guiGraphics.drawCenteredString(font, skinName, width / 2, 15, skin.labelColor());
 
-        // Тонкая аккуратная линия-разделитель (уменьшена непрозрачность)
         guiGraphics.fill(width / 2 - 60, 28, width / 2 + 60, 29, 0x33FFFFFF);
 
         Component statusText = Component.literal(isUnlocked ? "■ UNLOCKED" : "■ LOCKED").withStyle(style -> style.withBold(true));
         int statusColor = isUnlocked ? 0x00FFAA : 0xFF4444;
         guiGraphics.drawCenteredString(font, statusText, width / 2, height - 100, statusColor);
 
-        // Индикатор зума в углу экрана
         String zoomText = "ZOOM: " + (int)((modelScale / 140f) * 100) + "%";
         guiGraphics.drawString(font, zoomText, 15, 15, 0x66FFFFFF);
 
-        if (!isDragging) autoRotY += 1.5f * partialTick;
-        float finalRotY = rotationY + autoRotY;
-
-        ItemStack stack = TACZSkinHelper.createGunStack(skin.id());
-        RenderHelper.render3DItem(guiGraphics, stack, width / 2, height / 2, (int)modelScale, rotationX, finalRotY);
+        // 7. Возвращаем матрицу интерфейса в норму
+        guiGraphics.pose().popPose();
     }
 
     @Override

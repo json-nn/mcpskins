@@ -1,15 +1,21 @@
 package org.minechestplate.mcpskins.skin.network;
 
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.ItemLore;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.minechestplate.mcpskins.MCPSkins;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public record ApplySkinPayload(String skinId) implements CustomPacketPayload {
     public static final Type<ApplySkinPayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "apply_skin"));
@@ -39,6 +45,31 @@ public record ApplySkinPayload(String skinId) implements CustomPacketPayload {
                 }
                 ItemStack mainHand = player.getMainHandItem();
                 ItemStack newWeapon = TACZSkinHelper.applySkinSafely(mainHand, skinId);
+
+                if (!newWeapon.isEmpty()) {
+                    String playerName = player.getName().getString();
+                    ItemLore currentLore = newWeapon.get(DataComponents.LORE);
+                    List<Component> newLines = new ArrayList<>();
+
+                    if (currentLore != null) {
+                        for (Component line : currentLore.lines()) {
+                            // Обязательно меняем проверку на новую строку, чтобы старые теги удалялись
+                            if (!line.getString().startsWith("▪ Владелец скина: ")) {
+                                newLines.add(line);
+                            }
+                        }
+                    }
+
+                    // Формируем красивый составной тултип:
+                    // "▪ " (темно-серый) + "Владелец скина: " (серый) + "PlayerName" (золотой)
+                    Component ownerLore = Component.literal("▪ ").withStyle(net.minecraft.ChatFormatting.DARK_GRAY)
+                            .append(Component.literal("Владелец скина: ").withStyle(net.minecraft.ChatFormatting.GRAY))
+                            .append(Component.literal(playerName).withStyle(net.minecraft.ChatFormatting.GOLD));
+
+                    newLines.add(ownerLore);
+                    newWeapon.set(DataComponents.LORE, new ItemLore(newLines));
+                }
+
                 player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, newWeapon);
             }
         });

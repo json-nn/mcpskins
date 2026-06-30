@@ -36,15 +36,34 @@ public class SkinCommand {
 
                                             context.getSource().sendSuccess(() -> Component.literal("Unlocked skin " + id + " for " + target.getName().getString()), true);
                                             return 1;
-                                        }))))).then(Commands.literal("take").then(Commands.literal("skins")
-                        .then(Commands.argument("player", EntityArgument.player())
-                                .executes(context -> {
-                                    ServerPlayer target = EntityArgument.getPlayer(context, "player");
+                                        })))))
+                .then(Commands.literal("take")
+                        .then(Commands.literal("skins")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .executes(context -> {
+                                            ServerPlayer target = EntityArgument.getPlayer(context, "player");
 
-                                    SkinAttachment.clearSkins(target);
+                                            SkinAttachment.clearSkins(target);
 
-                                    context.getSource().sendSuccess(() -> Component.literal("Cleared skins for " + target.getName().getString()), true);
-                                    return 1;
-                                })))));
+                                            context.getSource().sendSuccess(() -> Component.literal("Cleared skins for " + target.getName().getString()), true);
+                                            return 1;
+                                        })))
+                        .then(Commands.literal("skin")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("skinId", StringArgumentType.string())
+                                                .executes(context -> {
+                                                    ServerPlayer target = EntityArgument.getPlayer(context, "player");
+                                                    String id = StringArgumentType.getString(context, "skinId");
+
+                                                    boolean removed = SkinAttachment.revokeSkin(target, id);
+
+                                                    if (removed) {
+                                                        context.getSource().sendSuccess(() -> Component.literal("Removed skin " + id + " from " + target.getName().getString()), true);
+                                                        return 1;
+                                                    } else {
+                                                        context.getSource().sendFailure(Component.literal("Player " + target.getName().getString() + " does not have skin " + id));
+                                                        return 0;
+                                                    }
+                                                }))))));
     }
 }
