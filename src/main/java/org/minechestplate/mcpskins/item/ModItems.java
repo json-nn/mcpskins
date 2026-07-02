@@ -11,7 +11,7 @@ public class ModItems {
 
     // Регистрируем сам предмет
     public static final DeferredItem<Item> SKIN_UNLOCK_ITEM = ITEMS.register("skin_unlock_item",
-            () -> new SkinUnlockItem(new Item.Properties())); // /give @p mcpskins:skin_unlock_item[minecraft:custom_data={SkinToUnlock:"tacz:glock_17"}]
+            () -> new SkinUnlockItem(new Item.Properties())); // /give @p mcpskins:skin_unlock_item[minecraft:custom_data={SkinToUnlock:"create_armorer_skins:galaxy/pistol_auto_stress_galaxy"}]
 
 
 }

@@ -15,7 +15,7 @@ import org.minechestplate.mcpskins.skin.network.OpenSkinBrowserPayload;
 
 public class SkinCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
-        dispatcher.register(Commands.literal("skin")
+        dispatcher.register(Commands.literal("mcpskins")
                 .executes(context -> {
                     if (context.getSource().getEntity() instanceof ServerPlayer player) {
                         PacketDistributor.sendToPlayer(player, new OpenSkinBrowserPayload());
