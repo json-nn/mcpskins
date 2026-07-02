@@ -46,6 +46,29 @@ public class SkinAttachment {
         }
     }
 
+    public static void unlockAllSkins(Player player) {
+        Set<String> skins = player.getData(UNLOCKED_SKINS);
+        Set<String> updatedSkins = new HashSet<>(skins);
+        boolean changed = false;
+
+        for (String skinId : SkinManager.INSTANCE.getAllSkinIds()) {
+            if (!skinId.startsWith("default:") && !updatedSkins.contains(skinId)) {
+                updatedSkins.add(skinId);
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            player.setData(UNLOCKED_SKINS, updatedSkins);
+            if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
+                net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
+                        serverPlayer,
+                        new org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload(new ArrayList<>(updatedSkins))
+                );
+            }
+        }
+    }
+
     public static boolean revokeSkin(Player player, String skinId) {
         Set<String> skins = player.getData(UNLOCKED_SKINS);
         if (skins.contains(skinId)) {

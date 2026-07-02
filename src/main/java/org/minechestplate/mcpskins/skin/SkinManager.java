@@ -9,7 +9,6 @@ import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.SimpleJsonResourceReloadListener;
 import net.minecraft.util.profiling.ProfilerFiller;
 import org.minechestplate.mcpskins.MCPSkins;
-import org.minechestplate.mcpskins.skin.SkinDataModels;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -20,7 +19,6 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
     public static final SkinManager INSTANCE = new SkinManager();
     private static final Gson GSON = new GsonBuilder().create();
 
-    // Теперь ключ - это String
     private final Map<String, SkinDataModels.WeaponSkins> registry = new HashMap<>();
 
     public SkinManager() {
@@ -33,7 +31,6 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         objectIn.forEach((location, element) -> {
             try {
                 JsonObject json = element.getAsJsonObject();
-                // Читаем ID как строки!
                 String baseGun = json.get("base_gun").getAsString();
 
                 List<SkinDataModels.SkinEntry> skins = new ArrayList<>();
@@ -63,5 +60,43 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
     public void syncFromNetwork(Map<String, SkinDataModels.WeaponSkins> networkData) {
         this.registry.clear();
         this.registry.putAll(networkData);
+    }
+
+    /**
+     * Возвращает base_gun для переданного ID (скина или самой пушки).
+     * Разбирает конфликты тегов при смене скинов.
+     */
+    public String getBaseGun(String skinOrGunId) {
+        if (skinOrGunId == null) return "";
+
+        String idToMatch = skinOrGunId.startsWith("default:") ? skinOrGunId.substring(8) : skinOrGunId;
+
+        if (registry.containsKey(idToMatch)) {
+            return idToMatch;
+        }
+
+        for (SkinDataModels.WeaponSkins weapon : registry.values()) {
+            if (weapon.baseGun().equals(idToMatch)) return weapon.baseGun();
+            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
+                String skinActualId = skin.id().startsWith("default:") ? skin.id().substring(8) : skin.id();
+                if (skinActualId.equals(idToMatch)) {
+                    return weapon.baseGun();
+                }
+            }
+        }
+        return skinOrGunId;
+    }
+
+    /**
+     * Возвращает полный список ID скинов для автоподстановки в командах.
+     */
+    public List<String> getAllSkinIds() {
+        List<String> list = new ArrayList<>();
+        for (SkinDataModels.WeaponSkins weapon : registry.values()) {
+            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
+                list.add(skin.id());
+            }
+        }
+        return list;
     }
 }

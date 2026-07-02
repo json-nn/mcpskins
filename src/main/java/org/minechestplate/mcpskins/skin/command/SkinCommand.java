@@ -4,11 +4,13 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
+import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.network.OpenSkinBrowserPayload;
 
 public class SkinCommand {
@@ -25,18 +27,30 @@ public class SkinCommand {
                 }));
 
         dispatcher.register(Commands.literal("mcpskins")
-                .then(Commands.literal("give").then(Commands.literal("skin")
-                        .then(Commands.argument("player", EntityArgument.player())
-                                .then(Commands.argument("gunId", StringArgumentType.string())
+                .then(Commands.literal("give")
+                        .then(Commands.literal("skin")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("gunId", StringArgumentType.string())
+                                                .suggests((context, builder) -> SharedSuggestionProvider.suggest(SkinManager.INSTANCE.getAllSkinIds(), builder))
+                                                .executes(context -> {
+                                                    ServerPlayer target = EntityArgument.getPlayer(context, "player");
+                                                    String id = StringArgumentType.getString(context, "gunId");
+
+                                                    SkinAttachment.unlockSkin(target, id);
+
+                                                    context.getSource().sendSuccess(() -> Component.literal("Unlocked skin " + id + " for " + target.getName().getString()), true);
+                                                    return 1;
+                                                }))))
+                        .then(Commands.literal("all")
+                                .then(Commands.argument("player", EntityArgument.player())
                                         .executes(context -> {
                                             ServerPlayer target = EntityArgument.getPlayer(context, "player");
-                                            String id = StringArgumentType.getString(context, "gunId");
 
-                                            SkinAttachment.unlockSkin(target, id);
+                                            SkinAttachment.unlockAllSkins(target);
 
-                                            context.getSource().sendSuccess(() -> Component.literal("Unlocked skin " + id + " for " + target.getName().getString()), true);
+                                            context.getSource().sendSuccess(() -> Component.literal("Unlocked ALL skins for " + target.getName().getString()), true);
                                             return 1;
-                                        })))))
+                                        }))))
                 .then(Commands.literal("take")
                         .then(Commands.literal("skins")
                                 .then(Commands.argument("player", EntityArgument.player())
@@ -51,6 +65,7 @@ public class SkinCommand {
                         .then(Commands.literal("skin")
                                 .then(Commands.argument("player", EntityArgument.player())
                                         .then(Commands.argument("skinId", StringArgumentType.string())
+                                                .suggests((context, builder) -> SharedSuggestionProvider.suggest(SkinManager.INSTANCE.getAllSkinIds(), builder))
                                                 .executes(context -> {
                                                     ServerPlayer target = EntityArgument.getPlayer(context, "player");
                                                     String id = StringArgumentType.getString(context, "skinId");

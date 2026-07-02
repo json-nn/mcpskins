@@ -41,7 +41,7 @@ public class SkinBrowserScreen extends Screen {
 
         // 2. Если хотите легкое затемнение поверх (если есть текстура мира),
         // добавьте этот слой, он будет непрозрачным по альфа-каналу
-        guiGraphics.fill(0, 0, width, height, 0xCC000000);
+        guiGraphics.fill(0, 0, width, height, 0xD9000000);
     }
 
     @Override
