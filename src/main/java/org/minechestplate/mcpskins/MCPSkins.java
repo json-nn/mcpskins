@@ -16,10 +16,10 @@ import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
+import org.minechestplate.mcpskins.skin.SkinComponents;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.command.SkinCommand;
 import org.minechestplate.mcpskins.skin.network.ApplySkinPayload;
-import org.minechestplate.mcpskins.skin.network.OpenSkinBrowserPayload;
 import org.minechestplate.mcpskins.skin.network.SyncRegistryPayload;
 import org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload;
 import org.slf4j.Logger;
@@ -34,6 +34,8 @@ public class MCPSkins {
     public MCPSkins(IEventBus modEventBus, ModContainer modContainer) {
         modEventBus.addListener(this::commonSetup);
         modEventBus.addListener(this::registerNetworking);
+
+        SkinComponents.DATA_COMPONENTS.register(modEventBus);
 
         NeoForge.EVENT_BUS.addListener(this::onAddReloadListeners);
         NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
@@ -89,7 +91,6 @@ public class MCPSkins {
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);
         registrar.playToClient(SyncUnlocksPayload.TYPE, SyncUnlocksPayload.CODEC, SyncUnlocksPayload::handleData);
-        registrar.playToClient(OpenSkinBrowserPayload.TYPE, OpenSkinBrowserPayload.CODEC, OpenSkinBrowserPayload::handleData);
     }
 
     private void onDatapackSync(OnDatapackSyncEvent event) {

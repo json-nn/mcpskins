@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8.5",
+  "package": "org.minechestplate.mcpskins.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "refmap": "mcpskins.refmap.json",
+  "client": [
+    "TimelessAPIMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

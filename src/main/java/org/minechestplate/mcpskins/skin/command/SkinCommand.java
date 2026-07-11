@@ -6,26 +6,19 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.neoforge.network.PacketDistributor;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomData;
+import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
+import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
-import org.minechestplate.mcpskins.skin.network.OpenSkinBrowserPayload;
 
 public class SkinCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
-        dispatcher.register(Commands.literal("sktab")
-                .executes(context -> {
-                    if (context.getSource().getEntity() instanceof ServerPlayer player) {
-                        PacketDistributor.sendToPlayer(player, new OpenSkinBrowserPayload());
-                        return 1;
-                    } else {
-                        context.getSource().sendFailure(Component.literal("Эту команду может использовать только игрок!"));
-                        return 0;
-                    }
-                }));
-
         dispatcher.register(Commands.literal("mcpskins")
                 .requires(source -> source.hasPermission(4))
                 .then(Commands.literal("give")
@@ -39,7 +32,45 @@ public class SkinCommand {
 
                                                     SkinAttachment.unlockSkin(target, id);
 
-                                                    context.getSource().sendSuccess(() -> Component.literal("Unlocked skin " + id + " for " + target.getName().getString()), true);
+                                                    context.getSource().sendSuccess(() -> Component.translatable("commands.mcpskins.give_skin.success", id, target.getName().getString()), true);
+                                                    return 1;
+                                                }))))
+                        // Выдаёт САМ ПРЕДМЕТ (SkinUnlockItem) с корректно собранным NBT,
+                        // в отличие от "give skin" (который разблокирует скин напрямую,
+                        // без физического предмета). Раньше правильный NBT-формат для
+                        // ручного /give приходилось подбирать по устаревшему примеру в
+                        // комментарии ModItems - эта команда решает ту же задачу надёжно:
+                        // skinId проверяется по реестру (SkinManager.findSkin) и
+                        // предлагается автоподстановкой, так что несуществующий id
+                        // просто нельзя случайно выдать.
+                        .then(Commands.literal("item")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("skinId", StringArgumentType.string())
+                                                .suggests((context, builder) -> SharedSuggestionProvider.suggest(SkinManager.INSTANCE.getAllSkinIds(), builder))
+                                                .executes(context -> {
+                                                    ServerPlayer target = EntityArgument.getPlayer(context, "player");
+                                                    String skinId = StringArgumentType.getString(context, "skinId");
+
+                                                    SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(skinId);
+                                                    if (lookup == null) {
+                                                        context.getSource().sendFailure(Component.translatable("commands.mcpskins.give_item.unknown_skin", skinId));
+                                                        return 0;
+                                                    }
+
+                                                    ItemStack unlockStack = new ItemStack(ModItems.SKIN_UNLOCK_ITEM.get());
+                                                    CompoundTag tag = new CompoundTag();
+                                                    tag.putString("SkinToUnlock", skinId);
+                                                    unlockStack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
+
+                                                    // Тот же паттерн, что и в ванильном /give: пытаемся положить в
+                                                    // инвентарь, а если он полон - роняем предмет под ноги игроку.
+                                                    boolean added = target.getInventory().add(unlockStack);
+                                                    if (!added) {
+                                                        target.drop(unlockStack, false);
+                                                    }
+                                                    target.containerMenu.broadcastChanges();
+
+                                                    context.getSource().sendSuccess(() -> Component.translatable("commands.mcpskins.give_item.success", lookup.skin().name(), target.getName().getString()), true);
                                                     return 1;
                                                 }))))
                         .then(Commands.literal("all")
@@ -49,7 +80,7 @@ public class SkinCommand {
 
                                             SkinAttachment.unlockAllSkins(target);
 
-                                            context.getSource().sendSuccess(() -> Component.literal("Unlocked ALL skins for " + target.getName().getString()), true);
+                                            context.getSource().sendSuccess(() -> Component.translatable("commands.mcpskins.give_all.success", target.getName().getString()), true);
                                             return 1;
                                         }))))
                 .then(Commands.literal("take")
@@ -60,7 +91,7 @@ public class SkinCommand {
 
                                             SkinAttachment.clearSkins(target);
 
-                                            context.getSource().sendSuccess(() -> Component.literal("Cleared skins for " + target.getName().getString()), true);
+                                            context.getSource().sendSuccess(() -> Component.translatable("commands.mcpskins.take_all.success", target.getName().getString()), true);
                                             return 1;
                                         })))
                         .then(Commands.literal("skin")
@@ -74,10 +105,10 @@ public class SkinCommand {
                                                     boolean removed = SkinAttachment.revokeSkin(target, id);
 
                                                     if (removed) {
-                                                        context.getSource().sendSuccess(() -> Component.literal("Removed skin " + id + " from " + target.getName().getString()), true);
+                                                        context.getSource().sendSuccess(() -> Component.translatable("commands.mcpskins.take_skin.success", id, target.getName().getString()), true);
                                                         return 1;
                                                     } else {
-                                                        context.getSource().sendFailure(Component.literal("Player " + target.getName().getString() + " does not have skin " + id));
+                                                        context.getSource().sendFailure(Component.translatable("commands.mcpskins.take_skin.not_found", target.getName().getString(), id));
                                                         return 0;
                                                     }
                                                 }))))));

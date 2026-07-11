@@ -1,0 +1,29 @@
+{
+  "item.mcpskins.skin_unlock_item": "Предмет розблокування скіна",
+
+  "tooltip.mcpskins.empty_unlock_item": "Порожній предмет розблокування (немає даних про скін)",
+  "tooltip.mcpskins.unknown_skin": "Невідомий скін: %s",
+  "tooltip.mcpskins.unlocks": "Розблоковує %s",
+  "tooltip.mcpskins.unlocks_for": "Розблоковує %1$s для %2$s",
+  "tooltip.mcpskins.skin_owner": "▪ Власник скіна: %s",
+
+  "message.mcpskins.already_have_skin": "У вас вже є цей скін!",
+  "message.mcpskins.skin_unlocked_fallback": "Скін \"%s\" успішно розблоковано!",
+  "message.mcpskins.unlock_success": "» Скін %s успішно розблоковано!",
+  "message.mcpskins.unlock_success_for": "» Скін %1$s для %2$s успішно розблоковано!",
+
+  "gui.mcpskins.weapon_skins_tooltip": "Скіни зброї",
+  "gui.mcpskins.status_equipped": "● НАДІТО",
+  "gui.mcpskins.status_preview_locked": "● ПЕРЕГЛЯД (НЕ ОТРИМАНО)",
+  "gui.mcpskins.status_click_to_equip": "НАТИСНІТЬ, ЩОБ НАДІТИ",
+  "gui.mcpskins.status_click_to_preview": "НАТИСНІТЬ ДЛЯ ПЕРЕГЛЯДУ",
+  "gui.mcpskins.toast_skin_applied": "✔ Скін застосовано: %s",
+
+  "commands.mcpskins.give_skin.success": "Скін %1$s розблоковано для %2$s",
+  "commands.mcpskins.give_item.unknown_skin": "Невідомий id скіна: %s (не знайдено в реєстрі)",
+  "commands.mcpskins.give_item.success": "Видано предмет розблокування скіна \"%1$s\" гравцю %2$s",
+  "commands.mcpskins.give_all.success": "Усі скіни розблоковано для %s",
+  "commands.mcpskins.take_all.success": "Скіни очищено у %s",
+  "commands.mcpskins.take_skin.success": "Скін %1$s видалено у %2$s",
+  "commands.mcpskins.take_skin.not_found": "У гравця %1$s немає скіна %2$s"
+}

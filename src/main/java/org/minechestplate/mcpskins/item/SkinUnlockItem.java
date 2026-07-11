@@ -2,12 +2,9 @@ package org.minechestplate.mcpskins.item;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -23,143 +20,144 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
+import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 import org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload;
 
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Расходуемый предмет-"ключ", который разблокирует один конкретный скин игроку
+ * при использовании (ПКМ). Какой именно скин он разблокирует, хранится не в самом
+ * Item (он один на все скины), а в NBT конкретного стака - в custom_data-компоненте,
+ * под ключом {@code SkinToUnlock} (см. {@link #use}). Собирать такой стак вручную
+ * НЕ рекомендуется - используйте команду
+ * {@code /mcpskins give item <player> <skinId>} (см. SkinCommand), она сама
+ * проверяет, что skinId существует в реестре, и предлагает автоподстановку.
+ */
 public class SkinUnlockItem extends Item {
 
     public SkinUnlockItem(Properties properties) {
-        super(properties); //
+        super(properties);
     }
 
     @Override
     public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltipComponents, TooltipFlag tooltipFlag) {
-        CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY); //
+        CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
 
-        if (data.contains("SkinToUnlock")) { 
-            String skinId = data.copyTag().getString("SkinToUnlock"); 
-
-            SkinDataModels.WeaponSkins targetWeapon = null; 
-            SkinDataModels.SkinEntry targetSkin = null; 
-
-            outer:
-            for (SkinDataModels.WeaponSkins weapon : SkinManager.INSTANCE.getRegistry().values()) { 
-                for (SkinDataModels.SkinEntry skin : weapon.skins()) { 
-                    if (skin.id().equals(skinId)) { 
-                        targetWeapon = weapon; 
-                        targetSkin = skin; 
-                        break outer; 
-                    }
-                }
-            }
-
-            if (targetSkin != null && targetWeapon != null) { 
-                final int finalColor = targetSkin.labelColor(); 
-
-                Item taczGunItem = BuiltInRegistries.ITEM.get(ResourceLocation.parse("tacz:modern_kinetic_gun")); 
-
-                ItemStack gunStack = new ItemStack(taczGunItem); 
-                CompoundTag gunTag = new CompoundTag(); 
-                gunTag.putString("GunId", targetWeapon.baseGun()); 
-                gunStack.set(DataComponents.CUSTOM_DATA, CustomData.of(gunTag)); 
-
-                Component gunDisplayName = gunStack.getHoverName(); 
-
-                tooltipComponents.add(Component.literal("Unlocks ").withStyle(ChatFormatting.GRAY) 
-                        .append(Component.literal(targetSkin.name()).withStyle(style -> style.withColor(finalColor))) 
-                        .append(Component.literal(" for ").withStyle(ChatFormatting.GRAY)) 
-                        .append(gunDisplayName.copy().withStyle(style -> style 
-                                .withColor(ChatFormatting.YELLOW) 
-                        )));
-                // В тултипе убрал HoverEvent, так как майнкрафт не поддерживает тултип в тултипе.
-            } else {
-                tooltipComponents.add(Component.literal("Unknown skin: " + skinId).withStyle(ChatFormatting.RED)); 
-            }
-        } else {
-            tooltipComponents.add(Component.literal("Empty Can Data").withStyle(ChatFormatting.DARK_GRAY)); 
+        if (!data.contains("SkinToUnlock")) {
+            tooltipComponents.add(Component.translatable("tooltip.mcpskins.empty_unlock_item").withStyle(ChatFormatting.DARK_GRAY));
+            super.appendHoverText(stack, context, tooltipComponents, tooltipFlag);
+            return;
         }
 
-        super.appendHoverText(stack, context, tooltipComponents, tooltipFlag); 
+        String skinId = data.copyTag().getString("SkinToUnlock");
+        SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(skinId);
+
+        if (lookup == null) {
+            // Скина с таким id нет в реестре - либо опечатка в NBT предмета, либо
+            // датапак со скинами ещё не подгрузился на момент создания стака.
+            tooltipComponents.add(Component.translatable("tooltip.mcpskins.unknown_skin", skinId).withStyle(ChatFormatting.RED));
+            super.appendHoverText(stack, context, tooltipComponents, tooltipFlag);
+            return;
+        }
+
+        // Название скина и название пушки - динамический контент из датапака (а не
+        // статичный текст интерфейса), поэтому они остаются Component.literal и
+        // передаются как аргументы в translatable-шаблон, сохраняя свой стиль/цвет.
+        Component skinName = Component.literal(lookup.skin().name())
+                .withStyle(style -> style.withColor(lookup.skin().labelColor()));
+
+        // Превью-стак пушки строим через TACZSkinHelper.createGunStack(gunId, skinId),
+        // а НЕ вручную (как было раньше, с хардкодом "tacz:modern_kinetic_gun" и голым
+        // GunId без компонента скина) - это важно, потому что createGunStack ещё и
+        // проставляет SkinComponents.SKIN_ID, из-за чего миксин TimelessAPIMixin
+        // подставляет правильную (перекрашенную) текстуру. Без этого тултип показывал
+        // бы иконку ОБЫЧНОЙ, не перекрашенной пушки - что и вводило в заблуждение.
+        ItemStack previewGun = TACZSkinHelper.createGunStack(lookup.weapon().baseGun(), lookup.skin().id());
+        MutableComponent line;
+        if (!previewGun.isEmpty()) {
+            Component gunName = previewGun.getHoverName().copy().withStyle(style -> style.withColor(ChatFormatting.YELLOW));
+            line = Component.translatable("tooltip.mcpskins.unlocks_for", skinName, gunName).withStyle(ChatFormatting.GRAY);
+        } else {
+            line = Component.translatable("tooltip.mcpskins.unlocks", skinName).withStyle(ChatFormatting.GRAY);
+        }
+        // В тултипе не добавляем HoverEvent на превью-стак - Minecraft не поддерживает
+        // тултип внутри тултипа, вложенный SHOW_ITEM здесь просто не отрисуется.
+
+        tooltipComponents.add(line);
+        super.appendHoverText(stack, context, tooltipComponents, tooltipFlag);
     }
 
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
-        ItemStack stack = player.getItemInHand(hand); 
-        CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY); 
+        ItemStack stack = player.getItemInHand(hand);
+        CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
 
-        if (data.contains("SkinToUnlock")) { 
-            String skinId = data.copyTag().getString("SkinToUnlock"); 
-
-            if (!SkinAttachment.hasSkin(player, skinId)) { 
-                if (!level.isClientSide()) { 
-                    SkinAttachment.unlockSkin(player, skinId); 
-                    PacketDistributor.sendToPlayer((ServerPlayer) player, new SyncUnlocksPayload(new ArrayList<>(player.getData(SkinAttachment.UNLOCKED_SKINS)))); 
-
-                    // Ищем скин и пушку для формирования сообщения в чат
-                    SkinDataModels.WeaponSkins targetWeapon = null;
-                    SkinDataModels.SkinEntry targetSkin = null;
-
-                    outer:
-                    for (SkinDataModels.WeaponSkins weapon : SkinManager.INSTANCE.getRegistry().values()) {
-                        for (SkinDataModels.SkinEntry skin : weapon.skins()) {
-                            if (skin.id().equals(skinId)) {
-                                targetWeapon = weapon;
-                                targetSkin = skin;
-                                break outer;
-                            }
-                        }
-                    }
-
-                    if (targetWeapon != null && targetSkin != null) {
-                        // 1. Создаем виртуальный ItemStack пушки и делаем его explicitly final
-                        Item taczGunItem = BuiltInRegistries.ITEM.get(ResourceLocation.parse("tacz:modern_kinetic_gun"));
-                        final ItemStack gunStack = new ItemStack(taczGunItem);
-                        CompoundTag gunTag = new CompoundTag();
-                        gunTag.putString("GunId", targetWeapon.baseGun());
-                        gunStack.set(DataComponents.CUSTOM_DATA, CustomData.of(gunTag));
-
-                        // 2. Получаем нормальное переведенное название пушки
-                        Component gunDisplayName = gunStack.getHoverName();
-
-                        // --- ИСПРАВЛЕНИЕ ОШИБКИ ---
-                        // Сохраняем цвет в новую final переменную для использования внутри лямбда-выражения
-                        final int finalColor = targetSkin.labelColor();
-
-                        // 3. Формируем интерактивное сообщение для чата
-                        MutableComponent chatMessage = Component.literal("Скин ").withStyle(ChatFormatting.GREEN)
-                                .append(Component.literal(targetSkin.name()).withStyle(style -> style.withColor(finalColor)))
-                                .append(Component.literal(" для ").withStyle(ChatFormatting.GREEN))
-                                .append(gunDisplayName.copy().withStyle(style -> style
-                                        .withColor(ChatFormatting.YELLOW)
-                                        .withUnderlined(true)
-                                        .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(gunStack)))
-                                ))
-                                .append(Component.literal(" успешно разблокирован!").withStyle(ChatFormatting.GREEN));
-
-                        player.sendSystemMessage(chatMessage);
-                    } else {
-                        // Фолбэк, если скин почему-то не найден в реестре
-                        player.sendSystemMessage(Component.literal("Скин " + skinId + " успешно разблокирован!").withStyle(ChatFormatting.GREEN));
-                    }
-                } else {
-                    level.playSound(player, player.blockPosition(), SoundEvents.PLAYER_LEVELUP, SoundSource.PLAYERS, 0.5f, 1.5f); 
-                }
-
-                if (!player.getAbilities().instabuild) { 
-                    stack.shrink(1); 
-                }
-
-                return InteractionResultHolder.sidedSuccess(stack, level.isClientSide()); 
-            } else {
-                if (!level.isClientSide()) { 
-                    player.sendSystemMessage(Component.literal("У вас уже есть этот скин!").withStyle(ChatFormatting.RED)); 
-                }
-                return InteractionResultHolder.fail(stack); 
-            }
+        if (!data.contains("SkinToUnlock")) {
+            // "Пустой" предмет без NBT - ничего не делаем, ведём себя как обычный предмет без use-логики.
+            return InteractionResultHolder.pass(stack);
         }
 
-        return InteractionResultHolder.pass(stack); 
+        String skinId = data.copyTag().getString("SkinToUnlock");
+
+        if (SkinAttachment.hasSkin(player, skinId)) {
+            if (!level.isClientSide()) {
+                player.sendSystemMessage(Component.translatable("message.mcpskins.already_have_skin").withStyle(ChatFormatting.RED));
+            }
+            return InteractionResultHolder.fail(stack);
+        }
+
+        if (!level.isClientSide()) {
+            SkinAttachment.unlockSkin(player, skinId);
+            PacketDistributor.sendToPlayer((ServerPlayer) player, new SyncUnlocksPayload(new ArrayList<>(player.getData(SkinAttachment.UNLOCKED_SKINS))));
+
+            player.sendSystemMessage(buildUnlockChatMessage(skinId));
+        } else {
+            // Звук проигрываем именно на клиенте (а не рассылаем с сервера) - так он
+            // слышен мгновенно, без задержки на round-trip до сервера и обратно.
+            level.playSound(player, player.blockPosition(), SoundEvents.PLAYER_LEVELUP, SoundSource.PLAYERS, 0.5f, 1.5f);
+        }
+
+        if (!player.getAbilities().instabuild) {
+            stack.shrink(1);
+        }
+
+        return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
+    }
+
+    /**
+     * Собирает красивое интерактивное сообщение в чат об успешной разблокировке:
+     * "» Скин &lt;название&gt; для &lt;пушка&gt; успешно разблокирован!", где название
+     * скина покрашено в его label_color, а название пушки кликабельно-наводимо
+     * (hover показывает превью самой пушки С НАДЕТЫМ СКИНОМ, см. createGunStack).
+     */
+    private static Component buildUnlockChatMessage(String skinId) {
+        SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(skinId);
+
+        if (lookup == null) {
+            // Фолбэк на случай "битого" skinId (разблокировка в SkinAttachment уже
+            // произошла выше, независимо от того, нашли мы описание скина или нет).
+            return Component.translatable("message.mcpskins.skin_unlocked_fallback", skinId).withStyle(ChatFormatting.GREEN);
+        }
+
+        ItemStack previewGun = TACZSkinHelper.createGunStack(lookup.weapon().baseGun(), lookup.skin().id());
+        final int labelColor = lookup.skin().labelColor();
+
+        // Название скина - динамический контент из датапака, оформляется своим стилем
+        // и передаётся как аргумент в translatable-шаблон (порядок слов/склонения
+        // разные языки при этом расставляют сами, в своём lang-файле).
+        Component skinName = Component.literal(lookup.skin().name())
+                .withStyle(style -> style.withColor(labelColor).withBold(true));
+
+        if (!previewGun.isEmpty()) {
+            Component gunName = previewGun.getHoverName().copy().withStyle(style -> style
+                    .withColor(ChatFormatting.YELLOW)
+                    .withUnderlined(true)
+                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(previewGun))));
+            return Component.translatable("message.mcpskins.unlock_success_for", skinName, gunName).withStyle(ChatFormatting.GREEN);
+        }
+
+        return Component.translatable("message.mcpskins.unlock_success", skinName).withStyle(ChatFormatting.GREEN);
     }
 }

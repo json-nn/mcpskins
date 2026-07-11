@@ -15,6 +15,21 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * ВАЖНО в свете перехода на текстурный оверлей (см. TACZSkinHelper/TimelessAPIMixin):
+ * поле {@code "id"} в JSON-конфигах скинов - это одновременно (1) имя PNG-файла в
+ * ресурспаке ({@code textures/skins/<base_gun>/<id>.png}) И (2) ключ разблокировки в
+ * {@code SkinAttachment.UNLOCKED_SKINS}, который представляет собой ОБЩИЙ ДЛЯ ВСЕХ
+ * ПУШЕК {@code Set<String>} без какой-либо привязки к оружию. Поэтому {@code id} должен
+ * оставаться уникальным ГЛОБАЛЬНО, по всему модпаку, а не только в пределах одного
+ * оружия - иначе скин "cobra" на m4a1 и скин "cobra" на ak47 будут восприниматься как
+ * ОДИН И ТОТ ЖЕ разблокированный скин (а также ломается обратный поиск в
+ * {@link #getBaseGun}, который иначе не сможет понять, какой из двух оружий имелся в
+ * виду). Рекомендуемая схема именования: {@code <base_gun>_<skin_name>}, например
+ * {@code "m4a1_cobra"} - и тогда файл в ресурспаке тоже должен называться
+ * {@code textures/skins/m4a1/m4a1_cobra.png} (немного длиннее, чем просто "cobra.png",
+ * зато без риска коллизии).
+ */
 public class SkinManager extends SimpleJsonResourceReloadListener {
     public static final SkinManager INSTANCE = new SkinManager();
     private static final Gson GSON = new GsonBuilder().create();
@@ -85,6 +100,30 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
             }
         }
         return skinOrGunId;
+    }
+
+    /**
+     * Ищет скин по его id сразу вместе с оружием (WeaponSkins), которому он
+     * принадлежит - результат нужен и для тултипа, и для сообщения в чат, и для
+     * команды выдачи предмета, поэтому логика поиска вынесена сюда, а не
+     * продублирована в каждом месте по отдельности (как было раньше в
+     * SkinUnlockItem: два идентичных двойных цикла).
+     *
+     * @return найденная пара (оружие, скин), либо {@code null}, если id не найден -
+     *         например, опечатка в NBT предмета, либо скин был удалён из
+     *         датапака после того, как предмет с ним уже был выдан игроку.
+     */
+    public SkinDataModels.SkinLookupResult findSkin(String skinId) {
+        if (skinId == null) return null;
+
+        for (SkinDataModels.WeaponSkins weapon : registry.values()) {
+            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
+                if (skin.id().equals(skinId)) {
+                    return new SkinDataModels.SkinLookupResult(weapon, skin);
+                }
+            }
+        }
+        return null;
     }
 
     /**
