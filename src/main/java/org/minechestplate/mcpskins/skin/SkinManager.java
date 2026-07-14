@@ -29,6 +29,14 @@ import java.util.Map;
  * {@code "m4a1_cobra"} - и тогда файл в ресурспаке тоже должен называться
  * {@code textures/skins/m4a1/m4a1_cobra.png} (немного длиннее, чем просто "cobra.png",
  * зато без риска коллизии).
+ * <p>
+ * <b>НОВОЕ (для MCPSkins Armory, см. концепт §5/§8.1):</b> необязательные поля
+ * {@code "rarity"}, {@code "collection"}, {@code "description"}, {@code "is_new"} в записи
+ * скина. Все ПОЛНОСТЬЮ опциональны - если их нет в JSON, используются безопасные дефолты
+ * ({@code common}, пустая строка, пустая строка, {@code false}) ровно тем же способом, каким
+ * этот класс уже давно обрабатывает потенциально отсутствующие/некорректные записи (см.
+ * try/catch вокруг парсинга каждого файла ниже) - существующие датапаки скинов, у которых
+ * этих полей ещё нет, продолжают загружаться без единого предупреждения в логе.
  */
 public class SkinManager extends SimpleJsonResourceReloadListener {
     public static final SkinManager INSTANCE = new SkinManager();
@@ -50,14 +58,28 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
 
                 List<SkinDataModels.SkinEntry> skins = new ArrayList<>();
 
-                skins.add(new SkinDataModels.SkinEntry("default:" + baseGun, "Default", 0xFFFFFF));
+                skins.add(new SkinDataModels.SkinEntry(
+                        "default:" + baseGun, "Default", 0xFFFFFF,
+                        SkinDataModels.Rarity.COMMON, "", "", false));
 
                 json.getAsJsonArray("skins").forEach(skinElement -> {
                     JsonObject skinObj = skinElement.getAsJsonObject();
                     String id = skinObj.get("id").getAsString();
                     String name = skinObj.get("name").getAsString();
                     int color = Integer.decode(skinObj.get("label_color").getAsString());
-                    skins.add(new SkinDataModels.SkinEntry(id, name, color));
+
+                    // Все четыре поля ниже - НОВЫЕ и полностью опциональные (см. javadoc
+                    // класса) - has(...) == false просто даёт дефолт, без предупреждения в
+                    // лог: отсутствие этих полей в старых датапаках - ожидаемая, штатная
+                    // ситуация, а не повод шуметь в консоль.
+                    SkinDataModels.Rarity rarity = skinObj.has("rarity")
+                            ? SkinDataModels.Rarity.byName(skinObj.get("rarity").getAsString())
+                            : SkinDataModels.Rarity.COMMON;
+                    String collection = skinObj.has("collection") ? skinObj.get("collection").getAsString() : "";
+                    String description = skinObj.has("description") ? skinObj.get("description").getAsString() : "";
+                    boolean isNew = skinObj.has("is_new") && skinObj.get("is_new").getAsBoolean();
+
+                    skins.add(new SkinDataModels.SkinEntry(id, name, color, rarity, collection, description, isNew));
                 });
 
                 registry.put(baseGun, new SkinDataModels.WeaponSkins(baseGun, skins));

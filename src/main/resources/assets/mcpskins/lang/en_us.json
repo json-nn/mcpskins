@@ -25,5 +25,31 @@
   "commands.mcpskins.give_all.success": "Unlocked ALL skins for %s",
   "commands.mcpskins.take_all.success": "Cleared skins for %s",
   "commands.mcpskins.take_skin.success": "Removed skin %1$s from %2$s",
-  "commands.mcpskins.take_skin.not_found": "Player %1$s does not have skin %2$s"
+  "commands.mcpskins.take_skin.not_found": "Player %1$s does not have skin %2$s",
+
+  "key.categories.mcpskins": "MCPSkins",
+  "key.mcpskins.open_armory": "Open Skin Armory",
+
+  "gui.mcpskins.armory.title": "Skin Armory",
+  "gui.mcpskins.armory.search": "Search",
+  "gui.mcpskins.armory.search_hint": "Search skins...",
+  "gui.mcpskins.armory.filter_all": "All",
+  "gui.mcpskins.armory.filter_owned": "Owned",
+  "gui.mcpskins.armory.filter_locked": "Locked",
+  "gui.mcpskins.armory.filter_custom_model": "Custom model",
+  "gui.mcpskins.armory.sort_rarity": "Sort: Rarity",
+  "gui.mcpskins.armory.sort_alphabetical": "Sort: A-Z",
+  "gui.mcpskins.armory.sort_newest": "Sort: Newest",
+  "gui.mcpskins.armory.badge_new": "NEW",
+  "gui.mcpskins.armory.badge_model": "3D",
+  "gui.mcpskins.armory.badge_model_full": "Custom model",
+  "gui.mcpskins.armory.rarity_common": "Common",
+  "gui.mcpskins.armory.rarity_uncommon": "Uncommon",
+  "gui.mcpskins.armory.rarity_rare": "Rare",
+  "gui.mcpskins.armory.rarity_epic": "Epic",
+  "gui.mcpskins.armory.rarity_legendary": "Legendary",
+  "gui.mcpskins.armory.equip": "Equip",
+  "gui.mcpskins.armory.equipped": "Equipped",
+  "gui.mcpskins.armory.status_locked": "This skin is locked",
+  "gui.mcpskins.armory.status_need_hand": "Hold %s in your hand to equip this skin"
 }

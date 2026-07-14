@@ -3,6 +3,8 @@ package org.minechestplate.mcpskins.skin.client;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
@@ -260,6 +262,55 @@ public class TACZRefitSkinOverlay {
         }
     }
 
+    /**
+     * Подбирает верхнюю границу тоста так, чтобы он НЕ перекрывал ни один видимый
+     * {@link AbstractWidget} экрана {@code GunRefitScreen} (родные вкладки, кнопки и т.д.) -
+     * см. подробное объяснение в {@link #renderToast}, почему раньше здесь была
+     * захардкоженная константа {@code y0 = 8}.
+     * <p>
+     * Метод намеренно НЕ пытается угадать конкретный пиксельный отступ под конкретный
+     * ресурспак TACZ (как это, например, оправданно сделано для {@link #TOGGLE_MARGIN_TOP} -
+     * см. javadoc класса про то, почему там это ОК) - вместо этого он использует то, что уже
+     * реально известно движку: точные границы {@code getX()/getY()/getWidth()/getHeight()}
+     * каждого добавленного в экран виджета. Это и есть "правильный", не эмпирический способ
+     * не перекрыть чужой элемент интерфейса - в отличие от подбора числа по скриншоту, он
+     * продолжает работать даже если сам TACZ подвинет свои кнопки в будущем обновлении.
+     * <p>
+     * Алгоритм простой (итеративное "выталкивание" вниз, максимум несколько виджетов на
+     * экране рефита - более сложная упаковка тут не нужна): начинаем с {@code y0 = 8}
+     * (прежнее место по умолчанию, если конфликтов нет - поведение не меняется на тех
+     * ресурспаках, где оно и так работало); если прямоугольник тоста пересекается с каким-то
+     * видимым виджетом - опускаем тост под нижний край этого виджета и проверяем снова.
+     */
+    private static int computeToastTop(Screen screen, int toastX0, int boxWidth, int boxHeight) {
+        int candidateY = 8;
+        int toastX1 = toastX0 + boxWidth;
+
+        // Ограничение на число итераций - чисто защитное (см. §4.3 "тихий даунгрейд, не
+        // краш/зависание" - при любой неожиданной раскладке виджетов мы просто останавливаемся
+        // на разумном значении, а не крутимся бесконечно).
+        for (int attempt = 0; attempt < 8; attempt++) {
+            AbstractWidget overlapping = findOverlappingWidget(screen, toastX0, toastX1, candidateY, candidateY + boxHeight);
+            if (overlapping == null) {
+                break;
+            }
+            candidateY = overlapping.getY() + overlapping.getHeight() + 4;
+        }
+        return candidateY;
+    }
+
+    private static AbstractWidget findOverlappingWidget(Screen screen, int x0, int x1, int y0, int y1) {
+        for (GuiEventListener child : screen.children()) {
+            if (!(child instanceof AbstractWidget widget) || !widget.visible) continue;
+            int wx0 = widget.getX(), wy0 = widget.getY();
+            int wx1 = wx0 + widget.getWidth(), wy1 = wy0 + widget.getHeight();
+            if (x0 < wx1 && x1 > wx0 && y0 < wy1 && y1 > wy0) {
+                return widget;
+            }
+        }
+        return null;
+    }
+
     private static void renderToast(GuiGraphics guiGraphics, Screen screen) {
         if (toastText == null) return;
         long elapsed = System.currentTimeMillis() - toastStartTime;
@@ -284,7 +335,15 @@ public class TACZRefitSkinOverlay {
         int boxW = textWidth + paddingX * 2;
         int boxH = mc.font.lineHeight + paddingY * 2;
         int x0 = screen.width / 2 - boxW / 2;
-        int y0 = 8;
+        // ИСПРАВЛЕНИЕ (баг "тост перекрывает родной элемент меню TACZ"): раньше здесь стояло
+        // захардкоженное "int y0 = 8;", подобранное на глаз под один конкретный скриншот
+        // GunRefitScreen - на другой вкладке обвеса/другом разрешении/другом ресурспаке TACZ
+        // сверху экрана мог оказаться какой-то из РОДНЫХ виджетов TACZ (вкладки, кнопка
+        // закрытия и т.п.) как раз в той полосе y=[8, 8+boxH). См. computeToastTop ниже -
+        // вместо догадки по пикселям мы читаем РЕАЛЬНЫЕ прямоугольники всех видимых
+        // AbstractWidget этого экрана (screen.children()) и сдвигаем тост вниз, только если он
+        // физически пересёкся бы с одним из них.
+        int y0 = computeToastTop(screen, x0, boxW, boxH);
 
         int bgAlpha = Math.round(alpha * 0xD0) << 24;
         int borderAlpha = Math.round(alpha * 255) << 24;

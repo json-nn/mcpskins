@@ -8,9 +8,11 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
 import net.neoforged.neoforge.client.event.RegisterColorHandlersEvent;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
+import org.minechestplate.mcpskins.skin.client.ArmoryKeybinds;
 import org.minechestplate.mcpskins.skin.client.ClientHeldGunRefresher;
 import org.minechestplate.mcpskins.skin.render.GunModelPatcher;
 import org.minechestplate.mcpskins.skin.render.PatchedGunDisplayCache;
@@ -47,7 +49,7 @@ public class ClientModEvents {
      * {@code GunDisplayInstancePatcher} (см. его javadoc, п.2 - в рендер-состояние мы
      * принципиально не лезем). Единственный подтверждённый на практике фикс - пересоздать
      * удерживаемый предмет (то же самое, что "переключить оружие в другой слот и обратно") -
-     * см. подробности в javadoc {@link ClientHeldGunRefresher}. Планируем это ПОСЛЕ
+     * см. подробности в javadoc {@code ClientHeldGunRefresher}. Планируем это ПОСЛЕ
      * {@code preparationBarrier.wait()} (внутри {@code thenRunAsync} ниже), то есть когда
      * перезагрузка уже полностью применилась ВСЕМИ листенерами (включая TACZ), а не в момент
      * начала подготовки - иначе рискуем словить ту же гонку с недособранными ассетами заново.
@@ -92,5 +94,18 @@ public class ClientModEvents {
             return 0xFFFFFFFF; // Использовать 0xFFFFFFFF вместо 0xFFFFFF
 
         }, ModItems.SKIN_UNLOCK_ITEM.get());
+    }
+
+    /**
+     * НОВОЕ (MCPSkins Armory, см. §3 концепта "Точки входа - Хоткей"): регистрация самого
+     * {@link net.minecraft.client.KeyMapping} обязана происходить на MOD-шине через
+     * {@link RegisterKeyMappingsEvent} (см. официальную документацию NeoForge про
+     * key mappings) - это ДРУГАЯ шина, чем та, на которой {@code ArmoryKeybinds} слушает тики
+     * для реального опроса нажатия (GAME-шина, {@code ClientTickEvent.Post}), поэтому
+     * регистрация и обработка сознательно разнесены по двум классам, как и требует API.
+     */
+    @SubscribeEvent
+    public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
+        event.register(ArmoryKeybinds.OPEN_ARMORY);
     }
 }

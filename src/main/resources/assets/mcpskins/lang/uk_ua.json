@@ -25,5 +25,31 @@
   "commands.mcpskins.give_all.success": "Усі скіни розблоковано для %s",
   "commands.mcpskins.take_all.success": "Скіни очищено у %s",
   "commands.mcpskins.take_skin.success": "Скін %1$s видалено у %2$s",
-  "commands.mcpskins.take_skin.not_found": "У гравця %1$s немає скіна %2$s"
+  "commands.mcpskins.take_skin.not_found": "У гравця %1$s немає скіна %2$s",
+
+  "key.categories.mcpskins": "MCPSkins",
+  "key.mcpskins.open_armory": "Відкрити Арсенал скінів",
+
+  "gui.mcpskins.armory.title": "Арсенал скінів",
+  "gui.mcpskins.armory.search": "Пошук",
+  "gui.mcpskins.armory.search_hint": "Пошук скінів...",
+  "gui.mcpskins.armory.filter_all": "Усі",
+  "gui.mcpskins.armory.filter_owned": "Мої",
+  "gui.mcpskins.armory.filter_locked": "Заблоковані",
+  "gui.mcpskins.armory.filter_custom_model": "З моделлю",
+  "gui.mcpskins.armory.sort_rarity": "Сортування: рідкість",
+  "gui.mcpskins.armory.sort_alphabetical": "Сортування: А-Я",
+  "gui.mcpskins.armory.sort_newest": "Сортування: нові",
+  "gui.mcpskins.armory.badge_new": "НОВЕ",
+  "gui.mcpskins.armory.badge_model": "3D",
+  "gui.mcpskins.armory.badge_model_full": "Власна модель",
+  "gui.mcpskins.armory.rarity_common": "Звичайний",
+  "gui.mcpskins.armory.rarity_uncommon": "Незвичайний",
+  "gui.mcpskins.armory.rarity_rare": "Рідкісний",
+  "gui.mcpskins.armory.rarity_epic": "Епічний",
+  "gui.mcpskins.armory.rarity_legendary": "Легендарний",
+  "gui.mcpskins.armory.equip": "Екіпірувати",
+  "gui.mcpskins.armory.equipped": "Екіпіровано",
+  "gui.mcpskins.armory.status_locked": "Цей скін заблоковано",
+  "gui.mcpskins.armory.status_need_hand": "Візьміть %s у руку, щоб застосувати скін"
 }

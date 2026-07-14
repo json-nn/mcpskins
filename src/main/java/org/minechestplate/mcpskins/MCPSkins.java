@@ -86,7 +86,11 @@ public class MCPSkins {
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        final PayloadRegistrar registrar = event.registrar("1.0.0");
+        // Версия поднята с "1.0.0" - формат SyncRegistryPayload изменился (добавлены
+        // rarity/collection/description/isNew, см. javadoc SyncRegistryPayload про Armory).
+        // Клиент и сервер этого мода всегда одной версии jar'а, так что это чисто
+        // гигиенический бамп, а не требование обратной совместимости с кем-то ещё.
+        final PayloadRegistrar registrar = event.registrar("1.1.0");
 
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);

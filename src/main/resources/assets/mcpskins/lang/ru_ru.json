@@ -25,5 +25,31 @@
   "commands.mcpskins.give_all.success": "Все скины разблокированы для %s",
   "commands.mcpskins.take_all.success": "Скины очищены у %s",
   "commands.mcpskins.take_skin.success": "Скин %1$s удалён у %2$s",
-  "commands.mcpskins.take_skin.not_found": "У игрока %1$s нет скина %2$s"
+  "commands.mcpskins.take_skin.not_found": "У игрока %1$s нет скина %2$s",
+
+  "key.categories.mcpskins": "MCPSkins",
+  "key.mcpskins.open_armory": "Открыть Арсенал скинов",
+
+  "gui.mcpskins.armory.title": "Арсенал скинов",
+  "gui.mcpskins.armory.search": "Поиск",
+  "gui.mcpskins.armory.search_hint": "Поиск скинов...",
+  "gui.mcpskins.armory.filter_all": "Все",
+  "gui.mcpskins.armory.filter_owned": "Мои",
+  "gui.mcpskins.armory.filter_locked": "Заблокированные",
+  "gui.mcpskins.armory.filter_custom_model": "С моделью",
+  "gui.mcpskins.armory.sort_rarity": "Сортировка: редкость",
+  "gui.mcpskins.armory.sort_alphabetical": "Сортировка: А-Я",
+  "gui.mcpskins.armory.sort_newest": "Сортировка: новые",
+  "gui.mcpskins.armory.badge_new": "НОВОЕ",
+  "gui.mcpskins.armory.badge_model": "3D",
+  "gui.mcpskins.armory.badge_model_full": "Своя модель",
+  "gui.mcpskins.armory.rarity_common": "Обычный",
+  "gui.mcpskins.armory.rarity_uncommon": "Необычный",
+  "gui.mcpskins.armory.rarity_rare": "Редкий",
+  "gui.mcpskins.armory.rarity_epic": "Эпический",
+  "gui.mcpskins.armory.rarity_legendary": "Легендарный",
+  "gui.mcpskins.armory.equip": "Экипировать",
+  "gui.mcpskins.armory.equipped": "Экипировано",
+  "gui.mcpskins.armory.status_locked": "Этот скин заблокирован",
+  "gui.mcpskins.armory.status_need_hand": "Возьмите %s в руку, чтобы применить скин"
 }

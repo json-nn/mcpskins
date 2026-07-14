@@ -14,6 +14,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * <b>ИЗМЕНЕНИЕ ФОРМАТА ПРОВОДА (для MCPSkins Armory):</b> вместе с (id, name, labelColor)
+ * теперь пишутся/читаются и новые поля {@link SkinDataModels.SkinEntry} - rarity/collection/
+ * description/isNew (см. их javadoc и §5 концепта Armory про то, зачем они нужны на клиенте:
+ * фильтр/сортировка/бейджи в {@code SkinArmoryScreen} должны работать одинаково для ЛЮБОГО
+ * игрока, а не только у того, кто стоит достаточно близко к серверу с датапаком - тот же
+ * принцип, по которому этот пакет вообще существует).
+ * <p>
+ * Ломать обратную совместимость с ДРУГИМИ версиями мода не нужно - сервер и клиент этого мода
+ * всегда работают одной и той же версией jar'а (это не публичный сетевой протокол для третьих
+ * лиц), поэтому формат просто расширен без версионирования отдельных полей.
+ */
 public record SyncRegistryPayload(Map<String, SkinDataModels.WeaponSkins> registryData) implements CustomPacketPayload {
     public static final Type<SyncRegistryPayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "sync_skin_registry"));
 
@@ -35,7 +47,14 @@ public record SyncRegistryPayload(Map<String, SkinDataModels.WeaponSkins> regist
             int skinSize = buffer.readVarInt();
             List<SkinDataModels.SkinEntry> skins = new ArrayList<>();
             for (int j = 0; j < skinSize; j++) {
-                skins.add(new SkinDataModels.SkinEntry(buffer.readUtf(), buffer.readUtf(), buffer.readInt()));
+                String id = buffer.readUtf();
+                String name = buffer.readUtf();
+                int color = buffer.readInt();
+                SkinDataModels.Rarity rarity = SkinDataModels.Rarity.byName(buffer.readUtf());
+                String collection = buffer.readUtf();
+                String description = buffer.readUtf();
+                boolean isNew = buffer.readBoolean();
+                skins.add(new SkinDataModels.SkinEntry(id, name, color, rarity, collection, description, isNew));
             }
             map.put(key, new SkinDataModels.WeaponSkins(baseGun, skins));
         }
@@ -53,6 +72,10 @@ public record SyncRegistryPayload(Map<String, SkinDataModels.WeaponSkins> regist
                 buffer.writeUtf(skin.id());
                 buffer.writeUtf(skin.name());
                 buffer.writeInt(skin.labelColor());
+                buffer.writeUtf(skin.rarity().name());
+                buffer.writeUtf(skin.collection());
+                buffer.writeUtf(skin.description());
+                buffer.writeBoolean(skin.isNew());
             }
         }
     }
