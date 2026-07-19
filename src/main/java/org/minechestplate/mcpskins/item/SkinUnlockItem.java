@@ -2,6 +2,7 @@ package org.minechestplate.mcpskins.item;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
@@ -10,6 +11,7 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -25,14 +27,22 @@ import org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Consumable item that unlocks one specific skin when used. The target skin ID is
  * stored per-stack in a {@code SkinToUnlock} custom data tag rather than on the item
  * itself, since one item type serves every skin (see {@link #use}). Prefer granting
  * it via {@code /mcpskins give item <player> <skinId>} over building the NBT by hand.
+ * <p>
+ * Shift + right-click instead fuses {@link #FUSE_COST} items of this item's rarity
+ * (scanned across the whole inventory, not just the held stack) into one random item
+ * of the next rarity up - see {@link #fuse}.
  */
 public class SkinUnlockItem extends Item {
+
+    /** How many same-rarity unlock items {@link #fuse} consumes per roll. */
+    private static final int FUSE_COST = 3;
 
     public SkinUnlockItem(Properties properties) {
         super(properties);
@@ -75,6 +85,17 @@ public class SkinUnlockItem extends Item {
         }
         // No HoverEvent on the preview stack here - Minecraft doesn't render nested tooltips
         tooltipComponents.add(line);
+
+        SkinDataModels.Rarity[] tiers = SkinDataModels.Rarity.values();
+        SkinDataModels.Rarity rarity = lookup.skin().rarity();
+        if (rarity.ordinal() < tiers.length - 1) {
+            Component nextRarity = rarityLabel(tiers[rarity.ordinal() + 1]);
+            tooltipComponents.add(Component.translatable("tooltip.mcpskins.fuse_hint", FUSE_COST, rarityLabel(rarity), nextRarity)
+                    .withStyle(ChatFormatting.DARK_GRAY));
+        } else {
+            tooltipComponents.add(Component.translatable("tooltip.mcpskins.fuse_max_rarity_hint").withStyle(ChatFormatting.DARK_GRAY));
+        }
+
         super.appendHoverText(stack, context, tooltipComponents, tooltipFlag);
     }
 
@@ -88,6 +109,10 @@ public class SkinUnlockItem extends Item {
         }
 
         String skinId = data.copyTag().getString("SkinToUnlock");
+
+        if (player.isShiftKeyDown()) {
+            return fuse(level, player, stack, skinId, !player.getAbilities().instabuild);
+        }
 
         if (SkinAttachment.hasSkin(player, skinId)) {
             if (!level.isClientSide()) {
@@ -140,5 +165,122 @@ public class SkinUnlockItem extends Item {
         }
 
         return Component.translatable("message.mcpskins.unlock_success", skinName).withStyle(ChatFormatting.GREEN);
+    }
+
+    /**
+     * Consumes {@link #FUSE_COST} unlock items of {@code heldSkinId}'s rarity (scanned
+     * across the whole inventory, not just {@code stack}) for one random unlock item of
+     * the next rarity up. Both sides run the same checks (rarity/pool/inventory count are
+     * all already client-known - see {@link SkinAttachment} and the skin registry sync),
+     * so only the actual random roll and item grant are server-only.
+     */
+    private InteractionResultHolder<ItemStack> fuse(Level level, Player player, ItemStack stack, String heldSkinId, boolean consumesItems) {
+        SkinDataModels.SkinLookupResult heldLookup = SkinManager.INSTANCE.findSkin(heldSkinId);
+        if (heldLookup == null) {
+            return InteractionResultHolder.pass(stack);
+        }
+
+        SkinDataModels.Rarity[] tiers = SkinDataModels.Rarity.values();
+        SkinDataModels.Rarity rarity = heldLookup.skin().rarity();
+        if (rarity.ordinal() == tiers.length - 1) {
+            if (!level.isClientSide()) {
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_max_rarity").withStyle(ChatFormatting.RED));
+            }
+            return InteractionResultHolder.fail(stack);
+        }
+        SkinDataModels.Rarity targetRarity = tiers[rarity.ordinal() + 1];
+
+        List<SkinDataModels.SkinLookupResult> pool = SkinManager.INSTANCE.getSkinsByRarity(targetRarity);
+        if (pool.isEmpty()) {
+            if (!level.isClientSide()) {
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_no_higher_rarity", rarityLabel(targetRarity)).withStyle(ChatFormatting.YELLOW));
+            }
+            return InteractionResultHolder.fail(stack);
+        }
+
+        List<Integer> matchingSlots = findMatchingSlots(player, rarity);
+        if (consumesItems && matchingSlots.size() < FUSE_COST) {
+            if (!level.isClientSide()) {
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_not_enough", FUSE_COST, rarityLabel(rarity), matchingSlots.size()).withStyle(ChatFormatting.RED));
+            }
+            return InteractionResultHolder.fail(stack);
+        }
+
+        if (level.isClientSide()) {
+            level.playSound(player, player.blockPosition(), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.0f);
+            return InteractionResultHolder.success(stack);
+        }
+
+        // Prefer a skin the player doesn't already own; fall back to the full pool once
+        // every skin of the target rarity is unlocked
+        List<SkinDataModels.SkinLookupResult> unowned = pool.stream()
+                .filter(entry -> !SkinAttachment.hasSkin(player, entry.skin().id()))
+                .toList();
+        List<SkinDataModels.SkinLookupResult> rollPool = unowned.isEmpty() ? pool : unowned;
+        SkinDataModels.SkinLookupResult rolled = rollPool.get(player.getRandom().nextInt(rollPool.size()));
+
+        if (consumesItems) {
+            consumeSlots(player, matchingSlots, FUSE_COST);
+        }
+        grantUnlockItem(player, rolled.skin().id());
+        player.sendSystemMessage(buildFuseChatMessage(rarity, rolled));
+
+        return InteractionResultHolder.success(stack);
+    }
+
+    /** Inventory slot indices (see {@code Inventory#getItem}) holding an unlock item of {@code rarity}. */
+    private List<Integer> findMatchingSlots(Player player, SkinDataModels.Rarity rarity) {
+        List<Integer> slots = new ArrayList<>();
+        Inventory inventory = player.getInventory();
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack invStack = inventory.getItem(i);
+            if (invStack.getItem() != this) continue;
+            CompoundTag tag = invStack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
+            if (!tag.contains("SkinToUnlock")) continue;
+            SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(tag.getString("SkinToUnlock"));
+            if (lookup != null && lookup.skin().rarity() == rarity) {
+                slots.add(i);
+            }
+        }
+        return slots;
+    }
+
+    private void consumeSlots(Player player, List<Integer> slots, int amount) {
+        Inventory inventory = player.getInventory();
+        for (int i = 0; i < amount; i++) {
+            inventory.getItem(slots.get(i)).shrink(1);
+        }
+    }
+
+    private void grantUnlockItem(Player player, String skinId) {
+        ItemStack resultStack = new ItemStack(this);
+        CompoundTag tag = new CompoundTag();
+        tag.putString("SkinToUnlock", skinId);
+        resultStack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
+
+        if (!player.getInventory().add(resultStack)) {
+            player.drop(resultStack, false);
+        }
+    }
+
+    private static Component buildFuseChatMessage(SkinDataModels.Rarity fromRarity, SkinDataModels.SkinLookupResult rolled) {
+        ItemStack previewGun = TACZSkinHelper.createGunStack(rolled.weapon().baseGun(), rolled.skin().id());
+        Component skinName = Component.literal(rolled.skin().name())
+                .withStyle(style -> style.withColor(rolled.skin().labelColor()).withBold(true));
+
+        if (!previewGun.isEmpty()) {
+            Component gunName = previewGun.getHoverName().copy().withStyle(style -> style
+                    .withColor(ChatFormatting.YELLOW)
+                    .withUnderlined(true)
+                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(previewGun))));
+            return Component.translatable("message.mcpskins.fuse_success_for", rarityLabel(fromRarity), skinName, gunName).withStyle(ChatFormatting.GREEN);
+        }
+        return Component.translatable("message.mcpskins.fuse_success", rarityLabel(fromRarity), skinName).withStyle(ChatFormatting.GREEN);
+    }
+
+    /** Same "gui.mcpskins.armory.rarity_*" keys the Armory screen already uses, so rarity names stay consistent everywhere. */
+    private static Component rarityLabel(SkinDataModels.Rarity rarity) {
+        return Component.translatable("gui.mcpskins.armory.rarity_" + rarity.name().toLowerCase(Locale.ROOT))
+                .withStyle(style -> style.withColor(rarity.accentColor));
     }
 }

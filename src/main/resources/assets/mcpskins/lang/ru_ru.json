@@ -51,5 +51,13 @@
   "gui.mcpskins.armory.equip": "Экипировать",
   "gui.mcpskins.armory.equipped": "Экипировано",
   "gui.mcpskins.armory.status_locked": "Этот скин заблокирован",
-  "gui.mcpskins.armory.status_need_hand": "Возьмите %s в руку, чтобы применить скин"
+  "gui.mcpskins.armory.status_need_hand": "Возьмите %s в руку, чтобы применить скин",
+
+  "tooltip.mcpskins.fuse_hint": "Shift + ПКМ: скрестить %s скина редкости %s в 1 случайный %s",
+  "tooltip.mcpskins.fuse_max_rarity_hint": "Уже максимальная редкость — скрестить дальше нельзя",
+  "message.mcpskins.fuse_max_rarity": "Этот скин уже максимальной редкости.",
+  "message.mcpskins.fuse_no_higher_rarity": "Скинов редкости %s пока не существует — скрещивать не во что.",
+  "message.mcpskins.fuse_not_enough": "Нужно %s предмета редкости %s (у тебя %s).",
+  "message.mcpskins.fuse_success_for": "Скины редкости %s скрещены — получен %s для %s!",
+  "message.mcpskins.fuse_success": "Скины редкости %s скрещены — получен %s!"
 }

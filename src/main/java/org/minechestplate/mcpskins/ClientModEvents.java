@@ -38,11 +38,11 @@ public class ClientModEvents {
                                                                  preparationsProfiler, reloadProfiler,
                                                                  backgroundExecutor, gameExecutor) ->
                 CompletableFuture.runAsync(() -> {
-                    SkinAssetResolver.clearCache();
-                    PatchedGunDisplayCache.clear();
-                    GunModelPatcher.clear();
-                    MCPSkins.LOGGER.info("[MCPSkins] Client resources reloaded - skin caches cleared.");
-                }, backgroundExecutor)
+                            SkinAssetResolver.clearCache();
+                            PatchedGunDisplayCache.clear();
+                            GunModelPatcher.clear();
+                            MCPSkins.LOGGER.info("[MCPSkins] Client resources reloaded - skin caches cleared.");
+                        }, backgroundExecutor)
                         .thenCompose(preparationBarrier::wait));
     }
 

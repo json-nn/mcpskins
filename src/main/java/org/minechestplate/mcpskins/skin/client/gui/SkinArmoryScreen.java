@@ -663,8 +663,7 @@ public class SkinArmoryScreen extends Screen {
     }
 
     // -----------------------------------------------------------------------------------
-    // Keyboard input (see Item3DPodiumWidget's javadoc for C/V - podium render
-    // context/Y-flip toggle)
+    // Keyboard input (see Item3DPodiumWidget's javadoc for the C podium render-context key)
     // -----------------------------------------------------------------------------------
 
     @Override
@@ -675,10 +674,6 @@ public class SkinArmoryScreen extends Screen {
 
         if (keyCode == GLFW.GLFW_KEY_C) {
             podium.cycleContext();
-            return true;
-        }
-        if (keyCode == GLFW.GLFW_KEY_V) {
-            podium.toggleYFlip();
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_TAB) {

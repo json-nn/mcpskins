@@ -51,5 +51,13 @@
   "gui.mcpskins.armory.equip": "Екіпірувати",
   "gui.mcpskins.armory.equipped": "Екіпіровано",
   "gui.mcpskins.armory.status_locked": "Цей скін заблоковано",
-  "gui.mcpskins.armory.status_need_hand": "Візьміть %s у руку, щоб застосувати скін"
+  "gui.mcpskins.armory.status_need_hand": "Візьміть %s у руку, щоб застосувати скін",
+
+  "tooltip.mcpskins.fuse_hint": "Shift + ПКМ: об'єднати %s скіни рідкості %s в 1 випадковий %s",
+  "tooltip.mcpskins.fuse_max_rarity_hint": "Вже максимальна рідкість — об'єднати далі не можна",
+  "message.mcpskins.fuse_max_rarity": "Цей скін вже максимальної рідкості.",
+  "message.mcpskins.fuse_no_higher_rarity": "Скінів рідкості %s ще не існує — об'єднувати нема на що.",
+  "message.mcpskins.fuse_not_enough": "Потрібно %s скіни рідкості %s (у тебе %s).",
+  "message.mcpskins.fuse_success_for": "Скіни рідкості %s об'єднано — отримано %s для %s!",
+  "message.mcpskins.fuse_success": "Скіни рідкості %s об'єднано — отримано %s!"
 }

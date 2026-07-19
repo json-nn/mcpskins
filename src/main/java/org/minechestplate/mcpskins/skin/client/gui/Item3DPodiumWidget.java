@@ -17,23 +17,14 @@ import org.minechestplate.mcpskins.MCPSkins;
  * {@code SkinArmoryScreen}): drag to rotate, scroll to zoom, a dark studio backdrop
  * instead of blur, and a fault-tolerant fallback to a flat icon on any render error.
  * <p>
- * <b>Why a dark backdrop instead of blur:</b> vanilla's "Menu Background Blurriness"
- * setting only triggers via {@code Screen#renderBackground(...)}, which
- * {@code SkinArmoryScreen} deliberately never calls (it draws its own background via
- * {@link #renderBackdropFill} instead), so that setting can never affect this screen
- * regardless of the player's options. Third-party client blur mods are a separate
- * concern outside this mod's control - if one affects {@code SkinArmoryScreen} for a
- * player, the fix is adding it to that mod's own exclusion list, the same way TACZ's
- * author had to do for {@code GunRefitScreen}.
+ * Dark backdrop instead of blur because vanilla's "Menu Background Blurriness" only
+ * triggers via {@code Screen#renderBackground(...)}, which {@code SkinArmoryScreen}
+ * never calls (see {@link #renderBackdropFill}).
  * <p>
- * <b>Choosing an {@code ItemDisplayContext} and Y-axis direction:</b> rather than
- * hardcoding a guess, this widget provides an in-game testing tool - the {@code C} key
- * cycles through {@link #CONTEXT_CANDIDATES} and {@code V} toggles the Y-scale sign
- * (needed because GUI coordinates grow downward while most non-GUI item transforms
- * likely assume a normal, Y-up world coordinate system). The current combination is
- * shown as small text in the podium's corner on hover; once a context/flip combination
- * renders the weapon cleanly and right-side up, no further code changes are needed
- * beyond optionally updating {@link #DEFAULT_CONTEXT_INDEX}/{@link #DEFAULT_Y_FLIP}.
+ * The {@code C} key cycles {@link #CONTEXT_CANDIDATES} to pick the render's
+ * {@code ItemDisplayContext}; {@link #DEFAULT_CONTEXT_INDEX} is the confirmed default.
+ * The Y-axis mirror in {@link #renderItem3D} is permanent, not user-toggleable - see the
+ * comment there.
  */
 public final class Item3DPodiumWidget {
 
@@ -49,8 +40,6 @@ public final class Item3DPodiumWidget {
 
     /** Starting index into {@link #CONTEXT_CANDIDATES} - adjust once you've picked one. */
     private static final int DEFAULT_CONTEXT_INDEX = 0; // FIXED
-    /** Starting Y-flip state - adjust once you've picked one (see class javadoc). */
-    private static final boolean DEFAULT_Y_FLIP = true;
 
     // Full-bright packed light (blockLight=15, skyLight=15) - same value vanilla's
     // GuiGraphics#renderItem uses for GUI icons, so the model isn't shaded as if it were
@@ -78,7 +67,6 @@ public final class Item3DPodiumWidget {
     private long lastFrameNanos = -1L;
 
     private int contextIndex = DEFAULT_CONTEXT_INDEX;
-    private boolean yFlip = DEFAULT_Y_FLIP;
 
     // Fault tolerance: if the 3D render for the CURRENT item throws once, it isn't
     // retried every frame - falls back to a flat icon until the item changes or the
@@ -130,11 +118,6 @@ public final class Item3DPodiumWidget {
     public void cycleContext() {
         contextIndex = (contextIndex + 1) % CONTEXT_CANDIDATES.length;
         renderFailed = false; // a new context deserves its own attempt
-    }
-
-    /** See the V key in the class javadoc. */
-    public void toggleYFlip() {
-        yFlip = !yFlip;
     }
 
     public void resetView() {
@@ -192,10 +175,9 @@ public final class Item3DPodiumWidget {
                         warnedOnce = true;
                         MCPSkins.LOGGER.warn(
                                 "[MCPSkins] Armory 3D podium failed to render the item in context '{}' " +
-                                        "(y-flip={}) - falling back to a flat icon. Try another " +
-                                        "ItemDisplayContext with the C key (or the Y-axis flip with V) " +
-                                        "while hovering the podium.",
-                                currentContext(), yFlip, t);
+                                        "- falling back to a flat icon. Try another ItemDisplayContext " +
+                                        "with the C key while hovering the podium.",
+                                currentContext(), t);
                     }
                 }
             }
@@ -219,27 +201,18 @@ public final class Item3DPodiumWidget {
         try {
             pose.translate(centerX, centerY, 150.0);
             float scale = baseScale * zoom;
-            // yFlip: GUI coordinates grow downward, while most non-GUI ItemDisplayContext
-            // transforms likely assume a normal Y-up world coordinate system
-            pose.scale(scale, yFlip ? -scale : scale, scale);
+            // GUI coordinates grow downward, so the Y axis is always mirrored here to keep
+            // the item right-side up under ItemDisplayContext.FIXED
+            pose.scale(scale, -scale, scale);
             pose.mulPose(Axis.XP.rotationDegrees(pitch));
             pose.mulPose(Axis.YP.rotationDegrees(yaw));
 
             // 3D world-style lighting rather than flat GUI lighting, or a rotated model
             // would still look like a flat card
             Lighting.setupFor3DItems();
-            // Why yFlip made the model partially transparent: scale(scale, -scale, scale)
-            // above is a mirror reflection on the Y axis. A mirror (unlike a rotation)
-            // flips the winding order of every face, and the GPU culls faces whose winding
-            // ends up "wrong" after the transform by default - so a mirrored model loses a
-            // chunk of its faces to culling rather than rendering as literally transparent.
-            // Disabling backface culling only while rendering the flipped scene fixes it;
-            // the non-flipped scene keeps culling enabled as normal.
-            boolean cullDisabledForFlip = false;
-            if (yFlip) {
-                RenderSystem.disableCull();
-                cullDisabledForFlip = true;
-            }
+            // The mirror above flips every face's winding order, so the GPU culls faces
+            // that would otherwise be visible - disable culling for this render
+            RenderSystem.disableCull();
             try {
                 mc.getItemRenderer().renderStatic(
                         stack,
@@ -255,9 +228,7 @@ public final class Item3DPodiumWidget {
                 // draw calls could stay buffered and surface over the next frame out of order
                 guiGraphics.flush();
             } finally {
-                if (cullDisabledForFlip) {
-                    RenderSystem.enableCull();
-                }
+                RenderSystem.enableCull();
                 Lighting.setupForFlatItems();
             }
         } finally {
@@ -311,7 +282,7 @@ public final class Item3DPodiumWidget {
     }
 
     /**
-     * Debug label ("Ctx: ... Y-flip: ... [C / V]") in the podium's corner.
+     * Debug label ("Ctx: ... [C]") in the podium's corner.
      * <p>
      * <b>Why an explicit {@code guiGraphics.flush()} is required here:</b>
      * {@code GuiGraphics#drawString} doesn't send text vertices to the GPU immediately -
@@ -325,7 +296,7 @@ public final class Item3DPodiumWidget {
     private void renderDebugLabel(GuiGraphics guiGraphics, int mouseX, int mouseY) {
         if (!isInBounds(mouseX, mouseY)) return;
         Minecraft mc = Minecraft.getInstance();
-        String text = "Ctx: " + currentContext().name() + "  Y-flip: " + (yFlip ? "on" : "off") + "  [C / V]";
+        String text = "Ctx: " + currentContext().name() + "  [C]";
 
         RenderSystem.disableDepthTest();
         guiGraphics.pose().pushPose();
@@ -338,9 +309,5 @@ public final class Item3DPodiumWidget {
 
     public ItemDisplayContext currentContext() {
         return CONTEXT_CANDIDATES[contextIndex];
-    }
-
-    public boolean isYFlip() {
-        return yFlip;
     }
 }

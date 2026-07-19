@@ -26,7 +26,7 @@ import java.util.Map;
  * <p>
  * The {@code rarity}, {@code collection}, {@code description}, and {@code is_new} fields
  * are optional; datapacks that predate them still load cleanly with sane defaults.
-*/
+ */
 public class SkinManager extends SimpleJsonResourceReloadListener {
     public static final SkinManager INSTANCE = new SkinManager();
     private static final Gson GSON = new GsonBuilder().create();
@@ -125,6 +125,22 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
             }
         }
         return null;
+    }
+
+    /**
+     * All real (non-"default:") skins of a given rarity, across every weapon.
+     */
+    public List<SkinDataModels.SkinLookupResult> getSkinsByRarity(SkinDataModels.Rarity rarity) {
+        List<SkinDataModels.SkinLookupResult> list = new ArrayList<>();
+        for (SkinDataModels.WeaponSkins weapon : registry.values()) {
+            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
+                if (skin.id().startsWith("default:")) continue;
+                if (skin.rarity() == rarity) {
+                    list.add(new SkinDataModels.SkinLookupResult(weapon, skin));
+                }
+            }
+        }
+        return list;
     }
 
     /**

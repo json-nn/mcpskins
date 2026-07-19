@@ -51,5 +51,13 @@
   "gui.mcpskins.armory.equip": "Equip",
   "gui.mcpskins.armory.equipped": "Equipped",
   "gui.mcpskins.armory.status_locked": "This skin is locked",
-  "gui.mcpskins.armory.status_need_hand": "Hold %s in your hand to equip this skin"
+  "gui.mcpskins.armory.status_need_hand": "Hold %s in your hand to equip this skin",
+
+  "tooltip.mcpskins.fuse_hint": "Shift + Right Click: fuse %s %s skins into 1 random %s skin",
+  "tooltip.mcpskins.fuse_max_rarity_hint": "Already the highest rarity - can't be fused further",
+  "message.mcpskins.fuse_max_rarity": "This skin is already the highest possible rarity.",
+  "message.mcpskins.fuse_no_higher_rarity": "No %s skins exist yet - nothing to fuse into.",
+  "message.mcpskins.fuse_not_enough": "You need %s %s unlock items to fuse (you have %s).",
+  "message.mcpskins.fuse_success_for": "%s skins fused - you got %s for %s!",
+  "message.mcpskins.fuse_success": "%s skins fused - you got %s!"
 }
