@@ -41,7 +41,7 @@ public class MCPSkins {
         NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
         NeoForge.EVENT_BUS.addListener(this::onDatapackSync);
 
-        // Регистрация событий игрока для синхронизации скинов
+        // Sync unlocked skins whenever a player joins, respawns, or changes dimension
         NeoForge.EVENT_BUS.addListener(this::onPlayerLogIn);
         NeoForge.EVENT_BUS.addListener(this::onPlayerRespawn);
         NeoForge.EVENT_BUS.addListener(this::onPlayerChangeDimension);
@@ -86,10 +86,9 @@ public class MCPSkins {
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // Версия поднята с "1.0.0" - формат SyncRegistryPayload изменился (добавлены
-        // rarity/collection/description/isNew, см. javadoc SyncRegistryPayload про Armory).
-        // Клиент и сервер этого мода всегда одной версии jar'а, так что это чисто
-        // гигиенический бамп, а не требование обратной совместимости с кем-то ещё.
+        // Bumped from "1.0.0" after SyncRegistryPayload gained new fields (rarity/collection/
+        // description/isNew). Client and server always ship the same jar, so this is just a
+        // hygiene bump rather than a real compatibility requirement.
         final PayloadRegistrar registrar = event.registrar("1.1.0");
 
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);

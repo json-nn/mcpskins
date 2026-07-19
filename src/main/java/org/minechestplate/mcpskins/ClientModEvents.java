@@ -13,46 +13,24 @@ import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.client.ArmoryKeybinds;
-import org.minechestplate.mcpskins.skin.client.ClientHeldGunRefresher;
 import org.minechestplate.mcpskins.skin.render.GunModelPatcher;
 import org.minechestplate.mcpskins.skin.render.PatchedGunDisplayCache;
 import org.minechestplate.mcpskins.skin.render.SkinAssetResolver;
 
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Client-side setup: resource reload listeners, item tint handlers, and key mapping
+ * registration.
+ */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, bus = EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public class ClientModEvents {
 
     /**
-     * ИСПРАВЛЕНИЕ (баг "голые руки/сломанные анимации после захода с ресурспаком скинов"):
-     * раньше в моде НЕ БЫЛО НИ ОДНОГО клиентского reload-листенера - {@code SkinAssetResolver}
-     * кэширует "существует ли файл скина в активных ресурспаках" (см. его javadoc про
-     * {@code EXISTS_CACHE}) НАВСЕГДА, пока кто-то явно не позовёт {@code clearCache()}, а
-     * {@code PatchedGunDisplayCache} держит уже готовые пропатченные {@code GunDisplayInstance}
-     * тоже без какой-либо связи с реальной перезагрузкой ресурсов клиента.
-     * <p>
-     * Оба кэша чисто клиентские (не зависят от датапак-реестра скинов, который синхронизирует
-     * {@code SkinManager} через {@code AddReloadListenerEvent} - это ДРУГОЙ, серверный/датапак
-     * reload, не про текстуры) - им нужен именно {@link RegisterClientReloadListenersEvent},
-     * который срабатывает на КАЖДУЮ перезагрузку РЕСУРСОВ клиента (в том числе на применение
-     * ресурспака, присланного сервером при подключении, и на команду /reload). Без этого сброса
-     * устаревшие "файл не найден"/"файл найден" решения и старые пропатченные копии могли бы
-     * пережить смену ресурспака и указывать на уже не соответствующие действительности данные.
-     * <p>
-     * <b>ДОБАВЛЕНО - {@link ClientHeldGunRefresher#scheduleRefresh()}:</b> по логу подтверждено,
-     * что при F3+T клиент иногда на один цикл перезагрузки реально теряет из стека серверный
-     * ресурспак (видно по отсутствию записи {@code server/<id>/...} в логе
-     * {@code ReloadableResourceManager}), из-за чего ванильный {@code TextureManager} ловит
-     * {@code FileNotFoundException} на уже когда-то забинженной текстуре скина. Наши кэши это
-     * переживают правильно (сбрасываются на каждый такой цикл), но то, как рендер TACZ решает
-     * (не) перебиндить саму GPU-текстуру после возврата файла - вне зоны действия
-     * {@code GunDisplayInstancePatcher} (см. его javadoc, п.2 - в рендер-состояние мы
-     * принципиально не лезем). Единственный подтверждённый на практике фикс - пересоздать
-     * удерживаемый предмет (то же самое, что "переключить оружие в другой слот и обратно") -
-     * см. подробности в javadoc {@code ClientHeldGunRefresher}. Планируем это ПОСЛЕ
-     * {@code preparationBarrier.wait()} (внутри {@code thenRunAsync} ниже), то есть когда
-     * перезагрузка уже полностью применилась ВСЕМИ листенерами (включая TACZ), а не в момент
-     * начала подготовки - иначе рискуем словить ту же гонку с недособранными ассетами заново.
+     * Clears the client-side skin caches ({@link SkinAssetResolver}, {@link PatchedGunDisplayCache},
+     * {@link GunModelPatcher}) on every resource reload. Without this, stale texture-existence
+     * lookups and patched display instances could survive a resource pack change and point at
+     * data that no longer matches.
      */
     @SubscribeEvent
     public static void registerReloadListeners(RegisterClientReloadListenersEvent event) {
@@ -60,49 +38,42 @@ public class ClientModEvents {
                                                                  preparationsProfiler, reloadProfiler,
                                                                  backgroundExecutor, gameExecutor) ->
                 CompletableFuture.runAsync(() -> {
-                            SkinAssetResolver.clearCache();
-                            PatchedGunDisplayCache.clear();
-                            GunModelPatcher.clear();
-                            MCPSkins.LOGGER.info("[MCPSkins] Клиентские ресурсы перезагружены - кэши скинов (существование текстур/моделей, пропатченные и geo-модельные GunDisplayInstance) сброшены.");
-                        }, backgroundExecutor)
-                        .thenCompose(preparationBarrier::wait)
-                        .thenRunAsync(ClientHeldGunRefresher::scheduleRefresh, gameExecutor));
+                    SkinAssetResolver.clearCache();
+                    PatchedGunDisplayCache.clear();
+                    GunModelPatcher.clear();
+                    MCPSkins.LOGGER.info("[MCPSkins] Client resources reloaded - skin caches cleared.");
+                }, backgroundExecutor)
+                        .thenCompose(preparationBarrier::wait));
     }
 
     @SubscribeEvent
     public static void registerItemColors(RegisterColorHandlersEvent.Item event) {
         event.register((stack, tintIndex) -> {
-            // tintIndex 0 соответствует "layer0" в нашем JSON (наш фон)
+            // tintIndex 0 is "layer0" (the item's background) in the model JSON
             if (tintIndex == 0) {
                 CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
 
                 if (data.contains("SkinToUnlock")) {
                     String skinId = data.copyTag().getString("SkinToUnlock");
 
-                    // Ищем цвет скина в реестре
                     for (SkinDataModels.WeaponSkins weapon : SkinManager.INSTANCE.getRegistry().values()) {
                         for (SkinDataModels.SkinEntry skin : weapon.skins()) {
                             if (skin.id().equals(skinId)) {
-                                // Маска | 0xFF000000 гарантирует, что альфа-канал будет равен FF (непрозрачный)
-                                return skin.labelColor() | 0xFF000000;
+                                return skin.labelColor() | 0xFF000000; // force opaque alpha
                             }
                         }
                     }
                 }
             }
-            // Если скин не найден или это tintIndex 1 (белые линии), возвращаем непрозрачный белый
-            return 0xFFFFFFFF; // Использовать 0xFFFFFFFF вместо 0xFFFFFF
+            return 0xFFFFFFFF; // opaque white fallback (unknown skin, or tintIndex 1)
 
         }, ModItems.SKIN_UNLOCK_ITEM.get());
     }
 
     /**
-     * НОВОЕ (MCPSkins Armory, см. §3 концепта "Точки входа - Хоткей"): регистрация самого
-     * {@link net.minecraft.client.KeyMapping} обязана происходить на MOD-шине через
-     * {@link RegisterKeyMappingsEvent} (см. официальную документацию NeoForge про
-     * key mappings) - это ДРУГАЯ шина, чем та, на которой {@code ArmoryKeybinds} слушает тики
-     * для реального опроса нажатия (GAME-шина, {@code ClientTickEvent.Post}), поэтому
-     * регистрация и обработка сознательно разнесены по двум классам, как и требует API.
+     * Registers the {@link ArmoryKeybinds#OPEN_ARMORY} key mapping. Must happen on the MOD bus
+     * (unlike the tick polling in {@link ArmoryKeybinds}, which runs on the GAME bus), so
+     * registration and handling live in separate classes as the API requires.
      */
     @SubscribeEvent
     public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
