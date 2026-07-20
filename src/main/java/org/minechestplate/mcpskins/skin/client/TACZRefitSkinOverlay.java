@@ -8,7 +8,6 @@ import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
@@ -20,11 +19,15 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.MCPSkins;
+import org.minechestplate.mcpskins.config.MCPSkinsClientConfig;
+import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
+import org.minechestplate.mcpskins.config.ScreenAnchor;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinComponents;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
+import org.minechestplate.mcpskins.skin.client.gui.TooltipPlacement;
 import org.minechestplate.mcpskins.skin.network.ApplySkinPayload;
 
 import java.util.ArrayList;
@@ -36,24 +39,20 @@ import java.util.List;
  * ({@code com.tacz.guns.client.gui.GunRefitScreen}).
  * <p>
  * Which skin is shown is controlled entirely by the {@link SkinComponents#SKIN_ID}
- * component (read via {@link TACZSkinHelper#getSkinId(ItemStack)}); the weapon's GunId
- * itself is never changed, for either a real skin application or the client-side preview
- * below. Previewing a locked skin is therefore just a temporary local edit of that same
- * component on the held item - no packet sent to the server, and no effect on ownership.
+ * component (read via {@link TACZSkinHelper#getSkinId(ItemStack)}) - the weapon's GunId
+ * itself is never touched, so previewing a locked skin is just a temporary local edit of
+ * that component, with no packet sent and no effect on ownership.
  * <p>
- * <b>Why the toggle button is hand-drawn instead of a {@code Button} widget:</b> switching
- * attachment tabs (GRIP/SCOPE/MUZZLE/...) on {@code GunRefitScreen} rebuilds its own widget
- * list without going through a full {@code Screen.init()}, so a widget added via
- * {@code ScreenEvent.Init.Post} would silently disappear on the next tab switch. The
- * carousel and toast never had this problem because they're drawn manually in
- * {@link #onScreenRenderPost} and hit-tested manually in {@link #onMouseClicked}; the
- * toggle button now works the same way for the same reason.
+ * The toggle button, carousel and toast are all hand-drawn instead of widgets: switching
+ * attachment tabs on {@code GunRefitScreen} rebuilds its widget list without a full
+ * {@code Screen.init()}, so anything added as a widget would disappear on the next tab
+ * switch. They're drawn in {@link #onScreenRenderPost} and hit-tested in
+ * {@link #onMouseClicked}.
  * <p>
- * Assumes the refit screen always operates on the weapon currently in the player's hand
- * (main or offhand) - see {@link #getViewedGunStack()}. If your fork opens refit some
- * other way, that method needs adjusting. The toggle button's position
- * ({@link #TOGGLE_MARGIN_TOP}/{@link #TOGGLE_MARGIN_RIGHT}) is tuned by eye against a
- * screenshot; adjust if it overlaps native icons on your resource pack.
+ * Assumes the refit screen always operates on the weapon in the player's hand (main or
+ * offhand) - see {@link #getViewedGunStack()}. The toggle button's position comes from
+ * {@link MCPSkinsClientConfig} (see {@code RefitButtonPositionScreen} for the in-game
+ * picker, or {@link #toggleButtonBounds} for the default).
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, value = Dist.CLIENT)
 public class TACZRefitSkinOverlay {
@@ -61,28 +60,14 @@ public class TACZRefitSkinOverlay {
     // Fully qualified name of the native TACZ screen this class hooks into
     private static final String GUN_REFIT_SCREEN_CLASS = "com.tacz.guns.client.gui.GunRefitScreen";
 
-    // ---- Layout tuning (adjust for your TACZ resource pack/resolution) ----------------
-    private static final int TOGGLE_SIZE = 20;
-    private static final int TOGGLE_MARGIN_RIGHT = 8;
-    private static final int TOGGLE_MARGIN_TOP = 108;
-
-    // assets/mcpskins/textures/gui/skin_switch_icon.png - replaces the old "SK"/"✕" text
-    // glyphs on the toggle button (see renderToggleButton)
-    private static final ResourceLocation TOGGLE_ICON =
-            ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "textures/gui/skin_switch_icon.png");
-    private static final int TOGGLE_ICON_TEX_SIZE = 64; // native resolution of skin_switch_icon.png
-    private static final int TOGGLE_ICON_DRAW_SIZE = 16; // rendered size inside the 20x20 button
-
-    private static final int CAROUSEL_HEIGHT = 96;
-    private static final int CAROUSEL_SLOT_BASE = 44;
-    private static final int CAROUSEL_SPACING = 60;
     private static final int PANEL_BOTTOM_MARGIN = 14;
     private static final int PANEL_FADE_HEIGHT = 24;
 
+    // Shifts the tooltip up so it lines up with TACZ's own attachment-name label
+    private static final int LABEL_Y_NUDGE = -2;
+
     // ---- Toast for a REAL skin application (not a preview) -----------------------------
-    private static final long TOAST_DURATION_MS = 2200L;
     private static final long TOAST_FADE_MS = 350L;
-    // Component rather than String, so the toast text stays translatable
     private static Component toastText = null;
     private static long toastStartTime = 0L;
 
@@ -90,16 +75,13 @@ public class TACZRefitSkinOverlay {
     private static boolean skinModeActive = false;
     private static int focusedSkinIndex = 0;
     private static float animatedSkinIndex = 0f;
-    // Last seen equipped bare skin id (or baseGun if no skin) - distinguishes "the
-    // weapon/skin actually changed" from "the player is just scrolling the carousel"
+    // Last seen equipped bare skin id (or baseGun if no skin) - lets us tell "the weapon/skin
+    // actually changed" apart from "the player is just scrolling the carousel"
     private static String lastSeenSkinId = null;
 
     // ---- Client-side preview state (no unlock/grant involved) --------------------------
-    // previewOriginalSkinId is the real (server-authoritative) bare skin id the weapon had
-    // before we temporarily overwrote the SKIN_ID component for preview purposes.
-    // previewActive tracks whether a preview is in progress, kept separate from a null
-    // check since "no skin" and "no preview" are both legitimately null.
     private static boolean previewActive = false;
+    // The real (server-authoritative) bare skin id before we overwrote SKIN_ID for preview
     private static String previewOriginalSkinId = null;
     private static String previewedSkinId = null;
     private static InteractionHand previewHand = null;
@@ -108,8 +90,7 @@ public class TACZRefitSkinOverlay {
     }
 
     // -----------------------------------------------------------------------------------
-    // Screen init - only syncs carousel focus. The toggle button is no longer registered
-    // as a widget here - see the class javadoc and renderToggleButton()/onMouseClicked().
+    // Screen init
     // -----------------------------------------------------------------------------------
 
     @SubscribeEvent
@@ -117,30 +98,29 @@ public class TACZRefitSkinOverlay {
         Screen screen = event.getScreen();
         if (!isGunRefitScreen(screen)) return;
 
-        // Center the carousel on the currently equipped skin on (re)open. Left alone
-        // during an active preview, so it doesn't reset on every attachment tab switch.
+        // Center the carousel on the equipped skin on (re)open; left alone during a preview
         syncFocusedSkinToEquipped();
     }
 
     /**
-     * {@code GunRefitScreen.init()} fires repeatedly per session (on every attachment tab
-     * switch), so restoring the real skin after a preview is tied to the screen closing
-     * entirely, not to (re)initialization.
+     * {@code GunRefitScreen.init()} fires on every attachment tab switch, so restoring the
+     * real skin after a preview is tied to the screen closing, not to reinit.
      */
     @SubscribeEvent
     public static void onScreenClosing(ScreenEvent.Closing event) {
         if (!isGunRefitScreen(event.getScreen())) return;
         restorePreviewIfActive();
+        // Otherwise the toggle button's "lit" look would survive into the next session
+        skinModeActive = false;
     }
 
     // -----------------------------------------------------------------------------------
     // Rendering the carousel, toast, and toggle button over the native screen
     // -----------------------------------------------------------------------------------
 
-    // priority = LOWEST: multiple mods can subscribe to Render.Post on this screen (TACZ
-    // itself draws attachment icons, tab highlights, etc. there too), and with the default
-    // priority TACZ could render after us and cover the toast/button/carousel. LOWEST
-    // guarantees we draw last among all Render.Post subscribers on this screen.
+    // LOWEST priority so we draw last among all Render.Post subscribers on this screen -
+    // TACZ itself draws attachment icons/tab highlights on Render.Post too and could
+    // otherwise cover our overlay
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void onScreenRenderPost(ScreenEvent.Render.Post event) {
         Screen screen = event.getScreen();
@@ -150,12 +130,7 @@ public class TACZRefitSkinOverlay {
         int mouseX = event.getMouseX();
         int mouseY = event.getMouseY();
 
-        // Toast for a real skin application draws regardless of whether the carousel is
-        // open, so the player sees confirmation even after closing the panel immediately
         renderToast(guiGraphics, screen);
-
-        // Toggle button always renders while the refit screen is open, not just while
-        // skinModeActive - otherwise there'd be no way to turn skin mode on
         renderToggleButton(guiGraphics, screen, mouseX, mouseY);
 
         if (!skinModeActive) return;
@@ -172,8 +147,6 @@ public class TACZRefitSkinOverlay {
         String equippedSkinId = normalizeEquipped(getRealSkinId(), baseGun);
 
         if (!previewActive && !equippedSkinId.equals(lastSeenSkinId)) {
-            // Weapon changed (or a skin was really applied) - re-center the carousel.
-            // Left alone during an active preview.
             centerOnSkin(weapon, equippedSkinId);
         }
 
@@ -181,71 +154,47 @@ public class TACZRefitSkinOverlay {
     }
 
     /**
-     * Toggle button bounds in screen coordinates, kept in one place so rendering
-     * ({@link #renderToggleButton}) and hit-testing ({@link #onMouseClicked}) can't diverge.
+     * Toggle button bounds in screen coordinates, shared by rendering and hit-testing so
+     * they can't diverge.
      *
      * @return {x0, y0, size}
      */
     private static int[] toggleButtonBounds(Screen screen) {
-        int x = screen.width - TOGGLE_MARGIN_RIGHT - TOGGLE_SIZE;
-        int y = TOGGLE_MARGIN_TOP;
-        return new int[]{x, y, TOGGLE_SIZE};
+        int size = MCPSkinsClientConfig.refitButtonSize();
+        ScreenAnchor anchor = MCPSkinsClientConfig.refitButtonAnchor();
+        int x = anchor.resolveX(screen.width, size, MCPSkinsClientConfig.refitButtonOffsetX());
+        int y = anchor.resolveY(screen.height, size, MCPSkinsClientConfig.refitButtonOffsetY());
+        return new int[]{x, y, size};
     }
 
-    /**
-     * Manually draws the toggle button - see the class javadoc on why it isn't a widget.
-     * Styled to sit quietly among TACZ's own attachment icons instead of standing out:
-     * flat fill, no border at rest, and a white outline only on hover - the same language
-     * TACZ uses for its own icon row. Active state (skin mode on) gets a lighter fill
-     * rather than a border, matching how TACZ marks a selected tab.
-     */
     private static void renderToggleButton(GuiGraphics guiGraphics, Screen screen, int mouseX, int mouseY) {
+        if (!MCPSkinsClientConfig.refitButtonEnabled()) return;
+
         int[] bounds = toggleButtonBounds(screen);
         int x0 = bounds[0], y0 = bounds[1], size = bounds[2];
         boolean hovered = mouseX >= x0 && mouseX <= x0 + size && mouseY >= y0 && mouseY <= y0 + size;
 
-        // Light gray, translucent - matches TACZ's own attachment icons instead of the
-        // dark near-black box we used before
-        int bg = skinModeActive ? 0xB0D6D6D6 : (hovered ? 0xA0C6C6C6 : 0x90B0B0B0);
-        guiGraphics.fill(x0, y0, x0 + size, y0 + size, bg);
-        if (hovered) {
-            guiGraphics.renderOutline(x0, y0, size, size, 0xFFFFFFFF);
-        }
+        RefitToggleButtonRenderer.render(guiGraphics, x0, y0, size, hovered, skinModeActive);
 
-        float iconAlpha = (hovered || skinModeActive) ? 1f : 0.8f;
-        int iconDraw = TOGGLE_ICON_DRAW_SIZE;
-        int iconX = x0 + (size - iconDraw) / 2;
-        int iconY = y0 + (size - iconDraw) / 2;
-
-        RenderSystem.setShaderColor(1f, 1f, 1f, iconAlpha);
-        guiGraphics.blit(TOGGLE_ICON, iconX, iconY, iconDraw, iconDraw,
-                0f, 0f, TOGGLE_ICON_TEX_SIZE, TOGGLE_ICON_TEX_SIZE,
-                TOGGLE_ICON_TEX_SIZE, TOGGLE_ICON_TEX_SIZE);
-        RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
-
-        if (hovered) {
-            // Right-aligned to the button's own right edge rather than centered - the
-            // button sits close to the screen edge, so a centered label would run off-screen
+        if (hovered && MCPSkinsClientConfig.refitButtonTooltip()) {
             Minecraft mc = Minecraft.getInstance();
             Component label = Component.translatable("gui.mcpskins.weapon_skins_tooltip");
-            int labelRight = x0 + size;
-            guiGraphics.drawString(mc.font, label, labelRight - mc.font.width(label), y0 + size + 4, 0xFFFFFFFF);
+            int labelWidth = mc.font.width(label);
+            TooltipPlacement.Result pos = TooltipPlacement.compute(x0, x0 + size, y0, y0 + size,
+                    labelWidth, mc.font.lineHeight, screen.width, screen.height, 4);
+            guiGraphics.drawString(mc.font, label, pos.x(), pos.y() + LABEL_Y_NUDGE, 0xFFFFFFFF);
         }
     }
 
     /**
-     * Picks a toast top position that doesn't overlap any visible widget of
-     * {@code GunRefitScreen}, by reading each widget's actual bounds rather than
-     * guessing a pixel offset - so it keeps working even if TACZ moves its own
-     * buttons in a future update. Starts at {@code y0 = 8} and, iteratively, pushes
-     * the toast below any widget it overlaps.
+     * Picks a toast top position that avoids overlapping any visible widget of
+     * {@code GunRefitScreen}, by reading real widget bounds instead of a hardcoded offset -
+     * keeps working even if TACZ moves its own buttons in a future update.
      */
     private static int computeToastTop(Screen screen, int toastX0, int boxWidth, int boxHeight) {
         int candidateY = 8;
         int toastX1 = toastX0 + boxWidth;
 
-        // Iteration cap is purely defensive - fall back to a reasonable value rather
-        // than loop indefinitely on an unexpected widget layout
         for (int attempt = 0; attempt < 8; attempt++) {
             AbstractWidget overlapping = findOverlappingWidget(screen, toastX0, toastX1, candidateY, candidateY + boxHeight);
             if (overlapping == null) {
@@ -270,8 +219,14 @@ public class TACZRefitSkinOverlay {
 
     private static void renderToast(GuiGraphics guiGraphics, Screen screen) {
         if (toastText == null) return;
+        if (!MCPSkinsClientConfig.toastEnabled()) {
+            toastText = null;
+            return;
+        }
+
+        long duration = MCPSkinsClientConfig.toastDurationMs();
         long elapsed = System.currentTimeMillis() - toastStartTime;
-        if (elapsed > TOAST_DURATION_MS) {
+        if (elapsed > duration) {
             toastText = null;
             return;
         }
@@ -279,8 +234,8 @@ public class TACZRefitSkinOverlay {
         float alpha;
         if (elapsed < TOAST_FADE_MS) {
             alpha = elapsed / (float) TOAST_FADE_MS;
-        } else if (elapsed > TOAST_DURATION_MS - TOAST_FADE_MS) {
-            alpha = (TOAST_DURATION_MS - elapsed) / (float) TOAST_FADE_MS;
+        } else if (elapsed > duration - TOAST_FADE_MS) {
+            alpha = (duration - elapsed) / (float) TOAST_FADE_MS;
         } else {
             alpha = 1f;
         }
@@ -292,19 +247,14 @@ public class TACZRefitSkinOverlay {
         int boxW = textWidth + paddingX * 2;
         int boxH = mc.font.lineHeight + paddingY * 2;
         int x0 = screen.width / 2 - boxW / 2;
-        // Reads real widget bounds via computeToastTop rather than a hardcoded offset, so
-        // the toast never overlaps a native TACZ widget on other tabs/resolutions/packs
         int y0 = computeToastTop(screen, x0, boxW, boxH);
 
         int bgAlpha = Math.round(alpha * 0xD0) << 24;
         int borderAlpha = Math.round(alpha * 255) << 24;
         int textAlpha = Math.round(alpha * 255) << 24;
 
-        // Disables the depth test and pushes far forward on Z while drawing: if TACZ's own
-        // render() draws through the 3D pipeline with depth testing on, leftover depth
-        // buffer values could make our 2D quads fail the depth check and render underneath
-        // TACZ's pixels despite correct call order. Disabling it draws over the color
-        // buffer unconditionally.
+        // Depth test off + pushed far forward on Z, so leftover depth values from TACZ's
+        // own 3D render pass can't make our 2D quads render underneath it
         RenderSystem.disableDepthTest();
         guiGraphics.pose().pushPose();
         guiGraphics.pose().translate(0.0F, 0.0F, 900.0F);
@@ -321,11 +271,11 @@ public class TACZRefitSkinOverlay {
                                     String equippedSkinId, int mouseX, int mouseY) {
         int width = screen.width;
         int height = screen.height;
-        int panelTop = height - CAROUSEL_HEIGHT - PANEL_BOTTOM_MARGIN;
-        int centerY = panelTop + CAROUSEL_HEIGHT / 2;
+        int carouselHeight = MCPSkinsClientConfig.carouselHeight();
+        int panelTop = height - carouselHeight - PANEL_BOTTOM_MARGIN;
+        int centerY = panelTop + carouselHeight / 2;
         int centerX = width / 2;
 
-        // Semi-transparent backdrop so the carousel reads clearly over the 3D weapon/world
         guiGraphics.fillGradient(0, panelTop - PANEL_FADE_HEIGHT, width, panelTop, 0x00000000, 0x9A000000);
         guiGraphics.fill(0, panelTop, width, height, 0xB4000000);
         guiGraphics.fill(0, panelTop, width, panelTop + 1, 0x405FD3FF);
@@ -361,22 +311,20 @@ public class TACZRefitSkinOverlay {
             guiGraphics.renderOutline(x0, y0, slot.size(), slot.size(), (borderRgb & 0xFFFFFF) | borderAlpha);
             guiGraphics.fill(x0, y0, x0 + slot.size(), y0 + 2, (entry.labelColor() & 0xFFFFFF) | alphaByte);
 
-            // Pulsing outer ring on the equipped/previewed skin in the center slot
             if (isCenter && (isCurrentlyEquipped || isPreviewed)) {
                 int glowRgb = isCurrentlyEquipped ? 0x5FD3FF : 0xFFB347;
                 int glowAlpha = Math.round(slot.alpha() * (0x40 + Math.round(pulse * 0x60))) << 24;
                 guiGraphics.renderOutline(x0 - 2, y0 - 2, slot.size() + 4, slot.size() + 4, (glowRgb & 0xFFFFFF) | glowAlpha);
             }
 
-            // Thumbnail goes through the same createGunStack -> TimelessAPI -> mixin path
-            // as the held weapon, so an optional "<skinId>_icon.png" is picked up automatically
+            // Same createGunStack -> TimelessAPI -> mixin path as the held weapon, so an
+            // optional "<skinId>_icon.png" is picked up automatically
             ItemStack thumb = TACZSkinHelper.createGunStack(weapon.baseGun(), entry.id());
             int iconOffset = (slot.size() - 16) / 2;
             guiGraphics.renderItem(thumb, x0 + iconOffset, y0 + iconOffset);
 
             if (!unlocked && !isPreviewed) {
                 guiGraphics.fill(x0, y0, x0 + slot.size(), y0 + slot.size(), 0x80000000);
-                // Small lock icon so "locked" reads at a glance, not just from the dimming
                 int lockW = 8, lockH = 8;
                 int lx = x0 + slot.size() - lockW - 2;
                 int ly = y0 + slot.size() - lockH - 2;
@@ -384,8 +332,7 @@ public class TACZRefitSkinOverlay {
                 guiGraphics.renderOutline(lx + 1, ly, lockW - 2, 4, lockColor);
                 guiGraphics.fill(lx, ly + 3, lx + lockW, ly + lockH, lockColor);
             } else if (!unlocked) {
-                // Currently previewed but not owned - amber tint instead of a dark
-                // overlay, so it doesn't read as "unavailable"
+                // Previewed but not owned - amber tint instead of a dark overlay
                 guiGraphics.fill(x0, y0, x0 + slot.size(), y0 + slot.size(), (Math.round(slot.alpha() * 0x30) << 24) | 0xFFB347);
             }
 
@@ -408,15 +355,13 @@ public class TACZRefitSkinOverlay {
                     status = Component.translatable("gui.mcpskins.status_click_to_preview");
                     statusColor = 0xFF8080;
                 }
-                guiGraphics.drawCenteredString(mc.font, status, centerX, panelTop + CAROUSEL_HEIGHT - 12, statusColor);
+                guiGraphics.drawCenteredString(mc.font, status, centerX, panelTop + carouselHeight - 12, statusColor);
 
-                // "N / total" counter in the panel's top-right corner
                 String counter = (slot.skinIndex() + 1) + " / " + weapon.skins().size();
                 guiGraphics.drawString(mc.font, counter, width - mc.font.width(counter) - 8, panelTop + 4, 0x80FFFFFF, false);
             }
         }
 
-        // Edge arrows hinting the skin list continues off-screen
         if (focusedSkinIndex > 0) {
             guiGraphics.drawCenteredString(mc.font, Component.literal("‹"), 14, centerY - 4, 0x80FFFFFF);
         }
@@ -438,15 +383,12 @@ public class TACZRefitSkinOverlay {
         double mouseX = event.getMouseX();
         double mouseY = event.getMouseY();
 
-        // Toggle button click is checked first and always, regardless of skinModeActive -
-        // otherwise there'd be no way to turn skin mode back on (it's hand-drawn, not a
-        // widget, so Screen.mouseClicked() doesn't handle it on its own)
         int[] bounds = toggleButtonBounds(screen);
-        if (mouseX >= bounds[0] && mouseX <= bounds[0] + bounds[2]
+        if (MCPSkinsClientConfig.refitButtonEnabled()
+                && mouseX >= bounds[0] && mouseX <= bounds[0] + bounds[2]
                 && mouseY >= bounds[1] && mouseY <= bounds[1] + bounds[2]) {
             skinModeActive = !skinModeActive;
             if (!skinModeActive) {
-                // Restore the weapon's real appearance if a preview was in progress
                 restorePreviewIfActive();
             }
             LocalPlayer player = Minecraft.getInstance().player;
@@ -466,11 +408,12 @@ public class TACZRefitSkinOverlay {
         SkinDataModels.WeaponSkins weapon = SkinManager.INSTANCE.getRegistry().get(baseGun);
         if (weapon == null || weapon.skins().isEmpty()) return;
 
-        int panelTop = screen.height - CAROUSEL_HEIGHT - PANEL_BOTTOM_MARGIN;
-        if (mouseY < panelTop - PANEL_FADE_HEIGHT) return; // click outside our panel entirely
+        int carouselHeight = MCPSkinsClientConfig.carouselHeight();
+        int panelTop = screen.height - carouselHeight - PANEL_BOTTOM_MARGIN;
+        if (mouseY < panelTop - PANEL_FADE_HEIGHT) return;
 
         int centerX = screen.width / 2;
-        int centerY = panelTop + CAROUSEL_HEIGHT / 2;
+        int centerY = panelTop + carouselHeight / 2;
 
         for (CarouselSlot slot : computeSlots(weapon, centerX, centerY)) {
             int half = slot.size() / 2;
@@ -481,16 +424,9 @@ public class TACZRefitSkinOverlay {
 
                 LocalPlayer player = Minecraft.getInstance().player;
                 if (player != null && SkinAttachment.hasSkin(player, entry.id())) {
-                    // The real skin application goes through the server, but the SKIN_ID
-                    // component on the held item is also set optimistically here, before
-                    // the packet is sent - via the same code path as previewLockedSkin().
-                    //
-                    // This matters because if a locked skin was being previewed right
-                    // before this click, the held item's component already reflects that
-                    // preview locally. clearPreviewState() below only resets the preview
-                    // bookkeeping flags, not the item stack itself - so without this,
-                    // the client would keep showing the previewed skin until the
-                    // server's inventory sync packet arrives, which isn't instant.
+                    // Sets SKIN_ID on the held item optimistically, before the packet is
+                    // sent - otherwise, if a preview was active, the item would keep showing
+                    // the previewed skin until the server's sync packet arrives
                     InteractionHand hand = resolveGunHand(player);
                     if (hand != null) {
                         ItemStack heldGunNow = player.getItemInHand(hand);
@@ -507,8 +443,7 @@ public class TACZRefitSkinOverlay {
                     toastText = Component.translatable("gui.mcpskins.toast_skin_applied", entry.name());
                     toastStartTime = System.currentTimeMillis();
                     player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.6f, 1.4f);
-                } else if (player != null) {
-                    // Skin not owned - client-side preview only, no server round-trip
+                } else if (player != null && MCPSkinsServerConfig.allowLockedSkinPreview()) {
                     previewLockedSkin(bareId(entry.id()));
                     player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.4f, 1.0f);
                 }
@@ -517,8 +452,8 @@ public class TACZRefitSkinOverlay {
             }
         }
 
-        // The whole dark panel left/right of the slot cluster switches skins now, not just
-        // the arrow glyph itself - anywhere past centerX works, mirroring the scroll wheel
+        // Clicking anywhere left/right of the slot cluster switches skins, mirroring the
+        // scroll wheel - not just the arrow glyph itself
         if (mouseX < centerX) {
             if (focusedSkinIndex > 0) {
                 focusedSkinIndex--;
@@ -531,8 +466,8 @@ public class TACZRefitSkinOverlay {
             return;
         }
 
-        // Any other click within the carousel strip shouldn't fall through to TACZ's
-        // attachment slots, which may physically sit beneath our panel
+        // Swallow other clicks in the carousel strip so they don't fall through to TACZ's
+        // attachment slots underneath our panel
         if (mouseY >= panelTop) {
             event.setCanceled(true);
         }
@@ -544,7 +479,7 @@ public class TACZRefitSkinOverlay {
         Screen screen = event.getScreen();
         if (!isGunRefitScreen(screen)) return;
 
-        int panelTop = screen.height - CAROUSEL_HEIGHT - PANEL_BOTTOM_MARGIN;
+        int panelTop = screen.height - MCPSkinsClientConfig.carouselHeight() - PANEL_BOTTOM_MARGIN;
         if (event.getMouseY() < panelTop) return;
 
         ItemStack heldGun = getViewedGunStack();
@@ -563,14 +498,11 @@ public class TACZRefitSkinOverlay {
     // -----------------------------------------------------------------------------------
 
     /**
-     * Temporarily writes or clears the {@link SkinComponents#SKIN_ID} component on the
-     * player's actual held item, client-side only - the same code path as a real skin
-     * application, so TACZ renders the preview exactly like an equipped skin. Ownership
-     * doesn't change; the real component value is restored once the preview ends (see
-     * {@link #restorePreviewIfActive()}).
+     * Temporarily writes or clears {@link SkinComponents#SKIN_ID} on the held item,
+     * client-side only, the same code path as a real skin application. Ownership doesn't
+     * change; the real value is restored in {@link #restorePreviewIfActive()}.
      *
-     * @param skinIdBare bare skin id to preview, or a value equal to the weapon's baseGun
-     *                   to preview "no skin"
+     * @param skinIdBare bare skin id to preview, or the weapon's baseGun to preview "no skin"
      */
     private static void previewLockedSkin(String skinIdBare) {
         Minecraft mc = Minecraft.getInstance();
@@ -582,8 +514,6 @@ public class TACZRefitSkinOverlay {
         if (heldGun.isEmpty()) return;
 
         if (!previewActive) {
-            // Remember the real component value only before the first override in this
-            // preview session, so there's something to restore to
             previewOriginalSkinId = TACZSkinHelper.getSkinId(heldGun);
             previewHand = hand;
             previewActive = true;
@@ -596,17 +526,14 @@ public class TACZRefitSkinOverlay {
         }
     }
 
-    /**
-     * Restores the weapon's real skin component if a client-side preview is active.
-     * Called when the refit screen closes and when skin mode is toggled off.
-     */
+    /** Restores the weapon's real skin component if a preview is active. */
     private static void restorePreviewIfActive() {
         if (!previewActive) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null && previewHand != null) {
             ItemStack heldGun = mc.player.getItemInHand(previewHand);
             if (!heldGun.isEmpty()) {
-                // previewOriginalSkinId == null means "had no skin" - applySkin(..., null)
+                // null previewOriginalSkinId means "had no skin" - applySkin(..., null)
                 // correctly clears the component
                 ItemStack restored = TACZSkinHelper.applySkin(heldGun, previewOriginalSkinId);
                 if (!restored.isEmpty()) {
@@ -624,21 +551,13 @@ public class TACZRefitSkinOverlay {
         previewHand = null;
     }
 
-    /**
-     * The weapon's real (server-authoritative) bare skin id, or {@code null} for no skin.
-     * Unlike reading {@link #getViewedGunStack()} directly, this returns the pre-preview
-     * value while a preview is active.
-     */
+    /** The weapon's real bare skin id, or {@code null} for no skin - unaffected by an active preview. */
     private static String getRealSkinId() {
         if (previewActive) return previewOriginalSkinId;
         return TACZSkinHelper.getSkinId(getViewedGunStack());
     }
 
-    /**
-     * "No skin" (skinId == null) is equivalent, for carousel comparison purposes, to the
-     * default skin entry's bare id, which {@code SkinManager} always sets equal to the
-     * weapon's baseGun.
-     */
+    /** "No skin" is equivalent, for comparison, to the default skin entry's bare id (== baseGun). */
     private static String normalizeEquipped(String skinIdOrNull, String baseGun) {
         return skinIdOrNull == null ? baseGun : skinIdOrNull;
     }
@@ -657,10 +576,6 @@ public class TACZRefitSkinOverlay {
         return null;
     }
 
-    /**
-     * The refit screen always operates on the weapon in the player's hand; checks the
-     * main hand first, then the offhand.
-     */
     private static ItemStack getViewedGunStack() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return ItemStack.EMPTY;
@@ -707,6 +622,8 @@ public class TACZRefitSkinOverlay {
     private static List<CarouselSlot> computeSlots(SkinDataModels.WeaponSkins weapon, int centerX, int centerY) {
         List<CarouselSlot> slots = new ArrayList<>();
         List<SkinDataModels.SkinEntry> skins = weapon.skins();
+        int slotBase = MCPSkinsClientConfig.carouselSlotSize();
+        int spacing = MCPSkinsClientConfig.carouselSlotSpacing();
 
         for (int i = 0; i < skins.size(); i++) {
             float offset = i - animatedSkinIndex;
@@ -715,8 +632,8 @@ public class TACZRefitSkinOverlay {
 
             float scale = Mth.clamp(1.35f - dist * 0.3f, 0.4f, 1.35f);
             float alpha = Mth.clamp(1.2f - dist * 0.4f, 0f, 1f);
-            int size = Math.round(CAROUSEL_SLOT_BASE * scale);
-            int cx = centerX + Math.round(offset * CAROUSEL_SPACING);
+            int size = Math.round(slotBase * scale);
+            int cx = centerX + Math.round(offset * spacing);
 
             slots.add(new CarouselSlot(i, cx, centerY, size, alpha, dist));
         }

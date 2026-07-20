@@ -5,14 +5,19 @@ import net.minecraft.server.packs.resources.PreparableReloadListener;
 import net.minecraft.world.item.component.CustomData;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
 import net.neoforged.neoforge.client.event.RegisterColorHandlersEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
+import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.client.ArmoryKeybinds;
+import org.minechestplate.mcpskins.skin.client.gui.config.MCPSkinsConfigScreen;
+import org.minechestplate.mcpskins.skin.client.gui.config.RefitButtonPositionScreen;
 import org.minechestplate.mcpskins.skin.render.GunModelPatcher;
 import org.minechestplate.mcpskins.skin.render.PatchedGunDisplayCache;
 import org.minechestplate.mcpskins.skin.render.SkinAssetResolver;
@@ -20,18 +25,13 @@ import org.minechestplate.mcpskins.skin.render.SkinAssetResolver;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Client-side setup: resource reload listeners, item tint handlers, and key mapping
- * registration.
+ * Client-side setup: resource reload listeners, item tint handlers, key mapping
+ * registration, and the mod list "Config" button.
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, bus = EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public class ClientModEvents {
 
-    /**
-     * Clears the client-side skin caches ({@link SkinAssetResolver}, {@link PatchedGunDisplayCache},
-     * {@link GunModelPatcher}) on every resource reload. Without this, stale texture-existence
-     * lookups and patched display instances could survive a resource pack change and point at
-     * data that no longer matches.
-     */
+    /** Clears client-side skin caches on every resource reload, so a resource pack change can't leave stale data behind. */
     @SubscribeEvent
     public static void registerReloadListeners(RegisterClientReloadListenersEvent event) {
         event.registerReloadListener((PreparableReloadListener) (preparationBarrier, resourceManager,
@@ -41,6 +41,7 @@ public class ClientModEvents {
                             SkinAssetResolver.clearCache();
                             PatchedGunDisplayCache.clear();
                             GunModelPatcher.clear();
+                            RefitButtonPositionScreen.clearBackgroundCache();
                             MCPSkins.LOGGER.info("[MCPSkins] Client resources reloaded - skin caches cleared.");
                         }, backgroundExecutor)
                         .thenCompose(preparationBarrier::wait));
@@ -70,13 +71,17 @@ public class ClientModEvents {
         }, ModItems.SKIN_UNLOCK_ITEM.get());
     }
 
-    /**
-     * Registers the {@link ArmoryKeybinds#OPEN_ARMORY} key mapping. Must happen on the MOD bus
-     * (unlike the tick polling in {@link ArmoryKeybinds}, which runs on the GAME bus), so
-     * registration and handling live in separate classes as the API requires.
-     */
+    /** Registers the {@link ArmoryKeybinds#OPEN_ARMORY} key mapping (must happen on the MOD bus). */
     @SubscribeEvent
     public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(ArmoryKeybinds.OPEN_ARMORY);
+    }
+
+    /** Registers the mod list "Config" button - opens {@link MCPSkinsConfigScreen}. */
+    @SubscribeEvent
+    public static void registerConfigScreen(FMLClientSetupEvent event) {
+        ModList.get().getModContainerById(MCPSkins.MOD_ID).ifPresent(container ->
+                container.registerExtensionPoint(IConfigScreenFactory.class,
+                        (ctr, parentScreen) -> new MCPSkinsConfigScreen(parentScreen)));
     }
 }

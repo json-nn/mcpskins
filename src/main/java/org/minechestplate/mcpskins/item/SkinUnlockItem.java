@@ -19,6 +19,7 @@ import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.PacketDistributor;
+import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
@@ -35,14 +36,11 @@ import java.util.Locale;
  * itself, since one item type serves every skin (see {@link #use}). Prefer granting
  * it via {@code /mcpskins give item <player> <skinId>} over building the NBT by hand.
  * <p>
- * Shift + right-click instead fuses {@link #FUSE_COST} items of this item's rarity
- * (scanned across the whole inventory, not just the held stack) into one random item
- * of the next rarity up - see {@link #fuse}.
+ * Shift + right-click instead fuses {@link MCPSkinsServerConfig#FUSE_COST} items of this
+ * item's rarity (scanned across the whole inventory, not just the held stack) into one
+ * random item of the next rarity up - see {@link #fuse}.
  */
 public class SkinUnlockItem extends Item {
-
-    /** How many same-rarity unlock items {@link #fuse} consumes per roll. */
-    private static final int FUSE_COST = 3;
 
     public SkinUnlockItem(Properties properties) {
         super(properties);
@@ -90,7 +88,7 @@ public class SkinUnlockItem extends Item {
         SkinDataModels.Rarity rarity = lookup.skin().rarity();
         if (rarity.ordinal() < tiers.length - 1) {
             Component nextRarity = rarityLabel(tiers[rarity.ordinal() + 1]);
-            tooltipComponents.add(Component.translatable("tooltip.mcpskins.fuse_hint", FUSE_COST, rarityLabel(rarity), nextRarity)
+            tooltipComponents.add(Component.translatable("tooltip.mcpskins.fuse_hint", MCPSkinsServerConfig.FUSE_COST.get(), rarityLabel(rarity), nextRarity)
                     .withStyle(ChatFormatting.DARK_GRAY));
         } else {
             tooltipComponents.add(Component.translatable("tooltip.mcpskins.fuse_max_rarity_hint").withStyle(ChatFormatting.DARK_GRAY));
@@ -168,18 +166,26 @@ public class SkinUnlockItem extends Item {
     }
 
     /**
-     * Consumes {@link #FUSE_COST} unlock items of {@code heldSkinId}'s rarity (scanned
+     * Consumes a configured number of unlock items of {@code heldSkinId}'s rarity (scanned
      * across the whole inventory, not just {@code stack}) for one random unlock item of
      * the next rarity up. Both sides run the same checks (rarity/pool/inventory count are
      * all already client-known - see {@link SkinAttachment} and the skin registry sync),
      * so only the actual random roll and item grant are server-only.
      */
     private InteractionResultHolder<ItemStack> fuse(Level level, Player player, ItemStack stack, String heldSkinId, boolean consumesItems) {
+        if (!MCPSkinsServerConfig.FUSE_ENABLED.get()) {
+            if (!level.isClientSide()) {
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_disabled").withStyle(ChatFormatting.RED));
+            }
+            return InteractionResultHolder.pass(stack);
+        }
+
         SkinDataModels.SkinLookupResult heldLookup = SkinManager.INSTANCE.findSkin(heldSkinId);
         if (heldLookup == null) {
             return InteractionResultHolder.pass(stack);
         }
 
+        int fuseCost = MCPSkinsServerConfig.FUSE_COST.get();
         SkinDataModels.Rarity[] tiers = SkinDataModels.Rarity.values();
         SkinDataModels.Rarity rarity = heldLookup.skin().rarity();
         if (rarity.ordinal() == tiers.length - 1) {
@@ -199,9 +205,9 @@ public class SkinUnlockItem extends Item {
         }
 
         List<Integer> matchingSlots = findMatchingSlots(player, rarity);
-        if (consumesItems && matchingSlots.size() < FUSE_COST) {
+        if (consumesItems && matchingSlots.size() < fuseCost) {
             if (!level.isClientSide()) {
-                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_not_enough", FUSE_COST, rarityLabel(rarity), matchingSlots.size()).withStyle(ChatFormatting.RED));
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_not_enough", fuseCost, rarityLabel(rarity), matchingSlots.size()).withStyle(ChatFormatting.RED));
             }
             return InteractionResultHolder.fail(stack);
         }
@@ -220,7 +226,7 @@ public class SkinUnlockItem extends Item {
         SkinDataModels.SkinLookupResult rolled = rollPool.get(player.getRandom().nextInt(rollPool.size()));
 
         if (consumesItems) {
-            consumeSlots(player, matchingSlots, FUSE_COST);
+            consumeSlots(player, matchingSlots, fuseCost);
         }
         grantUnlockItem(player, rolled.skin().id());
         player.sendSystemMessage(buildFuseChatMessage(rarity, rolled));

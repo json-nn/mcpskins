@@ -12,6 +12,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemLore;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.minechestplate.mcpskins.MCPSkins;
+import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
@@ -49,7 +50,8 @@ public record ApplySkinPayload(String skinId) implements CustomPacketPayload {
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer player)) return;
 
-            if (!SkinAttachment.hasSkin(player, skinId) && !player.hasPermissions(2)) {
+            if (!SkinAttachment.hasSkin(player, skinId)
+                    && !player.hasPermissions(MCPSkinsServerConfig.equipBypassPermissionLevel())) {
                 return;
             }
 

@@ -1,24 +1,20 @@
 {
   "item.mcpskins.skin_unlock_item": "Предмет разблокировки скина",
-
   "tooltip.mcpskins.empty_unlock_item": "Пустой предмет разблокировки (нет данных о скине)",
   "tooltip.mcpskins.unknown_skin": "Неизвестный скин: %s",
   "tooltip.mcpskins.unlocks": "Разблокирует %s",
   "tooltip.mcpskins.unlocks_for": "Разблокирует %1$s для %2$s",
   "tooltip.mcpskins.skin_owner": "▪ Владелец скина: %s",
-
   "message.mcpskins.already_have_skin": "У вас уже есть этот скин!",
   "message.mcpskins.skin_unlocked_fallback": "Скин \"%s\" успешно разблокирован!",
   "message.mcpskins.unlock_success": "» Скин %s успешно разблокирован!",
   "message.mcpskins.unlock_success_for": "» Скин %1$s для %2$s успешно разблокирован!",
-
   "gui.mcpskins.weapon_skins_tooltip": "Скины оружия",
   "gui.mcpskins.status_equipped": "● ОДЕТО",
   "gui.mcpskins.status_preview_locked": "● ПРЕДПРОСМОТР (НЕ ПОЛУЧЕНО)",
   "gui.mcpskins.status_click_to_equip": "НАЖМИТЕ, ЧТОБЫ ОДЕТЬ",
   "gui.mcpskins.status_click_to_preview": "НАЖМИТЕ ДЛЯ ПРОСМОТРА",
   "gui.mcpskins.toast_skin_applied": "✔ Скин применён: %s",
-
   "commands.mcpskins.give_skin.success": "Скин %1$s разблокирован для %2$s",
   "commands.mcpskins.give_item.unknown_skin": "Неизвестный id скина: %s (не найден в реестре)",
   "commands.mcpskins.give_item.success": "Выдан предмет разблокировки скина \"%1$s\" игроку %2$s",
@@ -26,10 +22,8 @@
   "commands.mcpskins.take_all.success": "Скины очищены у %s",
   "commands.mcpskins.take_skin.success": "Скин %1$s удалён у %2$s",
   "commands.mcpskins.take_skin.not_found": "У игрока %1$s нет скина %2$s",
-
   "key.categories.mcpskins": "MCPSkins",
   "key.mcpskins.open_armory": "Открыть Арсенал скинов",
-
   "gui.mcpskins.armory.title": "Арсенал скинов",
   "gui.mcpskins.armory.search": "Поиск",
   "gui.mcpskins.armory.search_hint": "Поиск скинов...",
@@ -52,12 +46,30 @@
   "gui.mcpskins.armory.equipped": "Экипировано",
   "gui.mcpskins.armory.status_locked": "Этот скин заблокирован",
   "gui.mcpskins.armory.status_need_hand": "Возьмите %s в руку, чтобы применить скин",
-
   "tooltip.mcpskins.fuse_hint": "Shift + ПКМ: скрестить %s скина редкости %s в 1 случайный %s",
   "tooltip.mcpskins.fuse_max_rarity_hint": "Уже максимальная редкость — скрестить дальше нельзя",
   "message.mcpskins.fuse_max_rarity": "Этот скин уже максимальной редкости.",
   "message.mcpskins.fuse_no_higher_rarity": "Скинов редкости %s пока не существует — скрещивать не во что.",
   "message.mcpskins.fuse_not_enough": "Нужно %s предмета редкости %s (у тебя %s).",
   "message.mcpskins.fuse_success_for": "Скины редкости %s скрещены — получен %s для %s!",
-  "message.mcpskins.fuse_success": "Скины редкости %s скрещены — получен %s!"
+  "message.mcpskins.fuse_success": "Скины редкости %s скрещены — получен %s!",
+  "message.mcpskins.fuse_disabled": "Скрещивание скинов отключено на этом сервере.",
+  "gui.mcpskins.config.title": "Настройки MCPSkins",
+  "gui.mcpskins.config.on": "ВКЛ",
+  "gui.mcpskins.config.off": "ВЫКЛ",
+  "gui.mcpskins.config.refit_button_enabled": "Кнопка переключения скинов: %s",
+  "gui.mcpskins.config.refit_button_size": "Размер кнопки: %s px",
+  "gui.mcpskins.config.refit_button_tooltip": "Подсказка при наведении: %s",
+  "gui.mcpskins.config.position_button": "Настроить положение кнопки...",
+  "gui.mcpskins.config.toast_enabled": "Уведомление о применении скина: %s",
+  "gui.mcpskins.config.toast_duration": "Длительность уведомления: %s мс",
+  "gui.mcpskins.config.carousel_height": "Высота карусели: %s px",
+  "gui.mcpskins.config.carousel_slot_size": "Размер слота карусели: %s px",
+  "gui.mcpskins.config.carousel_slot_spacing": "Расстояние между слотами: %s px",
+  "gui.mcpskins.config.server_info": "Сервер: цена скрещивания %s, предпросмотр заблокированных скинов %s",
+  "gui.mcpskins.config.position_title": "Положение кнопки Refit",
+  "gui.mcpskins.config.position_save": "Сохранить",
+  "gui.mcpskins.config.position_reset": "Сбросить",
+  "gui.mcpskins.config.position_cancel": "Отмена",
+  "gui.mcpskins.config.position_coords": "X: %1$s  Y: %2$s   (%3$s: %4$s, %5$s)"
 }

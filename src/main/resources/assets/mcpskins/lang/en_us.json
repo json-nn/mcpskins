@@ -1,24 +1,20 @@
 {
   "item.mcpskins.skin_unlock_item": "Skin Unlock Item",
-
   "tooltip.mcpskins.empty_unlock_item": "Empty unlock item (no skin data)",
   "tooltip.mcpskins.unknown_skin": "Unknown skin: %s",
   "tooltip.mcpskins.unlocks": "Unlocks %s",
   "tooltip.mcpskins.unlocks_for": "Unlocks %1$s for %2$s",
   "tooltip.mcpskins.skin_owner": "▪ Skin owner: %s",
-
   "message.mcpskins.already_have_skin": "You already have this skin!",
   "message.mcpskins.skin_unlocked_fallback": "Skin \"%s\" successfully unlocked!",
   "message.mcpskins.unlock_success": "» Skin %s successfully unlocked!",
   "message.mcpskins.unlock_success_for": "» Skin %1$s for %2$s successfully unlocked!",
-
   "gui.mcpskins.weapon_skins_tooltip": "Weapon skins",
   "gui.mcpskins.status_equipped": "● EQUIPPED",
   "gui.mcpskins.status_preview_locked": "● PREVIEW (NOT RECEIVED)",
   "gui.mcpskins.status_click_to_equip": "CLICK TO EQUIP",
   "gui.mcpskins.status_click_to_preview": "CLICK TO PREVIEW",
   "gui.mcpskins.toast_skin_applied": "✔ Skin applied: %s",
-
   "commands.mcpskins.give_skin.success": "Unlocked skin %1$s for %2$s",
   "commands.mcpskins.give_item.unknown_skin": "Unknown skin id: %s (not found in registry)",
   "commands.mcpskins.give_item.success": "Gave skin unlock item \"%1$s\" to %2$s",
@@ -26,10 +22,8 @@
   "commands.mcpskins.take_all.success": "Cleared skins for %s",
   "commands.mcpskins.take_skin.success": "Removed skin %1$s from %2$s",
   "commands.mcpskins.take_skin.not_found": "Player %1$s does not have skin %2$s",
-
   "key.categories.mcpskins": "MCPSkins",
   "key.mcpskins.open_armory": "Open Skin Armory",
-
   "gui.mcpskins.armory.title": "Skin Armory",
   "gui.mcpskins.armory.search": "Search",
   "gui.mcpskins.armory.search_hint": "Search skins...",
@@ -52,12 +46,30 @@
   "gui.mcpskins.armory.equipped": "Equipped",
   "gui.mcpskins.armory.status_locked": "This skin is locked",
   "gui.mcpskins.armory.status_need_hand": "Hold %s in your hand to equip this skin",
-
   "tooltip.mcpskins.fuse_hint": "Shift + Right Click: fuse %s %s skins into 1 random %s skin",
   "tooltip.mcpskins.fuse_max_rarity_hint": "Already the highest rarity - can't be fused further",
   "message.mcpskins.fuse_max_rarity": "This skin is already the highest possible rarity.",
   "message.mcpskins.fuse_no_higher_rarity": "No %s skins exist yet - nothing to fuse into.",
   "message.mcpskins.fuse_not_enough": "You need %s %s unlock items to fuse (you have %s).",
   "message.mcpskins.fuse_success_for": "%s skins fused - you got %s for %s!",
-  "message.mcpskins.fuse_success": "%s skins fused - you got %s!"
+  "message.mcpskins.fuse_success": "%s skins fused - you got %s!",
+  "message.mcpskins.fuse_disabled": "Skin fusing is disabled on this server.",
+  "gui.mcpskins.config.title": "MCPSkins Settings",
+  "gui.mcpskins.config.on": "ON",
+  "gui.mcpskins.config.off": "OFF",
+  "gui.mcpskins.config.refit_button_enabled": "Show refit toggle button: %s",
+  "gui.mcpskins.config.refit_button_size": "Button size: %s px",
+  "gui.mcpskins.config.refit_button_tooltip": "Show hover label: %s",
+  "gui.mcpskins.config.position_button": "Configure button position...",
+  "gui.mcpskins.config.toast_enabled": "Show apply toast: %s",
+  "gui.mcpskins.config.toast_duration": "Toast duration: %s ms",
+  "gui.mcpskins.config.carousel_height": "Carousel height: %s px",
+  "gui.mcpskins.config.carousel_slot_size": "Carousel slot size: %s px",
+  "gui.mcpskins.config.carousel_slot_spacing": "Carousel slot spacing: %s px",
+  "gui.mcpskins.config.server_info": "Server: fuse cost %s, locked-skin preview %s",
+  "gui.mcpskins.config.position_title": "Refit Button Position",
+  "gui.mcpskins.config.position_save": "Save",
+  "gui.mcpskins.config.position_reset": "Reset",
+  "gui.mcpskins.config.position_cancel": "Cancel",
+  "gui.mcpskins.config.position_coords": "X: %1$s  Y: %2$s   (%3$s: %4$s, %5$s)"
 }

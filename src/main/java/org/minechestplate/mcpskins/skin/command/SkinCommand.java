@@ -12,6 +12,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
+import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
@@ -24,7 +25,7 @@ import org.minechestplate.mcpskins.skin.SkinManager;
 public class SkinCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("mcpskins")
-                .requires(source -> source.hasPermission(4))
+                .requires(source -> source.hasPermission(MCPSkinsServerConfig.adminCommandPermissionLevel()))
                 .then(Commands.literal("give")
                         .then(Commands.literal("skin")
                                 .then(Commands.argument("player", EntityArgument.player())

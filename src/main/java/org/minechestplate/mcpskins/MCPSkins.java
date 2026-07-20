@@ -5,6 +5,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.AddReloadListenerEvent;
@@ -14,6 +15,8 @@ import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+import org.minechestplate.mcpskins.config.MCPSkinsClientConfig;
+import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinComponents;
@@ -34,6 +37,9 @@ public class MCPSkins {
     public MCPSkins(IEventBus modEventBus, ModContainer modContainer) {
         modEventBus.addListener(this::commonSetup);
         modEventBus.addListener(this::registerNetworking);
+
+        modContainer.registerConfig(ModConfig.Type.CLIENT, MCPSkinsClientConfig.SPEC);
+        modContainer.registerConfig(ModConfig.Type.SERVER, MCPSkinsServerConfig.SPEC);
 
         SkinComponents.DATA_COMPONENTS.register(modEventBus);
 
@@ -86,9 +92,7 @@ public class MCPSkins {
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // Bumped from "1.0.0" after SyncRegistryPayload gained new fields (rarity/collection/
-        // description/isNew). Client and server always ship the same jar, so this is just a
-        // hygiene bump rather than a real compatibility requirement.
+        // Bumped after SyncRegistryPayload gained new fields (rarity/collection/description/isNew)
         final PayloadRegistrar registrar = event.registrar("1.1.0");
 
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
