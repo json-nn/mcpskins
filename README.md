@@ -26,24 +26,42 @@ effects.
 ### Two ways to browse and equip skins
 - **Refit screen overlay** — an in-context skin carousel embedded directly into TACZ's
   native weapon refit screen, for quickly cycling through skins for the gun currently
-  in hand.
+  in hand. Its toggle button's position, size, and anchor corner are all configurable,
+  including a drag-to-place picker in-game.
 - **Skin Armory** — a standalone, full-screen catalog with a rotatable 3D preview
-  podium, search, rarity/collection filters, and sorting. Opens via hotkey or the
-  `/mcpskins armory` command, and works independently of what's in the player's hand.
+  podium, search, rarity/collection filters, an "owned/locked" filter, and sorting.
+  Opens via hotkey (default **K**) or the `/mcpskins armory [skinId]` command, and
+  works independently of what's in the player's hand.
 
 ### Live preview before you own it
 Locked skins can be previewed on the real weapon model — in both the refit overlay and
 the Armory — before a player owns them. Previews are entirely client-side; nothing is
 sent to the server and no skin is granted until the player actually equips one they own.
+This preview behavior is server-configurable and can be disabled.
 
 ### Server-authoritative ownership
-Skin ownership is tracked per-player on the server and synced to the client. Skins are
-granted via admin commands or as an item drop, and unlock instantly with a toast/chat
-confirmation.
+Skin ownership is tracked per-player on the server (survives death, synced on login,
+respawn, and dimension change) and mirrored to the client. Skins are granted via admin
+commands or as an item drop, and unlock instantly with a toast/chat confirmation. A
+skin actually equipped on a weapon adds a small "Skinned by \<player\>" lore line,
+kept in sync as the skin changes or is removed.
+
+### Fusing duplicates into rarer skins
+Shift + right-clicking a skin-unlock item consumes a configurable number of
+same-rarity duplicates from across the player's inventory and rerolls one skin of the
+next rarity tier up (`COMMON → UNCOMMON → RARE → EPIC → LEGENDARY`), preferring skins
+the player doesn't already own. Can be disabled server-side.
 
 ### Rich skin metadata
 Each skin entry supports rarity, a named collection, a short description, and a "new"
 badge — all optional and shown in the Skin Armory's filters, sorting, and info panel.
+
+### Configurable, with a sane client/server split
+- **Client config** — refit-button position/size/anchor, toast on/off and duration,
+  carousel sizing. Purely local, editable in-game via the mod's config screen.
+- **Server config** — fusion on/off and cost, whether locked skins can be previewed,
+  and permission levels for equip-bypass and admin commands. Authoritative and synced
+  per-world.
 
 ## Commands
 
@@ -52,18 +70,38 @@ badge — all optional and shown in the Skin Armory's filters, sorting, and info
 /mcpskins give item <player> <skinId>     Give a physical skin-unlock item
 /mcpskins give all <player>               Unlock every skin for a player
 /mcpskins take skin <player> <skinId>     Remove a specific skin
-/mcpskins take all <player>               Clear all unlocked skins
+/mcpskins take skins <player>             Clear all unlocked skins
 ```
 
 All skin IDs are validated against the skin registry and tab-completed, so a mistyped
-ID can't be granted.
+ID can't be granted. These require operator permission (permission level configurable
+via the server config, default `4`).
+
+There's also a client-side, no-permission-needed command for opening the Armory
+without a hotkey:
+
+```
+/mcpskins armory [skinId]                 Open the Skin Armory, optionally focused on one skin
+```
 
 ## Adding skins
 
 Skins are defined per-weapon in datapack JSON files under `data/<namespace>/skins/`.
 Each entry needs at minimum an `id`, `name`, and `label_color`; `rarity`, `collection`,
 `description`, and `is_new` are optional. See [`SkinManager`](src/main/java/org/minechestplate/mcpskins/skin/SkinManager.java)
-for the exact schema and the recommended `<base_gun>_<skin_name>` ID naming convention.
+for the exact schema and the recommended `<base_gun>_<skin_name>` ID naming convention
+(skin IDs are global, not per-weapon — this matters).
+
+The actual artwork is a separate resource-pack step: a texture at
+`textures/skins/<base_gun, ":"→"/">/<skin_id>.png`, an optional
+`<skin_id>_icon.png` for the inventory icon, and — for a full shape change instead of
+just a re-texture — an optional geo-model file placed next to the base weapon's own
+model. See [`SkinAssetResolver`](src/main/java/org/minechestplate/mcpskins/skin/render/SkinAssetResolver.java)
+and [`GunModelPatcher`](src/main/java/org/minechestplate/mcpskins/skin/render/GunModelPatcher.java)
+for exactly how those paths are resolved.
+
+> A full walkthrough of both the datapack and resource-pack sides — plus commands,
+> configuration, and troubleshooting — lives in the project wiki.
 
 ## Requirements
 
@@ -76,17 +114,19 @@ for the exact schema and the recommended `<base_gun>_<skin_name>` ID naming conv
 ```
 src/main/java/org/minechestplate/mcpskins/
 ├── MCPSkins.java                 Mod entry point
-├── ClientModEvents.java          Client setup: reload listeners, item tints, keybinds
-├── item/                         The skin-unlock item
-├── mixin/                        Texture/model override hook into TACZ's renderer
+├── ClientModEvents.java          Client setup: reload listeners, item tints, keybinds, config screen
+├── config/                       Client & server ModConfigSpec definitions
+├── item/                         The skin-unlock item, including the fusion mechanic
+├── mixin/                        Texture/model override hook into TACZ's TimelessAPI
 └── skin/
     ├── SkinManager.java          Loads skin definitions from datapacks
     ├── SkinAttachment.java       Per-player unlocked-skin storage
     ├── SkinDataModels.java       Skin/rarity data types
     ├── SkinComponents.java       The mcpskins:skin_id item data component
     ├── TACZSkinHelper.java       Weapon stack creation/skin application helpers
-    ├── client/                   Refit screen overlay, Skin Armory, keybinds
-    ├── command/                  /mcpskins command tree
+    ├── client/                   Refit screen overlay, keybinds, client-side command
+    │   └── gui/                  Skin Armory screen, 3D podium widget, config screens
+    ├── command/                  /mcpskins server command tree
     ├── network/                  Client/server sync packets
     └── render/                   Texture/icon/geometry resolution and patching
 ```
