@@ -51,15 +51,10 @@ import java.util.Optional;
  * [ skin name · rarity · collection · [Custom model]        [Equip] ]
  * </pre>
  * <p>
- * Layout is computed proportionally from {@code this.width}/{@code this.height} rather
- * than fixed pixel offsets - unlike {@code TACZRefitSkinOverlay}, which overlays a
- * third-party screen with a fixed-pixel background it must match, this screen is fully
- * our own with no foreign texture to align to. See {@link #computeLayout()}.
- * <p>
- * The screen doesn't get vanilla "Menu Background Blurriness" - see
- * {@link Item3DPodiumWidget} for why blur is replaced with a dark studio backdrop, and
- * {@link #renderBackground} for why it's overridden as a no-op rather than simply not
- * called.
+ * Layout is computed proportionally (see {@link #computeLayout()}), unlike
+ * {@code TACZRefitSkinOverlay}, which has to match a fixed-pixel third-party background.
+ * No vanilla background blur either - see {@link Item3DPodiumWidget} and
+ * {@link #renderBackground}.
  */
 public class SkinArmoryScreen extends Screen {
 
@@ -70,20 +65,17 @@ public class SkinArmoryScreen extends Screen {
     private enum SortMode { RARITY, ALPHABETICAL, NEWEST }
 
     private static final int WEAPON_ROW_HEIGHT = 24;
-    // Pill button widths are computed dynamically from their actual text (see pillWidthFor
-    // and the *Rect methods below) rather than a fixed number, so longer labels never overflow
+    // Pill widths come from their actual text (see pillWidthFor), not a fixed number
     private static final int PILL_HEIGHT = 20;
     private static final int PILL_GAP = 6;
     private static final int PILL_TEXT_PADDING = 22;
 
-    // Header (search + filter/sort buttons) layout is fully independent of the three
-    // columns below it - see computeHeaderLayout() and init().
+    // Header layout is fully independent of the three columns below it
     private static final int HEADER_MARGIN = 8;
     private static final int HEADER_GROUP_GAP = 14;
     private static final int HEADER_MIN_SEARCH_WIDTH = 90;
     private static final int PILL_ROW_GAP = 6;
-    // Lower minimum than a shared one, since short labels like "All"/"Owned" don't need as
-    // much padding as "Locked" (whose real text is already wider than any reasonable minimum)
+    // Lower than the shared minimum - short labels like "All"/"Owned" need less padding than "Locked"
     private static final int STATUS_PILL_MIN_WIDTH = 30;
 
     private record Rect(int x0, int y0, int x1, int y1) {
@@ -127,8 +119,23 @@ public class SkinArmoryScreen extends Screen {
     private int gridScrollPixels = 0;
     private String statusMessage;
 
+    /** Skin id to select+scroll to on open (see {@link #init}), or null for the default. */
+    private final String focusSkinId;
+
     public SkinArmoryScreen() {
+        this(null);
+    }
+
+    /**
+     * Opens with {@code focusSkinId}'s weapon selected and that skin scrolled into view
+     * and highlighted, instead of the usual "currently held weapon" default - used by the
+     * clickable skin name in the unlock/fuse chat messages (see {@code SkinUnlockItem}).
+     *
+     * @param focusSkinId a skin id to jump to, or null for the normal default selection
+     */
+    public SkinArmoryScreen(String focusSkinId) {
         super(Component.translatable("gui.mcpskins.armory.title"));
+        this.focusSkinId = focusSkinId;
     }
 
     // -----------------------------------------------------------------------------------
@@ -150,10 +157,26 @@ public class SkinArmoryScreen extends Screen {
         this.addRenderableWidget(searchBox);
 
         rebuildWeaponList();
-        if (selectedWeapon == null || !weaponKeys.contains(selectedWeapon)) {
+        SkinDataModels.SkinLookupResult focusLookup = focusSkinId != null ? SkinManager.INSTANCE.findSkin(focusSkinId) : null;
+        if (focusLookup != null) {
+            selectedWeapon = focusLookup.weapon().baseGun();
+        } else if (selectedWeapon == null || !weaponKeys.contains(selectedWeapon)) {
             selectedWeapon = defaultWeaponSelection();
         }
         refreshVisibleEntries();
+
+        if (focusLookup != null) {
+            for (int i = 0; i < visibleEntries.size(); i++) {
+                if (visibleEntries.get(i).skin().id().equals(focusSkinId)) {
+                    selectedSkinIndex = i;
+                    updatePodiumStack();
+                    break;
+                }
+            }
+            Layout layout = computeLayout();
+            scrollWeaponListToSelection(layout);
+            scrollGridToSelection(layout);
+        }
     }
 
     /**
@@ -163,17 +186,14 @@ public class SkinArmoryScreen extends Screen {
      */
     private Layout computeLayout() {
         int margin = 6;
-        // topBarHeight equals the header's actual height (search row + however many rows
-        // of buttons it wrapped to - see computeHeaderLayout()), so everything below it
-        // shifts down exactly as much as the header needed on this screen
+        // topBarHeight is the header's actual height (see computeHeaderLayout()), so
+        // everything below it shifts down to match
         int topBarHeight = computeHeaderLayout().totalHeight();
         int bottomBarHeight = 46;
 
         int leftWidth = Mth.clamp(this.width / 6, 140, 230);
-        // The right (skin grid) column's width is derived FROM the grid cell size, not the
-        // other way around: gridCellSize is fixed first for a compact 2-column grid, and
-        // rightWidth is exactly as wide as two such cells plus padding - no extra margin.
-        // podiumWidth then gets whatever width is left between the left and right columns.
+        // rightWidth is derived from gridCellSize (fixed for a compact 2-column grid),
+        // not the other way around; podiumWidth gets whatever's left between the columns
         int gridPaddingX = 6, gridPaddingY = 6, gridSpacing = 6, gridCellSize = 56;
         int gridColumnsTarget = 2;
         int rightWidth = gridPaddingX * 2 + gridCellSize * gridColumnsTarget + gridSpacing * (gridColumnsTarget - 1);
@@ -187,8 +207,7 @@ public class SkinArmoryScreen extends Screen {
         int podiumX = leftX + leftWidth + margin;
         int podiumWidth = Math.max(40, rightX - margin - podiumX);
 
-        // Recomputed dynamically in case the screen is too narrow to fit gridColumnsTarget
-        // columns; on normal screens this always resolves to exactly gridColumnsTarget (2)
+        // Falls back below gridColumnsTarget only if the screen is too narrow to fit it
         int usableGridWidth = Math.max(gridCellSize, rightWidth - gridPaddingX * 2);
         int gridColumns = Mth.clamp((usableGridWidth + gridSpacing) / (gridCellSize + gridSpacing), 1, gridColumnsTarget);
 
@@ -206,13 +225,9 @@ public class SkinArmoryScreen extends Screen {
     }
 
     /**
-     * Header layout: search box plus filter/sort buttons. Search is its own full-width
-     * row, so buttons render strictly below it and can never overlap it. Buttons flow
-     * left-to-right (see {@link #advancePillCursor}) and wrap to a new row whenever one
-     * wouldn't fit before the right edge, so they can never run off-screen no matter how
-     * many rows that takes. The header's total height ({@code topBarHeight} in
-     * {@link Layout}) comes from this layout's {@code totalHeight()}, so it adapts to
-     * however many button rows were needed.
+     * Header layout: a full-width search row, then filter/sort buttons that flow
+     * left-to-right and wrap to a new row instead of running off-screen (see
+     * {@link #advancePillCursor}). {@code totalHeight()} feeds {@link Layout#topBarHeight}.
      */
     private record HeaderLayout(int searchX, int searchY, int searchWidth, int searchHeight,
                                 Rect[] statusRects, Rect customRect, Rect sortRect, int totalHeight) {
@@ -286,8 +301,7 @@ public class SkinArmoryScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        // Our own dark background - no need for the "Menu Background Blurriness" video
-        // setting (see Item3DPodiumWidget's javadoc)
+        // Our own dark background - no vanilla "Menu Background Blurriness" needed
         guiGraphics.fillGradient(0, 0, this.width, this.height, 0xD8101010, 0xF2060606);
 
         Layout layout = computeLayout();
@@ -296,32 +310,23 @@ public class SkinArmoryScreen extends Screen {
         renderWeaponList(guiGraphics, layout, mouseX, mouseY);
 
         podium.setBounds(layout.podiumX(), layout.podiumY(), layout.podiumWidth(), layout.podiumHeight());
-        podium.render(guiGraphics, mouseX, mouseY, partialTick, currentAccentColor());
+        podium.render(guiGraphics, partialTick, currentAccentColor());
 
         renderSkinGrid(guiGraphics, layout, mouseX, mouseY);
         renderBottomBar(guiGraphics, layout, mouseX, mouseY);
 
-        // Renders real widgets (currently just the search box) over our hand-drawn top
-        // bar, or the top bar's background would sit over the EditBox's text cursor.
-        // super.render(...) calls this.renderBackground(...) itself at the start of its
-        // body (even though we never call it explicitly) - since that call is unavoidable,
-        // renderBackground(...) below is overridden as a no-op, or it would trigger
-        // vanilla's "Menu Background Blurriness" over everything drawn here already.
+        // Renders real widgets (the search box) over our hand-drawn top bar. This also
+        // calls renderBackground(...) internally - overridden below as a no-op, or it'd
+        // trigger vanilla's blur over everything already drawn here.
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         renderHoverTooltip(guiGraphics, layout, mouseX, mouseY);
         renderWeaponHoverTooltip(guiGraphics, layout, mouseX, mouseY);
     }
 
-    /**
-     * Intentional no-op. The default {@code Screen#renderBackground(...)} renders vanilla's
-     * blurred background effect, and {@code Screen#render(...)} calls it unconditionally at
-     * the start of its own body - overriding this method is the only reliable way to
-     * disable that blur for this screen.
-     */
+    /** No-op - avoids vanilla's background blur, which {@code Screen#render(...)} always triggers. */
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        // no-op - background is already drawn manually in render() above
     }
 
     private void renderTopBar(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
@@ -382,9 +387,8 @@ public class SkinArmoryScreen extends Screen {
                     ItemStack icon = TACZSkinHelper.createGunStack(baseGun);
                     guiGraphics.renderItem(icon, layout.leftX() + 4, rowY + (WEAPON_ROW_HEIGHT - 16) / 2);
 
-                    // Long weapon names are truncated to fit with "..." rather than being
-                    // cut off mid-character by the panel's scissor rect; the full name is
-                    // still available via tooltip (see renderWeaponHoverTooltip)
+                    // Truncated with "..." to fit the panel; the full name is still
+                    // available via tooltip (see renderWeaponHoverTooltip)
                     String fullName = weaponDisplayName(baseGun);
                     int nameTextX = layout.leftX() + 26;
                     int availableNameWidth = layout.leftX() + layout.leftWidth() - nameTextX - 4;
@@ -471,8 +475,7 @@ public class SkinArmoryScreen extends Screen {
             Component nameLine = Component.literal(entry.name()).withStyle(s -> s.withColor(entry.labelColor()).withBold(true));
             guiGraphics.drawString(this.font, nameLine, 10, layout.bottomY() + 5, 0xFFFFFFFF, false);
 
-            // Rarity's own accent color is used here (see Rarity.accentColor), not a
-            // static gray, so rarity actually reads visually distinct
+            // Rarity's own accent color, not static gray, so it reads visually distinct
             MutableComponent detail = Component.translatable("gui.mcpskins.armory.rarity_" + entry.rarity().name().toLowerCase(Locale.ROOT))
                     .withStyle(s -> s.withColor(entry.rarity().accentColor));
             if (entry.hasCollection()) {
@@ -663,7 +666,7 @@ public class SkinArmoryScreen extends Screen {
     }
 
     // -----------------------------------------------------------------------------------
-    // Keyboard input (see Item3DPodiumWidget's javadoc for the C podium render-context key)
+    // Keyboard input
     // -----------------------------------------------------------------------------------
 
     @Override
@@ -672,10 +675,6 @@ public class SkinArmoryScreen extends Screen {
             return super.keyPressed(keyCode, scanCode, modifiers);
         }
 
-        if (keyCode == GLFW.GLFW_KEY_C) {
-            podium.cycleContext();
-            return true;
-        }
         if (keyCode == GLFW.GLFW_KEY_TAB) {
             focusPane = focusPane == FocusPane.WEAPONS ? FocusPane.SKINS : FocusPane.WEAPONS;
             return true;
@@ -749,6 +748,25 @@ public class SkinArmoryScreen extends Screen {
         this.selectedSkinIndex = 0;
         this.gridScrollPixels = 0;
         refreshVisibleEntries();
+    }
+
+    /** Left-column analogue of {@link #scrollGridToSelection} - scrolls {@link #selectedWeapon}'s row into view. */
+    private void scrollWeaponListToSelection(Layout layout) {
+        if (selectedWeapon == null) return;
+        int index = weaponKeys.indexOf(selectedWeapon);
+        if (index < 0) return;
+
+        int rowTop = index * WEAPON_ROW_HEIGHT;
+        int rowBottom = rowTop + WEAPON_ROW_HEIGHT;
+        int viewHeight = layout.leftHeight();
+
+        if (rowTop < weaponScrollPixels) {
+            weaponScrollPixels = rowTop;
+        } else if (rowBottom > weaponScrollPixels + viewHeight) {
+            weaponScrollPixels = rowBottom - viewHeight;
+        }
+        int maxScroll = Math.max(0, weaponKeys.size() * WEAPON_ROW_HEIGHT - viewHeight);
+        weaponScrollPixels = Mth.clamp(weaponScrollPixels, 0, maxScroll);
     }
 
     /**
@@ -875,12 +893,10 @@ public class SkinArmoryScreen extends Screen {
     // -----------------------------------------------------------------------------------
 
     /**
-     * Unlike {@code TACZRefitSkinOverlay}, this screen doesn't require holding the weapon
-     * to browse it - the podium shows a synthetic preview stack, not the player's real
-     * item. Holding the weapon is only required when actually clicking "Equip", since
-     * {@code ApplySkinPayload} applies a skin to {@code player.getMainHandItem()} on the
-     * server; if the weapon isn't in hand, the status line explains why instead of
-     * pretending it worked.
+     * Unlike {@code TACZRefitSkinOverlay}, browsing here doesn't require holding the
+     * weapon - the podium shows a synthetic preview, not the real item. Holding it is
+     * only required to actually equip, since the server applies the skin to whichever
+     * hand holds it; if it isn't in hand, the status line explains why.
      */
     private void equipSelected() {
         if (visibleEntries.isEmpty()) return;
@@ -968,10 +984,8 @@ public class SkinArmoryScreen extends Screen {
     }
 
     /**
-     * The weapon's default skin - the one whose {@code bareSkinId(id)} matches the
-     * weapon's own {@code baseGun} (the same test {@link #hasCustomModel} uses to detect
-     * "this is the stock weapon, no separate geo-model"). Used to force that skin to the
-     * front of the right panel (see {@link #refreshVisibleEntries}).
+     * The weapon's default skin - {@code bareSkinId(id)} equals the weapon's own
+     * {@code baseGun}. Forced to the front of the right panel (see {@link #refreshVisibleEntries}).
      */
     private boolean isDefaultSkin(SkinDataModels.SkinLookupResult lookup) {
         return TACZSkinHelper.bareSkinId(lookup.skin().id()).equals(lookup.weapon().baseGun());
@@ -979,10 +993,9 @@ public class SkinArmoryScreen extends Screen {
 
     /**
      * "Custom model" badge check, using the same path as the actual render
-     * ({@code SkinAssetResolver.resolveModel}), so the badge is never wrong about whether
-     * a skin has a separate geo-model. Cached for the screen's session, since calling
-     * {@code TimelessAPI.getGunDisplay(...)} every frame for every visible grid cell
-     * would be wasteful.
+     * ({@code SkinAssetResolver.resolveModel}) so it's never wrong. Cached for the
+     * screen's session - {@code TimelessAPI.getGunDisplay(...)} isn't cheap enough to
+     * call every frame for every visible cell.
      */
     private boolean hasCustomModel(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
         String bare = TACZSkinHelper.bareSkinId(entry.id());

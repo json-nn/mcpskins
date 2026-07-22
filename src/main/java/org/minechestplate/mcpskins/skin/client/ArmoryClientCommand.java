@@ -1,6 +1,7 @@
 package org.minechestplate.mcpskins.skin.client;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -12,9 +13,12 @@ import org.minechestplate.mcpskins.MCPSkins;
 import org.minechestplate.mcpskins.skin.client.gui.SkinArmoryScreen;
 
 /**
- * Registers the client-side "/mcpskins armory" command that opens {@link SkinArmoryScreen}.
- * A purely client-side alternative to the {@link ArmoryKeybinds} hotkey - no server
- * round-trip or permission level required, works in any world.
+ * Registers the client-side "/mcpskins armory" command that opens {@link SkinArmoryScreen}
+ * - a purely client-side alternative to the {@link ArmoryKeybinds} hotkey, no server
+ * round-trip or permission needed.
+ * <p>
+ * The optional "skin" argument opens the Armory focused on that skin - used by the
+ * clickable skin name in unlock/fuse chat messages, not meant to be typed by hand.
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, value = Dist.CLIENT)
 public final class ArmoryClientCommand {
@@ -28,10 +32,15 @@ public final class ArmoryClientCommand {
         dispatcher.register(Commands.literal("mcpskins")
                 .then(Commands.literal("armory")
                         .executes(context -> {
-                            // Unlike the hotkey, no "screen == null" guard is needed here:
-                            // an explicit command is explicit intent, so open unconditionally.
+                            // A typed command is explicit intent - no "screen == null" guard needed
                             Minecraft.getInstance().setScreen(new SkinArmoryScreen());
                             return 1;
-                        })));
+                        })
+                        .then(Commands.argument("skin", StringArgumentType.greedyString())
+                                .executes(context -> {
+                                    String skinId = StringArgumentType.getString(context, "skin");
+                                    Minecraft.getInstance().setScreen(new SkinArmoryScreen(skinId));
+                                    return 1;
+                                }))));
     }
 }

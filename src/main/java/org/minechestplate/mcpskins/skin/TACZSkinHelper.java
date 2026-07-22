@@ -3,6 +3,7 @@ package org.minechestplate.mcpskins.skin;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -112,5 +113,28 @@ public class TACZSkinHelper {
     public static String bareSkinId(String id) {
         if (id == null) return null;
         return id.startsWith("default:") ? id.substring(8) : id;
+    }
+
+    /**
+     * Localized weapon name from a raw GunId - safe to call server-side (chat messages,
+     * commands), unlike {@code ItemStack#getHoverName()}: that needs gun-pack display
+     * data which is only ever loaded client-side, and falls back to the raw
+     * "item.tacz.modern_kinetic_gun" key (untranslated anywhere) when called from the server.
+     * <p>
+     * Assumes guns follow TACZ's "&lt;namespace&gt;.gun.&lt;path&gt;.name" convention, the
+     * same shape as their ammo items. Worth spot-checking in-game against any non-default
+     * gun packs this server uses.
+     */
+    public static Component gunDisplayName(String gunId) {
+        String bare = bareSkinId(gunId);
+        if (bare == null || bare.isBlank()) {
+            return Component.literal(gunId == null ? "" : gunId);
+        }
+        ResourceLocation id = ResourceLocation.tryParse(bare);
+        if (id == null) {
+            // Not a valid "namespace:path" id - nothing sane to build a key from
+            return Component.literal(bare);
+        }
+        return Component.translatable(id.getNamespace() + ".gun." + id.getPath());
     }
 }

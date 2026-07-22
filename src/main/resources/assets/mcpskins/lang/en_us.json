@@ -71,5 +71,6 @@
   "gui.mcpskins.config.position_save": "Save",
   "gui.mcpskins.config.position_reset": "Reset",
   "gui.mcpskins.config.position_cancel": "Cancel",
-  "gui.mcpskins.config.position_coords": "X: %1$s  Y: %2$s   (%3$s: %4$s, %5$s)"
+  "gui.mcpskins.config.position_coords": "X: %1$s  Y: %2$s   (%3$s: %4$s, %5$s)",
+  "tooltip.mcpskins.open_in_armory": "Click to open in the Armory"
 }
