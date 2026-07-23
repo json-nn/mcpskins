@@ -86,22 +86,28 @@ without a hotkey:
 
 ## Adding skins
 
-Skins are defined per-weapon in datapack JSON files under `data/<namespace>/skins/`.
-Each entry needs at minimum an `id`, `name`, and `label_color`; `rarity`, `collection`,
-`description`, and `is_new` are optional. See [`SkinManager`](src/main/java/org/minechestplate/mcpskins/skin/SkinManager.java)
-for the exact schema and the recommended `<base_gun>_<skin_name>` ID naming convention
-(skin IDs are global, not per-weapon - this matters).
+Skin packs are a single folder or `.zip` dropped into a `mcpskins/` folder in the game
+directory - no `pack.mcmeta`, nothing to manually enable, picked up automatically
+(including by worlds that already exist). See [`MCPSkinsPackFinder`](src/main/java/org/minechestplate/mcpskins/pack/MCPSkinsPackFinder.java)
+for exactly how packs are discovered and registered.
 
-The actual artwork is a separate resource-pack step: a texture at
-`textures/skins/<base_gun, ":"→"/">/<skin_id>.png`, an optional
-`<skin_id>_icon.png` for the inventory icon, and - for a full shape change instead of
-just a re-texture - an optional geo-model file placed next to the base weapon's own
-model. See [`SkinAssetResolver`](src/main/java/org/minechestplate/mcpskins/skin/render/SkinAssetResolver.java)
-and [`GunModelPatcher`](src/main/java/org/minechestplate/mcpskins/skin/render/GunModelPatcher.java)
-for exactly how those paths are resolved.
+Each pack has two halves, exactly like a normal resource pack + datapack, just merged
+under one root:
 
-> A full walkthrough of both the datapack and resource-pack sides - plus commands,
-> configuration, and troubleshooting - lives in the project wiki.
+- **`data/<namespace>/skins/`** - JSON files that register skins per-weapon. Each entry
+  needs at minimum an `id`, `name`, and `label_color`; `rarity`, `collection`,
+  `description`, and `is_new` are optional. See [`SkinManager`](src/main/java/org/minechestplate/mcpskins/skin/SkinManager.java)
+  for the exact schema and the recommended `<base_gun>_<skin_name>` ID naming convention
+  (skin IDs are global, not per-weapon - this matters).
+- **`assets/<namespace>/textures/skins/<base_gun, ":"→"/">/<skin_id>.png`** - the
+  actual artwork, plus an optional `<skin_id>_icon.png` for the inventory icon, and -
+  for a full shape change instead of just a re-texture - an optional geo-model file
+  placed next to the base weapon's own model. See [`SkinAssetResolver`](src/main/java/org/minechestplate/mcpskins/skin/render/SkinAssetResolver.java)
+  and [`GunModelPatcher`](src/main/java/org/minechestplate/mcpskins/skin/render/GunModelPatcher.java)
+  for exactly how those paths are resolved.
+
+> A full walkthrough of the pack layout - plus commands, configuration, and
+> troubleshooting - lives in the project wiki.
 
 ## Requirements
 
@@ -118,6 +124,7 @@ src/main/java/org/minechestplate/mcpskins/
 ├── config/                       Client & server ModConfigSpec definitions
 ├── item/                         The skin-unlock item, including the fusion mechanic
 ├── mixin/                        Texture/model override hook into TACZ's TimelessAPI
+├── pack/                         mcpskins/ folder scanner - the pack.mcmeta-less skin pack loader
 └── skin/
     ├── SkinManager.java          Loads skin definitions from datapacks
     ├── SkinAttachment.java       Per-player unlocked-skin storage
