@@ -3,6 +3,7 @@ package org.minechestplate.mcpskins.skin.client.gui;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
+import com.tacz.guns.util.RenderDistance;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import com.mojang.blaze3d.platform.Lighting;
@@ -24,7 +25,6 @@ import org.minechestplate.mcpskins.MCPSkins;
  */
 public final class Item3DPodiumWidget {
 
-    // Finalized during development (see class javadoc) - not user-facing/adjustable.
     private static final ItemDisplayContext RENDER_CONTEXT = ItemDisplayContext.FIXED;
 
     // Full-bright packed light, same as vanilla's GuiGraphics#renderItem uses for icons
@@ -34,7 +34,6 @@ public final class Item3DPodiumWidget {
     private static final float MAX_ZOOM = 2.5f;
     private static final float MAX_PITCH = 80f;
     private static final float AUTO_ROTATE_DEG_PER_SEC = 12f;
-    // Degrees of rotation per pixel of mouse movement
     private static final float DRAG_SENSITIVITY = 0.5f;
     private static final float ZOOM_STEP = 0.12f;
 
@@ -45,7 +44,6 @@ public final class Item3DPodiumWidget {
     private float pitch = -12f;
     private float zoom = 1f;
     private boolean dragging = false;
-    // Auto-rotation stops for good once the player drags the podium
     private boolean userHasInteracted = false;
     private long lastFrameNanos = -1L;
 
@@ -85,7 +83,6 @@ public final class Item3DPodiumWidget {
         if (!dragging) return;
         userHasInteracted = true;
         yaw += (float) dragDeltaX * DRAG_SENSITIVITY;
-        // Pitch is intentionally clamped so drag can't flip the model upside down
         pitch = Mth.clamp(pitch - (float) dragDeltaY * DRAG_SENSITIVITY, -MAX_PITCH, MAX_PITCH);
     }
 
@@ -102,13 +99,11 @@ public final class Item3DPodiumWidget {
 
     /**
      * @param accentColor backdrop accent stripe color (usually the current skin's
-     *                    {@code labelColor}) - purely decorative
+     *                    {@code labelColor})
      */
     public void render(GuiGraphics guiGraphics, float partialTick, int accentColor) {
         if (width <= 0 || height <= 0) return;
 
-        // Backdrop draws first, under the model; the frame draws last (see renderFrame)
-        // so long weapon models don't paint over it at default zoom
         renderBackdropFill(guiGraphics);
 
         if (stack.isEmpty()) {
@@ -120,8 +115,7 @@ public final class Item3DPodiumWidget {
         long now = System.nanoTime();
         float deltaSeconds = lastFrameNanos < 0 ? 0f : (now - lastFrameNanos) / 1_000_000_000f;
         lastFrameNanos = now;
-        // Caps the delta so a lag spike doesn't snap auto-rotation forward
-        deltaSeconds = Mth.clamp(deltaSeconds, 0f, 0.25f);
+        deltaSeconds = Mth.clamp(deltaSeconds, 0f, 0.25f); // caps a lag spike from snapping rotation forward
 
         if (!dragging && !userHasInteracted) {
             yaw += AUTO_ROTATE_DEG_PER_SEC * deltaSeconds;
@@ -131,7 +125,6 @@ public final class Item3DPodiumWidget {
         int centerY = y + height / 2;
         float baseScale = Math.min(width, height) * 0.55f;
 
-        // Clip to the panel so extreme zoom can't spill into neighboring panels
         guiGraphics.enableScissor(x, y, x + width, y + height);
         try {
             if (!renderFailed) {
@@ -156,7 +149,6 @@ public final class Item3DPodiumWidget {
             renderFlatFallback(guiGraphics, centerX, centerY);
         }
 
-        // Frame draws after the scene so it always sits on top of the model (see renderFrame)
         renderFrame(guiGraphics, accentColor);
     }
 
@@ -172,10 +164,13 @@ public final class Item3DPodiumWidget {
             pose.mulPose(Axis.XP.rotationDegrees(pitch));
             pose.mulPose(Axis.YP.rotationDegrees(yaw));
 
-            // 3D lighting instead of flat GUI lighting, or a rotated model would still look flat
             Lighting.setupFor3DItems();
-            // The mirror above flips winding order, so the GPU would otherwise cull visible faces
-            RenderSystem.disableCull();
+            RenderSystem.disableCull(); // the mirror above flips winding order
+
+            // Without this, TACZ picks the LOD geo-model here instead of the full one, since
+            // RenderDistance.inRenderHighPolyModelDistance only returns true near a recent GUI
+            // render timestamp. TACZ's own GunSmithTableScreen does the same before its preview.
+            RenderDistance.markGuiRenderTimestamp();
             try {
                 mc.getItemRenderer().renderStatic(
                         stack,
@@ -187,9 +182,7 @@ public final class Item3DPodiumWidget {
                         mc.level,
                         0
                 );
-                // Same flush() vanilla GuiGraphics#renderItem does, so the draw calls
-                // don't stay buffered and surface over the next frame out of order
-                guiGraphics.flush();
+                guiGraphics.flush(); // avoids buffered draw calls surfacing over the next frame
             } finally {
                 RenderSystem.enableCull();
                 Lighting.setupForFlatItems();
@@ -203,22 +196,16 @@ public final class Item3DPodiumWidget {
         guiGraphics.renderItem(stack, centerX - 8, centerY - 8);
     }
 
-    /** Just the backdrop gradient - the frame/accent stripe is drawn separately, see {@link #renderFrame}. */
     private void renderBackdropFill(GuiGraphics guiGraphics) {
         int x1 = x + width;
         int y1 = y + height;
-        // Dark studio backdrop instead of blur (see class javadoc)
         guiGraphics.fillGradient(x, y, x1, y1, 0xE0141414, 0xF2060606);
     }
 
     /**
-     * The viewport border and rarity accent stripe, drawn last so it stays on top of
-     * long weapon models that reach the edge of the box at default zoom.
-     * <p>
-     * The depth test is off and explicitly flushed before re-enabling it: {@code fill}/
-     * {@code renderOutline} buffer their vertices until the next flush, and without this
-     * the frame would reach the GPU after the depth test was back on and lose to
-     * {@link #renderItem3D}'s depth buffer.
+     * Border and rarity accent stripe, drawn last so it stays above long weapon models.
+     * Depth test is off and flushed explicitly, otherwise these buffered vertices would
+     * reach the GPU after the depth test is back on and lose to {@link #renderItem3D}.
      */
     private void renderFrame(GuiGraphics guiGraphics, int accentColor) {
         int x1 = x + width;
@@ -228,7 +215,6 @@ public final class Item3DPodiumWidget {
         guiGraphics.pose().translate(0.0F, 0.0F, 300.0F);
         guiGraphics.fill(x, y, x1, y + 2, (accentColor & 0xFFFFFF) | 0x90000000);
         guiGraphics.renderOutline(x, y, width, height, 0x40FFFFFF);
-        // Explicit flush() while the depth test is still off - see this method's javadoc
         guiGraphics.flush();
         guiGraphics.pose().popPose();
         RenderSystem.enableDepthTest();
