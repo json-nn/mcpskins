@@ -19,9 +19,16 @@ effects.
   `textures/skins/<weapon>/<skin_id>.png`.
 - **Optional custom icon** - an accompanying `<skin_id>_icon.png` swaps the 2D
   inventory icon too.
+- **Optional custom HUD icon** - an accompanying `<skin_id>_hud.png` swaps the weapon
+  silhouette shown bottom-right of the screen while it's held, and an optional
+  `<skin_id>_hud_empty.png` swaps its out-of-ammo variant.
 - **Optional custom geometry** - a matching geo-model file next to the weapon's own
   model gives a skin an entirely different shape, not just a different color, while
   reusing the base weapon's animations.
+- **LOD support** - TACZ swaps to a separate, lower-poly model/texture pair at distance
+  and in third person. Skins can override this too, independently of the close-up
+  model/texture: an optional `<skin_id>_lod.png` for the LOD's UV, and/or a geo-model
+  file next to the weapon's own LOD model for a full LOD shape change.
 
 ### Two ways to browse and equip skins
 - **Refit screen overlay** - an in-context skin carousel embedded directly into TACZ's
@@ -100,9 +107,12 @@ under one root:
   for the exact schema and the recommended `<base_gun>_<skin_name>` ID naming convention
   (skin IDs are global, not per-weapon - this matters).
 - **`assets/<namespace>/textures/skins/<base_gun, ":"→"/">/<skin_id>.png`** - the
-  actual artwork, plus an optional `<skin_id>_icon.png` for the inventory icon, and -
-  for a full shape change instead of just a re-texture - an optional geo-model file
-  placed next to the base weapon's own model. See [`SkinAssetResolver`](src/main/java/org/minechestplate/mcpskins/skin/render/SkinAssetResolver.java)
+  actual artwork, plus optional `<skin_id>_icon.png` (inventory icon), `<skin_id>_hud.png`
+  (HUD silhouette, bottom-right of the screen), `<skin_id>_hud_empty.png` (out-of-ammo HUD
+  variant), and `<skin_id>_lod.png` (UV for TACZ's separate distant/third-person LOD
+  model) files, and - for a full shape change instead of just a re-texture - an optional
+  geo-model file placed next to the base weapon's own model (and, independently, another
+  one next to its LOD model, if it has one). See [`SkinAssetResolver`](src/main/java/org/minechestplate/mcpskins/skin/render/SkinAssetResolver.java)
   and [`GunModelPatcher`](src/main/java/org/minechestplate/mcpskins/skin/render/GunModelPatcher.java)
   for exactly how those paths are resolved.
 
@@ -135,7 +145,7 @@ src/main/java/org/minechestplate/mcpskins/
     │   └── gui/                  Skin Armory screen, 3D podium widget, config screens
     ├── command/                  /mcpskins server command tree
     ├── network/                  Client/server sync packets
-    └── render/                   Texture/icon/geometry resolution and patching
+    └── render/                   Texture/icon/HUD/geometry resolution and patching
 ```
 
 ## License
