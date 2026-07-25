@@ -8,67 +8,51 @@ import sun.misc.Unsafe;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Reflection-based patcher that creates a modified copy of a {@link GunDisplayInstance}
- * with an overridden texture and/or 2D inventory icon, for TACZ's fork at
- * MUKSC/TACZ-1.21.1 (neoforge/1.21.1).
+ * Builds a modified copy of a {@link GunDisplayInstance} with an overridden texture,
+ * icon, and/or HUD icon(s), for TACZ's fork at MUKSC/TACZ-1.21.1 (neoforge/1.21.1).
+ * Geometry replacement is handled separately by {@link GunModelPatcher}, since geometry
+ * isn't a simple field once loaded.
  * <p>
- * {@code GunDisplayInstance} is neither {@code Cloneable} nor a record, and its only
- * constructor does expensive parsing/asset loading, so a copy is built by allocating an
- * instance via {@code sun.misc.Unsafe#allocateInstance} (bypassing the constructor
- * entirely, the same trick used by Gson/Objenesis/Netty) and copying every declared
- * field over by reflection - a manual shallow clone.
+ * {@code GunDisplayInstance} is neither {@code Cloneable} nor a record and its only
+ * constructor does real asset loading, so a copy is made via
+ * {@code Unsafe#allocateInstance} plus a field-by-field reflective copy.
  * <p>
- * Only the texture and icon fields are overridden; the model/geometry is intentionally
- * left untouched, since geometry isn't stored as a simple field reference after loading
- * (replacing it correctly would mean reimplementing a large chunk of TACZ's private
- * asset-loading pipeline). Full geometry replacement is instead handled by
- * {@link GunModelPatcher}.
+ * The four overrides (texture, icon, HUD, HUD-empty) are applied independently in
+ * {@link #withOverrides}: a failure on one field is logged once and only that override
+ * stays the base weapon's asset.
  * <p>
- * <b>Lazy-loading caveat:</b> the base instance loads its texture/model lazily, tracked
- * by private {@code modelLoaded}/{@code modelLoadFailed} flags. Copying before the
- * original has loaded would carry over "not loaded" flags, and the copy's own lazy-load
- * check would then silently overwrite our texture override. This method never forces
- * that load itself - see {@link #isBaseReadyToPatch}, which only reads TACZ's own flags
- * and returns {@code null} (skip patching for now) if loading isn't done yet. An earlier
- * version forced the load via the public {@code getModelTexture()} getter, which has the
- * side effect of triggering the same lazy load - that caused a race with resource pack
- * reloads that could leave a weapon rendering with no model at all.
+ * The base instance loads its texture/model lazily. Copying before that finishes would
+ * carry over "not loaded" flags and get silently overwritten, so {@link #isBaseReadyToPatch}
+ * checks TACZ's own load flags first and this class never forces the load itself (an
+ * earlier version did, via the public getter, which raced with resource pack reloads).
  * <p>
- * The 2D inventory icon field's exact name isn't verified against this fork's decompiled
- * source, so {@link #resolveIconField} tries a list of plausible names
- * ({@link #ICON_FIELD_CANDIDATES}) and uses whichever one exists with type
- * {@link ResourceLocation}. If none match, the icon override feature silently no-ops
- * (with one log warning) while texture overrides keep working normally. If that warning
- * appears, decompile {@code GunDisplayInstance.class} from the fork's jar, find the real
- * field name backing {@code textures/gun/slot/*.png}, and add it first to
- * {@link #ICON_FIELD_CANDIDATES}.
+ * The icon field's real name isn't verified against this fork's decompiled source, so
+ * {@link #resolveIconField} tries {@link #ICON_FIELD_CANDIDATES} in order. If none match,
+ * icon overrides no-op (one warning) while everything else keeps working.
  */
 public final class GunDisplayInstancePatcher {
 
     private static final String TEXTURE_FIELD_NAME = "modelTexture";
+    private static final String HUD_FIELD_NAME = "hudTexture";
+    private static final String HUD_EMPTY_FIELD_NAME = "hudEmptyTexture";
 
-    /** Private lazy-load flags read by {@link #isBaseReadyToPatch}, never written by this class. */
     private static final String MODEL_LOADED_FIELD_NAME = "modelLoaded";
     private static final String MODEL_LOAD_FAILED_FIELD_NAME = "modelLoadFailed";
     private static volatile boolean loadFlagWarningLogged = false;
 
-    // Cached texture field for non-forcing reads in getTexture()
     private static volatile boolean textureFieldSearched = false;
     private static volatile Field cachedTextureField;
     private static volatile boolean textureFieldWarningLogged = false;
 
-    /**
-     * Plausible names for the 2D icon field, tried in order; the first one that exists
-     * with type {@link ResourceLocation} is used. Add the verified name first once known.
-     */
     private static final String[] ICON_FIELD_CANDIDATES = {
             "icon", "slotTexture", "iconTexture", "slotIcon", "invTexture",
             "inventoryTexture", "guiTexture", "slot"
     };
 
-    // Icon field is searched once per session and cached - see resolveIconField()
     private static volatile boolean iconFieldSearched = false;
     private static volatile Field cachedIconField;
     private static volatile boolean iconFieldWarningLogged = false;
@@ -77,11 +61,8 @@ public final class GunDisplayInstancePatcher {
     }
 
     /**
-     * Reads the base weapon's texture without triggering a lazy load, via reflection
-     * on the private {@code modelTexture} field rather than the public
-     * {@code getModelTexture()} getter (which has the side effect of forcing the load -
-     * see the class javadoc for why that caused resource-pack-reload races). Falls back
-     * to the forcing getter, with a one-time warning, if the field can't be found.
+     * Reads the texture field directly rather than via the public getter, which would
+     * force the lazy load as a side effect (see class javadoc).
      */
     public static ResourceLocation getTexture(GunDisplayInstance instance) {
         if (instance == null) return null;
@@ -129,10 +110,6 @@ public final class GunDisplayInstancePatcher {
         }
     }
 
-    /**
-     * Current value of the 2D inventory icon field, or {@code null} if it couldn't be
-     * found by reflection (see {@link #ICON_FIELD_CANDIDATES}).
-     */
     public static ResourceLocation getIcon(GunDisplayInstance instance) {
         if (instance == null) return null;
         Field field = resolveIconField();
@@ -146,11 +123,17 @@ public final class GunDisplayInstancePatcher {
     }
 
     /**
-     * Whether the base instance has finished its own lazy texture/model load, so it's
-     * safe to copy. Never forces the load itself - see the class javadoc. If the
-     * {@code modelLoaded} field can't be found, treats the instance as ready (with a
-     * one-time warning) rather than blocking skins entirely.
+     * Unlike {@link #getTexture}, reads the public getter directly since {@code hudTexture}
+     * is set synchronously and has no lazy-load side effect to avoid.
      */
+    public static ResourceLocation getHud(GunDisplayInstance instance) {
+        return instance != null ? instance.getHUDTexture() : null;
+    }
+
+    public static ResourceLocation getHudEmpty(GunDisplayInstance instance) {
+        return instance != null ? instance.getHudEmptyTexture() : null;
+    }
+
     private static boolean isBaseReadyToPatch(GunDisplayInstance instance) {
         Boolean loaded = readBooleanField(instance, MODEL_LOADED_FIELD_NAME);
         if (loaded == null) {
@@ -160,7 +143,6 @@ public final class GunDisplayInstancePatcher {
         if (!loaded) return false;
 
         Boolean failed = readBooleanField(instance, MODEL_LOAD_FAILED_FIELD_NAME);
-        // A missing "failed" field isn't treated as blocking - modelLoaded==true is enough
         return failed == null || !failed;
     }
 
@@ -189,51 +171,75 @@ public final class GunDisplayInstancePatcher {
         }
     }
 
+    private static final Set<String> WARNED_WRITE_FAILURES = ConcurrentHashMap.newKeySet();
+
     /**
-     * Returns a copy of {@code instance} with its texture overridden (required) and,
-     * optionally, its 2D inventory icon overridden. The model/geometry is never touched
-     * here - see {@link GunModelPatcher} for that. Returns {@code null} if the original
-     * isn't ready to copy yet (lazy load still in progress) or if reflection fails.
+     * Returns a copy of {@code instance} with the given overrides applied (any may be
+     * {@code null} to leave that asset untouched). Returns {@code null} only if the
+     * original isn't ready to copy yet or the copy itself fails; a single field write
+     * failing does not affect the others.
      */
-    public static GunDisplayInstance withOverrides(GunDisplayInstance instance, ResourceLocation textureOverride, ResourceLocation iconOverride) {
+    public static GunDisplayInstance withOverrides(GunDisplayInstance instance, ResourceLocation textureOverride,
+                                                   ResourceLocation iconOverride, ResourceLocation hudOverride, ResourceLocation hudEmptyOverride) {
         if (instance == null) return null;
-        if (textureOverride == null && iconOverride == null) return instance;
+        if (textureOverride == null && iconOverride == null && hudOverride == null && hudEmptyOverride == null) {
+            return instance;
+        }
 
         if (!isBaseReadyToPatch(instance)) {
             return null;
         }
 
-        Field iconField = iconOverride != null ? resolveIconField() : null;
-
         GunDisplayInstance copy = shallowCopy(instance);
         if (copy == null) return null;
-        try {
-            if (textureOverride != null) {
-                writeField(copy, TEXTURE_FIELD_NAME, textureOverride);
-            }
+
+        if (textureOverride != null) {
+            tryWriteField(copy, TEXTURE_FIELD_NAME, textureOverride);
+        }
+        if (iconOverride != null) {
+            Field iconField = resolveIconField();
             if (iconField != null) {
-                iconField.set(copy, iconOverride);
+                trySetField(iconField, copy, iconOverride, "icon");
             }
-            return copy;
+        }
+        if (hudOverride != null) {
+            tryWriteField(copy, HUD_FIELD_NAME, hudOverride);
+        }
+        if (hudEmptyOverride != null) {
+            tryWriteField(copy, HUD_EMPTY_FIELD_NAME, hudEmptyOverride);
+        }
+        return copy;
+    }
+
+    private static void tryWriteField(Object target, String fieldName, Object value) {
+        try {
+            writeField(target, fieldName, value);
         } catch (ReflectiveOperationException e) {
-            MCPSkins.LOGGER.error("Failed to apply skin texture/icon override via reflection. " +
-                    "Check TEXTURE_FIELD_NAME/ICON_FIELD_CANDIDATES in GunDisplayInstancePatcher - " +
-                    "the fields may have been renamed in a newer TACZ version.", e);
-            return null;
+            warnWriteFailureOnce(fieldName, e);
         }
     }
 
-    /**
-     * Convenience overload for texture-only overrides.
-     */
-    public static GunDisplayInstance withTextureOverride(GunDisplayInstance instance, ResourceLocation texture) {
-        return withOverrides(instance, texture, null);
+    private static void trySetField(Field field, Object target, Object value, String label) {
+        try {
+            field.set(target, value);
+        } catch (IllegalAccessException e) {
+            warnWriteFailureOnce(label, e);
+        }
     }
 
-    /**
-     * Searches {@link #ICON_FIELD_CANDIDATES} by reflection and caches the result for
-     * the session. Logs one warning on failure, not one per call.
-     */
+    private static void warnWriteFailureOnce(String label, ReflectiveOperationException e) {
+        if (!WARNED_WRITE_FAILURES.add(label)) return;
+        MCPSkins.LOGGER.error(
+                "Failed to write GunDisplayInstance field '{}' via reflection - that specific "
+                        + "override, and only that one, stays the base weapon's asset. The field may "
+                        + "have been renamed in a newer TACZ version.",
+                label, e);
+    }
+
+    public static GunDisplayInstance withTextureOverride(GunDisplayInstance instance, ResourceLocation texture) {
+        return withOverrides(instance, texture, null, null, null);
+    }
+
     private static Field resolveIconField() {
         if (iconFieldSearched) return cachedIconField;
         synchronized (GunDisplayInstancePatcher.class) {
@@ -268,12 +274,6 @@ public final class GunDisplayInstancePatcher {
         }
     }
 
-    /**
-     * Manual shallow copy via {@code Unsafe#allocateInstance} (the constructor is never
-     * called) plus a field-by-field reflective copy. {@code GunDisplayInstance} is
-     * neither {@code Cloneable} nor a record, so neither {@code Object.clone()} nor a
-     * canonical record constructor is an option here.
-     */
     private static GunDisplayInstance shallowCopy(GunDisplayInstance instance) {
         try {
             Unsafe unsafe = getUnsafe();

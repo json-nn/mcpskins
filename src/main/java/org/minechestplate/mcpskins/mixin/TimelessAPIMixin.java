@@ -20,15 +20,13 @@ import java.util.Optional;
 
 /**
  * Mixin into {@code TimelessAPI.getGunDisplay} that swaps in a skin's texture, icon,
- * and/or geometry when the item stack has a {@link SkinComponents#SKIN_ID} set. The
- * weapon's GunId is never changed - only what gets rendered for it.
+ * HUD icon(s), and/or geometry (main and LOD) when the item stack has a
+ * {@link SkinComponents#SKIN_ID} set. The weapon's GunId is never changed, only what
+ * gets rendered for it.
  * <p>
- * Texture and icon overrides are resolved via {@link SkinAssetResolver} from files at
- * {@code textures/skins/<baseGunId>/<skinId>.png} (and an optional {@code _icon.png}).
- * A full geometry replacement is attempted via {@link GunModelPatcher} if a matching
- * geo-model file is found next to the weapon's real model. Both the icon and geometry
- * overrides are fully optional and silently fall back to a texture-only skin when the
- * corresponding file is missing or unsupported.
+ * Every override is resolved via {@link SkinAssetResolver} and is fully optional,
+ * falling back to the base weapon's asset when the corresponding file is missing or
+ * unsupported on this TACZ fork.
  */
 @Mixin(TimelessAPI.class)
 public class TimelessAPIMixin {
@@ -54,55 +52,70 @@ public class TimelessAPIMixin {
         ResourceLocation texture = SkinAssetResolver.resolveTexture(MCPSkins.MOD_ID, baseGunId, skinId, baseTexture);
         boolean hasTexture = texture != null && !texture.equals(baseTexture);
 
-        // Full geo-model replacement: namespace/folder come from this weapon's actual base
-        // model rather than being guessed. If the fork's internals aren't reflection-
-        // compatible, baseModelLocation is null and the skin stays texture-only.
         ResourceLocation baseModelLocation = GunModelPatcher.getBaseModelLocation(base);
         ResourceLocation model = baseModelLocation != null ? SkinAssetResolver.resolveModel(baseModelLocation, skinId) : null;
         boolean hasModel = model != null;
 
-        if (!hasTexture && !hasModel) {
-            return; // no texture or model for this skin in any active resource pack
+        // baseLodModelLocation is null both when the fork isn't reflection-compatible and
+        // when this weapon simply has no "lod" block - either way, nothing to override.
+        ResourceLocation baseLodModelLocation = GunModelPatcher.getBaseLodModelLocation(base);
+        ResourceLocation lodModel = baseLodModelLocation != null ? SkinAssetResolver.resolveModel(baseLodModelLocation, skinId) : null;
+        boolean hasLodModel = lodModel != null;
+
+        ResourceLocation baseLodTexture = GunModelPatcher.getBaseLodTexture(base);
+        ResourceLocation lodTexture = baseLodTexture != null
+                ? SkinAssetResolver.resolveLodTexture(MCPSkins.MOD_ID, baseGunId, skinId, baseLodTexture) : null;
+        boolean hasLodTexture = lodTexture != null && !lodTexture.equals(baseLodTexture);
+
+        ResourceLocation baseHud = GunDisplayInstancePatcher.getHud(base);
+        ResourceLocation hud = SkinAssetResolver.resolveHud(MCPSkins.MOD_ID, baseGunId, skinId, baseHud);
+        boolean hasHud = hud != null && !hud.equals(baseHud);
+
+        ResourceLocation baseHudEmpty = GunDisplayInstancePatcher.getHudEmpty(base);
+        ResourceLocation hudEmpty = SkinAssetResolver.resolveHudEmpty(MCPSkins.MOD_ID, baseGunId, skinId, baseHudEmpty);
+        boolean hasHudEmpty = hudEmpty != null && !hudEmpty.equals(baseHudEmpty);
+
+        if (!hasTexture && !hasModel && !hasLodModel && !hasLodTexture && !hasHud && !hasHudEmpty) {
+            return; // nothing for this skin in any active resource pack
         }
 
         String cacheKey = baseGunId + '\u0000' + skinId;
 
-        // Geometry is built first; texture/icon overrides then layer on top of the
-        // geo-patched instance (or the base instance, if geometry patching failed).
+        // Geometry is built first; texture/icon/HUD overrides layer on top of the
+        // geo-patched instance (or the base instance, if geometry wasn't needed)
         GunDisplayInstance patchBase = base;
-        if (hasModel) {
-            GunDisplayInstance geoInstance = GunModelPatcher.getOrCreate(cacheKey, base, model);
+        if (hasModel || hasLodModel || hasLodTexture) {
+            GunDisplayInstance geoInstance = GunModelPatcher.getOrCreate(cacheKey, base,
+                    hasModel ? model : null, hasLodModel ? lodModel : null, hasLodTexture ? lodTexture : null);
             if (geoInstance != null) {
                 patchBase = geoInstance;
             }
         }
 
-        // Optional 2D icon override, if a "<skinId>_icon.png" exists next to the skin texture
         ResourceLocation baseIcon = GunDisplayInstancePatcher.getIcon(base);
         ResourceLocation icon = SkinAssetResolver.resolveIcon(MCPSkins.MOD_ID, baseGunId, skinId, baseIcon);
         ResourceLocation iconOverride = (icon != null && !icon.equals(baseIcon)) ? icon : null;
         ResourceLocation textureOverride = hasTexture ? texture : null;
+        ResourceLocation hudOverride = hasHud ? hud : null;
+        ResourceLocation hudEmptyOverride = hasHudEmpty ? hudEmpty : null;
 
-        if (textureOverride == null && iconOverride == null) {
-            // Geometry only, no texture/icon changes - patchBase is already the final result
+        if (textureOverride == null && iconOverride == null && hudOverride == null && hudEmptyOverride == null) {
+            // Geometry only - patchBase is already the final result
             if (patchBase != base) {
                 cir.setReturnValue(Optional.of(patchBase));
             }
             return;
         }
 
-        // Cached rather than calling GunDisplayInstancePatcher.withOverrides directly, since
-        // this runs on essentially every render frame - without caching it would allocate a
-        // new patched instance every call for the same (weapon, skin) pair.
-        GunDisplayInstance patched = PatchedGunDisplayCache.getOrCreate(cacheKey, patchBase, textureOverride, iconOverride);
+        // Cached since this runs on essentially every render frame
+        GunDisplayInstance patched = PatchedGunDisplayCache.getOrCreate(cacheKey, patchBase, textureOverride, iconOverride, hudOverride, hudEmptyOverride);
         if (patched != null) {
             cir.setReturnValue(Optional.of(patched));
         } else if (patchBase != base) {
-            // Texture/icon patch isn't ready yet (model still loading lazily) - show the
-            // correct geometry with the base texture for now; the patch resolves on a
-            // subsequent call.
+            // Texture/icon/HUD patch isn't ready yet - show the correct geometry with the
+            // base texture for now, the patch resolves on a later call
             cir.setReturnValue(Optional.of(patchBase));
         }
-        // If both patched and patchBase fall through, the original unskinned instance stands.
+        // If both fall through, the original unskinned instance stands.
     }
 }
