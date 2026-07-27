@@ -1,28 +1,24 @@
-package org.minechestplate.mcpskins.skin.render;
+package org.minechestplate.mcpskins.client.render;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import org.minechestplate.mcpskins.MCPSkins;
 
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Resolves optional skin override files (texture, icon, HUD, LOD, geo-model) against the
- * active resource packs, falling back to the weapon's base asset when no override exists.
+ * Resolves optional skin override files (texture, icon, HUD, LOD, geo-model), falling back
+ * to the base weapon asset when no override exists.
  * <p>
- * {@code baseGunId} and {@code skinId} may themselves be "namespace:path" for a weapon or
- * skin from a third-party gunpack/resource pack; a colon in {@code skinId} is treated as
- * an explicit namespace override, and {@code baseGunId}'s colon is folded into a subfolder
- * since it isn't valid inside a {@link ResourceLocation} path.
+ * A colon in skinId is treated as an explicit namespace override; baseGunId's colon gets
+ * folded into a subfolder since it's not valid in a ResourceLocation path.
  * <p>
- * Existence checks go through {@link Minecraft#getResourceManager()} and are cached, since
- * this runs on essentially every render frame. Call {@link #clearCache()} after adding new
- * skin files without a client restart.
+ * Presence checks go through {@link ClientSkinAssetCache}, which fetches bytes from the
+ * server the first time each path is asked about. Runs on basically every render frame,
+ * so keep this cheap. Call {@link #clearCache()} after adding skin files without a client
+ * restart.
  */
 public final class SkinAssetResolver {
-    private static final Map<String, Boolean> EXISTS_CACHE = new ConcurrentHashMap<>();
     private static final Set<String> WARNED_INVALID = ConcurrentHashMap.newKeySet();
 
     private SkinAssetResolver() {
@@ -33,20 +29,18 @@ public final class SkinAssetResolver {
     }
 
     /**
-     * Resolves a skin's full geo-model override. A gun model has two path forms for the
-     * same file: the <b>physical path</b> ({@code assets/<namespace>/geo_models/<sub>.json}),
-     * used to check existence, and the <b>collapsed form</b> ({@code namespace:<sub>}, no
-     * {@code geo_models/} prefix or {@code .json} suffix), which is what TACZ's own config
-     * and asset manager expect. Given the base model's real location (see
-     * {@link GunModelPatcher#getBaseModelLocation}), derives a skin-specific file name in
-     * the same folder, e.g. base model {@code create_armorer:gun/cannon_geo} and skin id
-     * {@code "galaxy"} looks for {@code create_armorer:gun/cannon_geo__skin_galaxy}.
+     * Resolves a skin's geo-model override. Has two path forms: the physical path
+     * ({@code assets/<namespace>/geo_models/<sub>.json}) used to check existence, and the
+     * collapsed form ({@code namespace:<sub>}, no {@code geo_models/} prefix or
+     * {@code .json} suffix) that TACZ's own config and asset manager actually expect.
+     * E.g. base model {@code create_armorer:gun/cannon_geo} + skin "galaxy" resolves to
+     * {@code create_armorer:gun/cannon_geo__skin_galaxy}.
      * <p>
-     * Generic over which model it's resolving - also used for the LOD geo-model by passing
-     * {@link GunModelPatcher#getBaseLodModelLocation} instead of the main model location.
+     * Also used for the LOD model by passing {@link GunModelPatcher#getBaseLodModelLocation}
+     * instead of the main model location.
      *
-     * @return the collapsed-form location of the skin's geo-model, or {@code null} if the
-     *         base location is unknown or no matching file exists
+     * @return the collapsed-form location of the skin's geo-model, or null if the base
+     *         location is unknown or no matching file exists
      */
     public static ResourceLocation resolveModel(ResourceLocation baseModelLocation, String skinId) {
         if (baseModelLocation == null || skinId == null || skinId.isBlank()) return null;
@@ -72,40 +66,31 @@ public final class SkinAssetResolver {
             }
             return null;
         }
-        if (!exists(physical)) return null;
+        ResourceLocation collapsed = ResourceLocation.tryBuild(namespace, skinSubPath);
+        if (collapsed == null) return null; // defensive only, physical already built fine with the same chars
 
-        return ResourceLocation.tryBuild(namespace, skinSubPath);
+        return ClientSkinAssetCache.checkOrRequestGeoModel(physical, collapsed) ? collapsed : null;
     }
 
-    /**
-     * Resolves a skin's optional 2D inventory icon override, a separate image from the
-     * 3D model's texture. If {@code <skinId>_icon.png} doesn't exist, the base weapon's
-     * icon is kept.
-     */
+    /** Resolves a skin's optional inventory icon override. Falls back to the base icon if
+     *  {@code <skinId>_icon.png} doesn't exist. */
     public static ResourceLocation resolveIcon(String modId, String baseGunId, String skinId, ResourceLocation fallback) {
         return resolve(modId, baseGunId, skinId, "textures/skins/%s/%s_icon.png", fallback);
     }
 
-    /**
-     * Resolves a skin's optional HUD icon override, the weapon silhouette TACZ draws
-     * bottom-right while it's held. Expects a 3:1 aspect ratio.
-     */
+    /** Resolves a skin's optional HUD icon override (the weapon silhouette TACZ draws
+     *  bottom-right while it's held). Expects a 3:1 aspect ratio. */
     public static ResourceLocation resolveHud(String modId, String baseGunId, String skinId, ResourceLocation fallback) {
         return resolve(modId, baseGunId, skinId, "textures/skins/%s/%s_hud.png", fallback);
     }
 
-    /**
-     * Resolves a skin's optional "out of ammo" HUD variant. {@code fallback} may itself be
-     * {@code null} if the base weapon has no such variant, in which case TACZ tints the
-     * normal HUD icon red instead.
-     */
+    /** Resolves a skin's optional "out of ammo" HUD variant. {@code fallback} may be null
+     *  if the base weapon has none - TACZ just tints the normal HUD icon red instead. */
     public static ResourceLocation resolveHudEmpty(String modId, String baseGunId, String skinId, ResourceLocation fallback) {
         return resolve(modId, baseGunId, skinId, "textures/skins/%s/%s_hud_empty.png", fallback);
     }
 
-    /**
-     * Resolves a skin's optional LOD texture override, independent of {@link #resolveTexture}.
-     */
+    /** Resolves a skin's optional LOD texture override, independent of {@link #resolveTexture}. */
     public static ResourceLocation resolveLodTexture(String modId, String baseGunId, String skinId, ResourceLocation fallback) {
         return resolve(modId, baseGunId, skinId, "textures/skins/%s/%s_lod.png", fallback);
     }
@@ -136,21 +121,12 @@ public final class SkinAssetResolver {
             return fallback;
         }
 
-        return exists(candidate) ? candidate : fallback;
+        return ClientSkinAssetCache.checkOrRequestTexture(candidate) ? candidate : fallback;
     }
 
-    private static boolean exists(ResourceLocation location) {
-        String key = location.toString();
-        Boolean cached = EXISTS_CACHE.get(key);
-        if (cached != null) return cached;
-        boolean found = Minecraft.getInstance().getResourceManager().getResource(location).isPresent();
-        EXISTS_CACHE.put(key, found);
-        return found;
-    }
-
-    /** Clears the resource-existence cache. */
+    /** Clears the invalid-path warning dedup set. Asset state itself lives in
+     *  {@link ClientSkinAssetCache}, cleared separately. */
     public static void clearCache() {
-        EXISTS_CACHE.clear();
         WARNED_INVALID.clear();
     }
 }

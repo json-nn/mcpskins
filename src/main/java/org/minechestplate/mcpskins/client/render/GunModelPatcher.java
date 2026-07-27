@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.render;
+package org.minechestplate.mcpskins.client.render;
 
 import com.tacz.guns.client.resource.GunDisplayInstance;
 import net.minecraft.resources.ResourceLocation;

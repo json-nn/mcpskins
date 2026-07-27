@@ -44,7 +44,7 @@ public class SkinAttachment {
             if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
                 net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
                         serverPlayer,
-                        new org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload(new ArrayList<>(updatedSkins))
+                        new org.minechestplate.mcpskins.network.SyncUnlocksPayload(new ArrayList<>(updatedSkins))
                 );
             }
         }
@@ -67,7 +67,7 @@ public class SkinAttachment {
             if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
                 net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
                         serverPlayer,
-                        new org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload(new ArrayList<>(updatedSkins))
+                        new org.minechestplate.mcpskins.network.SyncUnlocksPayload(new ArrayList<>(updatedSkins))
                 );
             }
         }
@@ -83,7 +83,7 @@ public class SkinAttachment {
             if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
                 net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
                         serverPlayer,
-                        new org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload(new ArrayList<>(updatedSkins))
+                        new org.minechestplate.mcpskins.network.SyncUnlocksPayload(new ArrayList<>(updatedSkins))
                 );
             }
             return true;
@@ -97,7 +97,7 @@ public class SkinAttachment {
         if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
                     serverPlayer,
-                    new org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload(new ArrayList<>())
+                    new org.minechestplate.mcpskins.network.SyncUnlocksPayload(new ArrayList<>())
             );
         }
     }

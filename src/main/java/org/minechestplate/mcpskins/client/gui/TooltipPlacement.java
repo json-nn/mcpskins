@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.client.gui;
+package org.minechestplate.mcpskins.client.gui;
 
 import net.minecraft.util.Mth;
 

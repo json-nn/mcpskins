@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.client.gui;
+package org.minechestplate.mcpskins.client.gui;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;

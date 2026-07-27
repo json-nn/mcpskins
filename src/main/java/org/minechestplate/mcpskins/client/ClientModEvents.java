@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins;
+package org.minechestplate.mcpskins.client;
 
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
@@ -15,12 +15,13 @@ import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
-import org.minechestplate.mcpskins.skin.client.ArmoryKeybinds;
-import org.minechestplate.mcpskins.skin.client.gui.config.MCPSkinsConfigScreen;
-import org.minechestplate.mcpskins.skin.client.gui.config.RefitButtonPositionScreen;
-import org.minechestplate.mcpskins.skin.render.GunModelPatcher;
-import org.minechestplate.mcpskins.skin.render.PatchedGunDisplayCache;
-import org.minechestplate.mcpskins.skin.render.SkinAssetResolver;
+import org.minechestplate.mcpskins.client.ArmoryKeybinds;
+import org.minechestplate.mcpskins.client.gui.settings.MCPSkinsConfigScreen;
+import org.minechestplate.mcpskins.client.gui.settings.RefitButtonPositionScreen;
+import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
+import org.minechestplate.mcpskins.client.render.GunModelPatcher;
+import org.minechestplate.mcpskins.client.render.PatchedGunDisplayCache;
+import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -31,7 +32,7 @@ import java.util.concurrent.CompletableFuture;
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, bus = EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public class ClientModEvents {
 
-    /** Clears client-side skin caches on every resource reload, so a resource pack change can't leave stale data behind. */
+    /** Clears client-side skin caches on every resource reload so a resource pack change can't leave stale data behind. */
     @SubscribeEvent
     public static void registerReloadListeners(RegisterClientReloadListenersEvent event) {
         event.registerReloadListener((PreparableReloadListener) (preparationBarrier, resourceManager,
@@ -42,9 +43,14 @@ public class ClientModEvents {
                             PatchedGunDisplayCache.clear();
                             GunModelPatcher.clear();
                             RefitButtonPositionScreen.clearBackgroundCache();
-                            MCPSkins.LOGGER.info("[MCPSkins] Client resources reloaded - skin caches cleared.");
                         }, backgroundExecutor)
-                        .thenCompose(preparationBarrier::wait));
+                        .thenCompose(preparationBarrier::wait)
+                        // Has to run on gameExecutor, not backgroundExecutor above - closing
+                        // DynamicTextures is a GL call, only valid on the main client thread.
+                        .thenRunAsync(() -> {
+                            ClientSkinAssetCache.clearAll();
+                            MCPSkins.LOGGER.info("[MCPSkins] Client resources reloaded - skin caches cleared.");
+                        }, gameExecutor));
     }
 
     @SubscribeEvent

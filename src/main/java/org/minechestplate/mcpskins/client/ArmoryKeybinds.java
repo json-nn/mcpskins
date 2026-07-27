@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.client;
+package org.minechestplate.mcpskins.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
@@ -9,7 +9,7 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import org.lwjgl.glfw.GLFW;
 import org.minechestplate.mcpskins.MCPSkins;
-import org.minechestplate.mcpskins.skin.client.gui.SkinArmoryScreen;
+import org.minechestplate.mcpskins.client.gui.SkinArmoryScreen;
 
 /**
  * Hotkey that opens {@link SkinArmoryScreen}, usable even with no weapon in hand.

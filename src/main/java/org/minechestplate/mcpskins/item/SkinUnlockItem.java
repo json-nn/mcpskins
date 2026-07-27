@@ -25,7 +25,7 @@ import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
-import org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload;
+import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
 
 import java.util.ArrayList;
 import java.util.List;

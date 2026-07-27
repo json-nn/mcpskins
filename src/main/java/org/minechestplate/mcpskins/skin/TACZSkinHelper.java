@@ -16,7 +16,7 @@ import net.minecraft.world.item.component.CustomData;
  * matches the physical weapon in hand. Which skin is shown is controlled entirely by
  * the separate {@link SkinComponents#SKIN_ID} component, which
  * {@link org.minechestplate.mcpskins.mixin.TimelessAPIMixin} reads to swap in the
- * matching texture (see {@link org.minechestplate.mcpskins.skin.render.SkinAssetResolver}).
+ * matching texture (see {@link org.minechestplate.mcpskins.client.render.SkinAssetResolver}).
  * This only supports texture recoloring, not geometry changes.
  */
 public class TACZSkinHelper {

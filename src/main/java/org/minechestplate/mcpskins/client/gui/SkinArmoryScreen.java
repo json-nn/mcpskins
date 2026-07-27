@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.client.gui;
+package org.minechestplate.mcpskins.client.gui;
 
 import com.tacz.guns.api.TimelessAPI;
 import com.tacz.guns.client.resource.GunDisplayInstance;
@@ -21,9 +21,9 @@ import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
-import org.minechestplate.mcpskins.skin.network.ApplySkinPayload;
-import org.minechestplate.mcpskins.skin.render.GunModelPatcher;
-import org.minechestplate.mcpskins.skin.render.SkinAssetResolver;
+import org.minechestplate.mcpskins.network.ApplySkinPayload;
+import org.minechestplate.mcpskins.client.render.GunModelPatcher;
+import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -36,8 +36,8 @@ import java.util.Optional;
 
 /**
  * Full-screen standalone skin catalog/inspector, independent of what's currently in the
- * player's hand (unlike {@link org.minechestplate.mcpskins.skin.client.TACZRefitSkinOverlay}).
- * Opened via hotkey ({@link org.minechestplate.mcpskins.skin.client.ArmoryKeybinds}) or the
+ * player's hand (unlike {@link org.minechestplate.mcpskins.client.TACZRefitSkinOverlay}).
+ * Opened via hotkey ({@link org.minechestplate.mcpskins.client.ArmoryKeybinds}) or the
  * {@code /mcpskins armory} command.
  * <p>
  * Layout has four zones plus a top filter bar:

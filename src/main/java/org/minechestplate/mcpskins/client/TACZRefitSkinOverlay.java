@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.client;
+package org.minechestplate.mcpskins.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
@@ -27,8 +27,8 @@ import org.minechestplate.mcpskins.skin.SkinComponents;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
-import org.minechestplate.mcpskins.skin.client.gui.TooltipPlacement;
-import org.minechestplate.mcpskins.skin.network.ApplySkinPayload;
+import org.minechestplate.mcpskins.client.gui.TooltipPlacement;
+import org.minechestplate.mcpskins.network.ApplySkinPayload;
 
 import java.util.ArrayList;
 import java.util.Comparator;

@@ -26,28 +26,21 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
- * Scans the {@code mcpskins/} folder in the game directory for skin packs: plain folders
- * or {@code .zip} files with an {@code assets/} and/or {@code data/} tree at their root, no
- * {@code pack.mcmeta} required. Found packs are registered required (see
- * {@link PackSelectionConfig}) - force-enabled and applied automatically, including to
- * worlds that already exist.
+ * Scans {@code mcpskins/} in the game dir for skin packs and registers them as required
+ * data packs. Folders or .zip files with a {@code data/} tree at the root, no
+ * {@code pack.mcmeta} needed.
  * <p>
- * The {@code data/} half is loaded server-side by
- * {@link org.minechestplate.mcpskins.skin.SkinManager}, so a dedicated server needs the same
- * pack dropped into its own {@code mcpskins/} folder too.
+ * Server-side only - registered for SERVER_DATA, never CLIENT_RESOURCES. Asset bytes
+ * (textures, models) get streamed to clients on demand instead, see
+ * {@code ServerSkinAssetStore}/{@code ClientSkinAssetCache}.
  */
 public enum MCPSkinsPackFinder implements RepositorySource {
     INSTANCE;
 
     private static final String FOLDER_NAME = MCPSkins.MOD_ID;
 
-    /**
-     * {@link PackType} this finder's packs report for the format-compatibility check in
-     * their synthetic metadata. Set once from the physical side in {@code MCPSkins}'
-     * constructor; doesn't affect which files get served, only which "current pack format"
-     * number packs are checked against.
-     */
-    public PackType packType = PackType.CLIENT_RESOURCES;
+    /** Always SERVER_DATA, see class javadoc. */
+    private static final PackType PACK_TYPE = PackType.SERVER_DATA;
 
     @Override
     public void loadPacks(Consumer<Pack> onLoad) {
@@ -87,11 +80,7 @@ public enum MCPSkinsPackFinder implements RepositorySource {
         return result;
     }
 
-    /**
-     * Builds a {@link Pack} for one folder/{@code .zip} entry under {@code mcpskins/}, or
-     * {@code null} if it's not a usable pack (wrong file type, unreadable, or has no
-     * {@code assets/}/{@code data/} content).
-     */
+    /** Builds a Pack for one folder/zip entry under mcpskins/, or null if it's not usable. */
     private Pack tryCreatePack(Path entry) {
         String fileName = entry.getFileName().toString();
         boolean isZip = Files.isRegularFile(entry) && fileName.toLowerCase(Locale.ROOT).endsWith(".zip");
@@ -109,8 +98,8 @@ public enum MCPSkinsPackFinder implements RepositorySource {
                     : new FilePackResources.FileResourcesSupplier(entry);
             raw = rawSupplier.openPrimary(locationInfo);
 
-            boolean hasContent = !raw.getNamespaces(PackType.CLIENT_RESOURCES).isEmpty()
-                    || !raw.getNamespaces(PackType.SERVER_DATA).isEmpty();
+            // Skip packs with no data/ content - nothing here for SkinManager to load.
+            boolean hasContent = !raw.getNamespaces(PackType.SERVER_DATA).isEmpty();
             if (!hasContent) {
                 raw.close();
                 return null;
@@ -118,13 +107,13 @@ public enum MCPSkinsPackFinder implements RepositorySource {
 
             PackMetadataSection meta = new PackMetadataSection(
                     Component.literal("MCPSkins skin pack: " + displayName),
-                    SharedConstants.getCurrentVersion().getPackVersion(packType),
+                    SharedConstants.getCurrentVersion().getPackVersion(PACK_TYPE),
                     Optional.empty());
 
             MCPSkinsPackResources wrapped = new MCPSkinsPackResources(locationInfo, meta, raw);
             PackSelectionConfig selectionConfig = new PackSelectionConfig(true, Pack.Position.TOP, false);
 
-            return Pack.readMetaAndCreate(locationInfo, wrapped, packType, selectionConfig);
+            return Pack.readMetaAndCreate(locationInfo, wrapped, PACK_TYPE, selectionConfig);
         } catch (Exception e) {
             MCPSkins.LOGGER.warn("MCPSkins: failed to load potential skin pack '{}', skipping", fileName, e);
             if (raw != null) {
@@ -154,9 +143,13 @@ public enum MCPSkinsPackFinder implements RepositorySource {
                 create_armorer), not mcpskins' - that's the namespace TACZ looks up model
                 overrides in.
 
-                Multiplayer: the data/ half is loaded server-side, so a dedicated server
-                needs the same folder/zip dropped into its own mcpskins/ folder too - not
-                just the client's.
+                Server-side only: this whole folder - assets/ AND data/ - only needs to
+                exist on the SERVER (or, in singleplayer, wherever the world is hosted).
+                Textures and models are sent to each client over the network the moment
+                they're actually needed in-game; players never need a copy of this folder,
+                and nothing in it is exposed as a resource pack for them to download or
+                extract. If you're editing/previewing a pack, do it against a local server
+                or singleplayer world so you see it exactly as players will.
                 """;
         try {
             Files.writeString(root.resolve("README.txt"), readme);

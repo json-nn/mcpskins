@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.network;
+package org.minechestplate.mcpskins.network;
 
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.FriendlyByteBuf;
