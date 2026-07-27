@@ -7,7 +7,6 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.minechestplate.mcpskins.MCPSkins;
-import org.minechestplate.mcpskins.network.asset.ServerSkinAssetStore;
 
 /**
  * Client-to-server: "send me the raw bytes behind this asset path, if it exists."

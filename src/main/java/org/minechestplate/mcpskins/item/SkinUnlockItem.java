@@ -21,11 +21,11 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
+import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
-import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
 
 import java.util.ArrayList;
 import java.util.List;

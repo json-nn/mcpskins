@@ -13,16 +13,15 @@ import net.neoforged.neoforge.client.event.RegisterColorHandlersEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import org.minechestplate.mcpskins.MCPSkins;
-import org.minechestplate.mcpskins.item.ModItems;
-import org.minechestplate.mcpskins.skin.SkinDataModels;
-import org.minechestplate.mcpskins.skin.SkinManager;
-import org.minechestplate.mcpskins.client.ArmoryKeybinds;
 import org.minechestplate.mcpskins.client.gui.settings.MCPSkinsConfigScreen;
 import org.minechestplate.mcpskins.client.gui.settings.RefitButtonPositionScreen;
 import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 import org.minechestplate.mcpskins.client.render.GunModelPatcher;
 import org.minechestplate.mcpskins.client.render.PatchedGunDisplayCache;
 import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
+import org.minechestplate.mcpskins.item.ModItems;
+import org.minechestplate.mcpskins.skin.SkinDataModels;
+import org.minechestplate.mcpskins.skin.SkinManager;
 
 import java.util.concurrent.CompletableFuture;
 

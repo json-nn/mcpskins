@@ -17,22 +17,15 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
+import org.minechestplate.mcpskins.client.render.GunModelPatcher;
+import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
+import org.minechestplate.mcpskins.network.ApplySkinPayload;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
-import org.minechestplate.mcpskins.network.ApplySkinPayload;
-import org.minechestplate.mcpskins.client.render.GunModelPatcher;
-import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * Full-screen standalone skin catalog/inspector, independent of what's currently in the

@@ -10,10 +10,10 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.util.Mth;
 import org.minechestplate.mcpskins.MCPSkins;
-import org.minechestplate.mcpskins.config.MCPSkinsClientConfig;
-import org.minechestplate.mcpskins.config.ScreenAnchor;
 import org.minechestplate.mcpskins.client.RefitToggleButtonRenderer;
 import org.minechestplate.mcpskins.client.gui.TooltipPlacement;
+import org.minechestplate.mcpskins.config.MCPSkinsClientConfig;
+import org.minechestplate.mcpskins.config.ScreenAnchor;
 
 import java.io.IOException;
 import java.io.InputStream;

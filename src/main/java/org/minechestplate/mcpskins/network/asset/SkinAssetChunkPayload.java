@@ -7,7 +7,6 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.minechestplate.mcpskins.MCPSkins;
-import org.minechestplate.mcpskins.network.asset.ServerSkinAssetStore;
 import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 
 /**

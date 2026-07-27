@@ -19,16 +19,12 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.MCPSkins;
+import org.minechestplate.mcpskins.client.gui.TooltipPlacement;
 import org.minechestplate.mcpskins.config.MCPSkinsClientConfig;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.config.ScreenAnchor;
-import org.minechestplate.mcpskins.skin.SkinAttachment;
-import org.minechestplate.mcpskins.skin.SkinComponents;
-import org.minechestplate.mcpskins.skin.SkinDataModels;
-import org.minechestplate.mcpskins.skin.SkinManager;
-import org.minechestplate.mcpskins.skin.TACZSkinHelper;
-import org.minechestplate.mcpskins.client.gui.TooltipPlacement;
 import org.minechestplate.mcpskins.network.ApplySkinPayload;
+import org.minechestplate.mcpskins.skin.*;
 
 import java.util.ArrayList;
 import java.util.Comparator;
