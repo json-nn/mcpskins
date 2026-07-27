@@ -112,9 +112,16 @@ under one root:
   variant), and `<skin_id>_lod.png` (UV for TACZ's separate distant/third-person LOD
   model) files, and - for a full shape change instead of just a re-texture - an optional
   geo-model file placed next to the base weapon's own model (and, independently, another
-  one next to its LOD model, if it has one). See [`SkinAssetResolver`](src/main/java/org/minechestplate/mcpskins/skin/render/SkinAssetResolver.java)
-  and [`GunModelPatcher`](src/main/java/org/minechestplate/mcpskins/skin/render/GunModelPatcher.java)
+  one next to its LOD model, if it has one). See [`SkinAssetResolver`](src/main/java/org/minechestplate/mcpskins/client/render/SkinAssetResolver.java)
+  and [`GunModelPatcher`](src/main/java/org/minechestplate/mcpskins/client/render/GunModelPatcher.java)
   for exactly how those paths are resolved.
+
+> **Server-side only for now.** A `mcpskins/` skin pack only needs to be installed on
+> the server - the pack finder registers it for `SERVER_DATA` only, and skin assets
+> (textures, icons, geo-models) are streamed to each client over the network the first
+> time they're needed, not read from a local copy. There's currently no supported way
+> to install a pack client-side, and no need to. This will be spelled out in more detail
+> in the wiki.
 
 > A full walkthrough of the pack layout - plus commands, configuration, and
 > troubleshooting - lives in the project wiki.
@@ -127,24 +134,30 @@ under one root:
 
 ## Project layout
 
+Everything client-only (`Dist.CLIENT`: GUI, rendering, keybinds) lives under `client/`;
+everything else is grouped by concern at the top level.
+
 ```
 src/main/java/org/minechestplate/mcpskins/
 ├── MCPSkins.java                 Mod entry point
-├── ClientModEvents.java          Client setup: reload listeners, item tints, keybinds, config screen
+├── command/                      /mcpskins server command tree
 ├── config/                       Client & server ModConfigSpec definitions
 ├── item/                         The skin-unlock item, including the fusion mechanic
 ├── mixin/                        Texture/model override hook into TACZ's TimelessAPI
+├── network/                      Client/server sync packets
+│   └── asset/                    Chunked asset-transfer payloads + the server-side asset store
 ├── pack/                         mcpskins/ folder scanner - the pack.mcmeta-less skin pack loader
-└── skin/
-    ├── SkinManager.java          Loads skin definitions from datapacks
-    ├── SkinAttachment.java       Per-player unlocked-skin storage
-    ├── SkinDataModels.java       Skin/rarity data types
-    ├── SkinComponents.java       The mcpskins:skin_id item data component
-    ├── TACZSkinHelper.java       Weapon stack creation/skin application helpers
-    ├── client/                   Refit screen overlay, keybinds, client-side command
-    │   └── gui/                  Skin Armory screen, 3D podium widget, config screens
-    ├── command/                  /mcpskins server command tree
-    ├── network/                  Client/server sync packets
+├── skin/                         Core skin domain: registry, data model, ownership
+│   ├── SkinManager.java          Loads skin definitions from datapacks
+│   ├── SkinAttachment.java       Per-player unlocked-skin storage
+│   ├── SkinDataModels.java       Skin/rarity data types
+│   ├── SkinComponents.java       The mcpskins:skin_id item data component
+│   └── TACZSkinHelper.java       Weapon stack creation/skin application helpers
+└── client/                       Everything client-only
+    ├── ClientModEvents.java      Client setup: reload listeners, item tints, keybinds, config screen
+    ├── ArmoryClientCommand.java, ArmoryKeybinds.java, TACZRefitSkinOverlay.java, ...
+    ├── gui/                      Skin Armory screen, 3D podium widget
+    │   └── settings/             In-game settings screens (config screen, button-position picker)
     └── render/                   Texture/icon/HUD/geometry resolution and patching
 ```
 
