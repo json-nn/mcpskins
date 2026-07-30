@@ -140,11 +140,7 @@ configurations {
 dependencies {
     implementation "maven.modrinth:OypNE65K:SISBXRRW"
 
-    compileOnly jarJar("com.github.mcmodderanchor:simplebedrockmodel:2.2.2-neoforge-mc1.21.1") {
-        version {
-            prefer '2.2.2'
-        }
-    }
+    compileOnly "com.github.mcmodderanchor:simplebedrockmodel:2.2.2-neoforge-mc1.21.1"
     // The animation library is already included in jar (jar in jar),
     // but since modrinth maven cannot handle transitive dependencies,
     // you need to include it to pass the compilation.
