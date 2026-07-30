@@ -145,6 +145,17 @@ public final class ClientSkinAssetCache {
         if (state == State.PRESENT) return true;
         if (state == State.MISSING) return false;
 
+        // This runs from the render path, which can tick with no live server connection -
+        // most commonly the frame or two between a disconnect and the title screen actually
+        // taking over, where a held gun's ItemStack is still being rendered from stale state.
+        // PacketDistributor.sendToServer() null-checks the connection internally and throws
+        // rather than no-op'ing, so every call below this point (initial send AND the retry
+        // in retryIfOverdue()) has to be unreachable until a connection actually exists.
+        // Deliberately leaves STATE/PENDING_META untouched rather than recording a failed
+        // attempt - there's no server to have failed to answer, so this shouldn't cost the
+        // key one of its MAX_ATTEMPTS. Next frame retries for free once reconnected.
+        if (Minecraft.getInstance().getConnection() == null) return false;
+
         long now = System.currentTimeMillis();
         if (state == null) {
             // putIfAbsent, not put - two render calls racing here shouldn't fire two requests.
