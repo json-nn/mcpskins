@@ -1,8 +1,6 @@
 package org.minechestplate.mcpskins.client;
 
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
-import net.minecraft.world.item.component.CustomData;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModList;
@@ -19,9 +17,11 @@ import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 import org.minechestplate.mcpskins.client.render.GunModelPatcher;
 import org.minechestplate.mcpskins.client.render.PatchedGunDisplayCache;
 import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
+import org.minechestplate.mcpskins.client.render.TaczGeoModelInjector;
 import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
+import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -38,16 +38,24 @@ public class ClientModEvents {
         event.registerReloadListener((PreparableReloadListener) (preparationBarrier, resourceManager,
                                                                  preparationsProfiler, reloadProfiler,
                                                                  backgroundExecutor, gameExecutor) ->
-                CompletableFuture.runAsync(() -> {
+                CompletableFuture.completedFuture((Void) null)
+                        .thenCompose(preparationBarrier::wait)
+                        // Everything here runs on gameExecutor, deliberately. Closing a
+                        // DynamicTexture is a GL call and has to be on the main client
+                        // thread - but so does the rest of it, for a subtler reason: the
+                        // render thread reads and writes these same caches every frame, and
+                        // clearing them from the background executor raced it directly. That
+                        // is exactly the cross-thread interleaving GunModelPatcher's
+                        // ThreadLocal build guard cannot cover, and it also meant
+                        // RefitButtonPositionScreen's two plain (non-volatile) static ints
+                        // were written from one thread and read from another. None of this
+                        // work is expensive enough to be worth a background hop.
+                        .thenRunAsync(() -> {
                             SkinAssetResolver.clearCache();
                             PatchedGunDisplayCache.clear();
                             GunModelPatcher.clear();
+                            TaczGeoModelInjector.reset();
                             RefitButtonPositionScreen.clearBackgroundCache();
-                        }, backgroundExecutor)
-                        .thenCompose(preparationBarrier::wait)
-                        // Has to run on gameExecutor, not backgroundExecutor above - closing
-                        // DynamicTextures is a GL call, only valid on the main client thread.
-                        .thenRunAsync(() -> {
                             ClientSkinAssetCache.clearAll();
                             MCPSkins.LOGGER.info("[MCPSkins] Client resources reloaded - skin caches cleared.");
                         }, gameExecutor));
@@ -58,17 +66,13 @@ public class ClientModEvents {
         event.register((stack, tintIndex) -> {
             // tintIndex 0 is "layer0" (the item's background) in the model JSON
             if (tintIndex == 0) {
-                CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
-
-                if (data.contains("SkinToUnlock")) {
-                    String skinId = data.copyTag().getString("SkinToUnlock");
-
-                    for (SkinDataModels.WeaponSkins weapon : SkinManager.INSTANCE.getRegistry().values()) {
-                        for (SkinDataModels.SkinEntry skin : weapon.skins()) {
-                            if (skin.id().equals(skinId)) {
-                                return skin.labelColor() | 0xFF000000; // force opaque alpha
-                            }
-                        }
+                String skinId = TACZSkinHelper.readCustomString(stack, "SkinToUnlock");
+                if (skinId != null) {
+                    // Indexed lookup rather than walking every skin of every weapon - this
+                    // runs per tint query, i.e. per render of the item.
+                    SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(skinId);
+                    if (lookup != null) {
+                        return lookup.skin().labelColor() | 0xFF000000; // force opaque alpha
                     }
                 }
             }

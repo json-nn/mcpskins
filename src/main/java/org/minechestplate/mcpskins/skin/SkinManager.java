@@ -1,6 +1,5 @@
 package org.minechestplate.mcpskins.skin;
 
-import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -29,9 +28,37 @@ import java.util.Map;
  */
 public class SkinManager extends SimpleJsonResourceReloadListener {
     public static final SkinManager INSTANCE = new SkinManager();
-    private static final Gson GSON = new GsonBuilder().create();
 
-    private final Map<String, SkinDataModels.WeaponSkins> registry = new HashMap<>();
+    /**
+     * Everything the registry is looked up by, published as one immutable unit.
+     * <p>
+     * The two index maps exist because {@link #findSkin} and {@link #getBaseGun} used to scan
+     * every skin of every weapon, and both are called from the render path (per weapon, per
+     * frame) and from packet handlers. They're built once per load alongside the registry.
+     *
+     * @param registry     baseGun -&gt; that weapon's skins
+     * @param skinsById    skin id -&gt; the (weapon, skin) pair it belongs to
+     * @param baseGunById  skin id, with and without a {@code default:} prefix -&gt; owning baseGun
+     */
+    private record Snapshot(Map<String, SkinDataModels.WeaponSkins> registry,
+                            Map<String, SkinDataModels.SkinLookupResult> skinsById,
+                            Map<String, String> baseGunById) {
+        static final Snapshot EMPTY = new Snapshot(Map.of(), Map.of(), Map.of());
+    }
+
+    /**
+     * Replaced wholesale, never mutated in place.
+     * <p>
+     * This was a plain {@link HashMap} written by {@link #apply} on the reload thread and by
+     * {@link #syncFromNetwork} on the client main thread, and read from the render thread and
+     * from packet handlers - with {@code clear()}-then-repopulate in the middle, so readers
+     * could see a half-built registry. Worse, {@link #getRegistry()} handed the live map
+     * straight to {@code SyncRegistryPayload}, which serializes it on a netty encode thread:
+     * a {@code /reload} landing at the wrong moment was a {@link java.util.ConcurrentModificationException}
+     * mid-packet. A volatile reference to an immutable snapshot makes every read consistent
+     * and every publish atomic.
+     */
+    private volatile Snapshot snapshot = Snapshot.EMPTY;
 
     public SkinManager() {
         super(new GsonBuilder().create(), "skins");
@@ -39,7 +66,8 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
 
     @Override
     protected void apply(Map<ResourceLocation, JsonElement> objectIn, ResourceManager resourceManager, ProfilerFiller profilerIn) {
-        registry.clear();
+        // Built locally, published atomically at the end - readers never see a partial load.
+        Map<String, SkinDataModels.WeaponSkins> registry = new HashMap<>();
         objectIn.forEach((location, element) -> {
             try {
                 JsonObject json = element.getAsJsonObject();
@@ -73,16 +101,39 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                 MCPSkins.LOGGER.error("Failed to parse TACZ skin config: {}", location, e);
             }
         });
+        publish(registry);
         MCPSkins.LOGGER.info("Loaded {} TACZ weapon skin configs.", registry.size());
     }
 
+    /** Builds the lookup indices and publishes the new state as one atomic replacement. */
+    private void publish(Map<String, SkinDataModels.WeaponSkins> registry) {
+        Map<String, SkinDataModels.SkinLookupResult> skinsById = new HashMap<>();
+        Map<String, String> baseGunById = new HashMap<>();
+
+        for (SkinDataModels.WeaponSkins weapon : registry.values()) {
+            baseGunById.put(weapon.baseGun(), weapon.baseGun());
+            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
+                skinsById.putIfAbsent(skin.id(), new SkinDataModels.SkinLookupResult(weapon, skin));
+                // Indexed under both spellings so getBaseGun keeps resolving a "default:"
+                // prefixed id the same way its old linear scan did.
+                baseGunById.putIfAbsent(skin.id(), weapon.baseGun());
+                baseGunById.putIfAbsent(TACZSkinHelper.bareSkinId(skin.id()), weapon.baseGun());
+            }
+        }
+
+        snapshot = new Snapshot(Map.copyOf(registry), Map.copyOf(skinsById), Map.copyOf(baseGunById));
+    }
+
+    /**
+     * The live registry. Safe to hand around and iterate: it's immutable, and a reload
+     * publishes a whole new map rather than mutating this one.
+     */
     public Map<String, SkinDataModels.WeaponSkins> getRegistry() {
-        return registry;
+        return snapshot.registry();
     }
 
     public void syncFromNetwork(Map<String, SkinDataModels.WeaponSkins> networkData) {
-        this.registry.clear();
-        this.registry.putAll(networkData);
+        publish(new HashMap<>(networkData));
     }
 
     /**
@@ -91,22 +142,10 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
     public String getBaseGun(String skinOrGunId) {
         if (skinOrGunId == null) return "";
 
-        String idToMatch = skinOrGunId.startsWith("default:") ? skinOrGunId.substring(8) : skinOrGunId;
-
-        if (registry.containsKey(idToMatch)) {
-            return idToMatch;
-        }
-
-        for (SkinDataModels.WeaponSkins weapon : registry.values()) {
-            if (weapon.baseGun().equals(idToMatch)) return weapon.baseGun();
-            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
-                String skinActualId = skin.id().startsWith("default:") ? skin.id().substring(8) : skin.id();
-                if (skinActualId.equals(idToMatch)) {
-                    return weapon.baseGun();
-                }
-            }
-        }
-        return skinOrGunId;
+        String idToMatch = TACZSkinHelper.bareSkinId(skinOrGunId);
+        String baseGun = snapshot.baseGunById().get(idToMatch);
+        // Unchanged fallback: an id we don't know is echoed back verbatim, prefix included.
+        return baseGun != null ? baseGun : skinOrGunId;
     }
 
     /**
@@ -116,15 +155,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
      */
     public SkinDataModels.SkinLookupResult findSkin(String skinId) {
         if (skinId == null) return null;
-
-        for (SkinDataModels.WeaponSkins weapon : registry.values()) {
-            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
-                if (skin.id().equals(skinId)) {
-                    return new SkinDataModels.SkinLookupResult(weapon, skin);
-                }
-            }
-        }
-        return null;
+        return snapshot.skinsById().get(skinId);
     }
 
     /**
@@ -132,12 +163,10 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
      */
     public List<SkinDataModels.SkinLookupResult> getSkinsByRarity(SkinDataModels.Rarity rarity) {
         List<SkinDataModels.SkinLookupResult> list = new ArrayList<>();
-        for (SkinDataModels.WeaponSkins weapon : registry.values()) {
-            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
-                if (skin.id().startsWith("default:")) continue;
-                if (skin.rarity() == rarity) {
-                    list.add(new SkinDataModels.SkinLookupResult(weapon, skin));
-                }
+        for (SkinDataModels.SkinLookupResult result : snapshot.skinsById().values()) {
+            if (SkinAttachment.isDefaultEntry(result.skin().id())) continue;
+            if (result.skin().rarity() == rarity) {
+                list.add(result);
             }
         }
         return list;
@@ -148,7 +177,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
      */
     public List<String> getAllSkinIds() {
         List<String> list = new ArrayList<>();
-        for (SkinDataModels.WeaponSkins weapon : registry.values()) {
+        for (SkinDataModels.WeaponSkins weapon : snapshot.registry().values()) {
             for (SkinDataModels.SkinEntry skin : weapon.skins()) {
                 list.add(skin.id());
             }

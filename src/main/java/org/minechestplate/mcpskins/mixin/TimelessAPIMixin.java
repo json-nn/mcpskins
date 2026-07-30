@@ -27,6 +27,11 @@ import java.util.Optional;
  * Every override is resolved via {@link SkinAssetResolver} and is fully optional,
  * falling back to the base weapon's asset when the corresponding file is missing or
  * unsupported on this TACZ fork.
+ * <p>
+ * {@code stack} is passed into {@link GunModelPatcher#getOrCreate} purely so a freshly
+ * built geo-model instance can have its animation state machine primed immediately - see
+ * {@link GunModelPatcher}'s class javadoc for why that matters (it's what prevents
+ * "detached hands" the first time a geo-model skin is equipped in first person).
  */
 @Mixin(TimelessAPI.class)
 public class TimelessAPIMixin {
@@ -85,7 +90,7 @@ public class TimelessAPIMixin {
         // geo-patched instance (or the base instance, if geometry wasn't needed)
         GunDisplayInstance patchBase = base;
         if (hasModel || hasLodModel || hasLodTexture) {
-            GunDisplayInstance geoInstance = GunModelPatcher.getOrCreate(cacheKey, base,
+            GunDisplayInstance geoInstance = GunModelPatcher.getOrCreate(cacheKey, base, stack,
                     hasModel ? model : null, hasLodModel ? lodModel : null, hasLodTexture ? lodTexture : null);
             if (geoInstance != null) {
                 patchBase = geoInstance;

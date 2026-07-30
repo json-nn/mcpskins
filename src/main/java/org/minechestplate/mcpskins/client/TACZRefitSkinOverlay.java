@@ -288,7 +288,7 @@ public class TACZRefitSkinOverlay {
         for (CarouselSlot slot : slots) {
             SkinDataModels.SkinEntry entry = weapon.skins().get(slot.skinIndex());
             boolean isCurrentlyEquipped = bareId(entry.id()).equals(equippedSkinId);
-            boolean unlocked = mc.player != null && SkinAttachment.hasSkin(mc.player, entry.id());
+            boolean unlocked = mc.player != null && SkinAttachment.isOwnedOrDefault(mc.player, entry.id());
             boolean isPreviewed = previewedSkinId != null && bareId(entry.id()).equals(previewedSkinId);
             boolean isCenter = slot.distance() < 0.05f;
 
@@ -419,7 +419,7 @@ public class TACZRefitSkinOverlay {
                 SkinDataModels.SkinEntry entry = weapon.skins().get(slot.skinIndex());
 
                 LocalPlayer player = Minecraft.getInstance().player;
-                if (player != null && SkinAttachment.hasSkin(player, entry.id())) {
+                if (player != null && SkinAttachment.isOwnedOrDefault(player, entry.id())) {
                     // Sets SKIN_ID on the held item optimistically, before the packet is
                     // sent - otherwise, if a preview was active, the item would keep showing
                     // the previewed skin until the server's sync packet arrives
@@ -434,7 +434,9 @@ public class TACZRefitSkinOverlay {
                         }
                     }
 
-                    PacketDistributor.sendToServer(new ApplySkinPayload(entry.id()));
+                    PacketDistributor.sendToServer(SkinAttachment.isDefaultEntry(entry.id())
+                            ? ApplySkinPayload.removeSkin()
+                            : ApplySkinPayload.equip(entry.id()));
                     clearPreviewState();
                     toastText = Component.translatable("gui.mcpskins.toast_skin_applied", entry.name());
                     toastStartTime = System.currentTimeMillis();
@@ -545,6 +547,27 @@ public class TACZRefitSkinOverlay {
         previewOriginalSkinId = null;
         previewedSkinId = null;
         previewHand = null;
+    }
+
+    /**
+     * Wipes all per-session UI state. Called on disconnect.
+     * <p>
+     * Every field here is static, which is fine while a session is running - there's only
+     * ever one refit screen. Across sessions it isn't: {@link #restorePreviewIfActive()} is
+     * driven by {@code ScreenEvent.Closing}, so being disconnected mid-preview (kick, timeout,
+     * server restart) never fires it and leaves {@code previewActive} set with a stale hand
+     * and skin id. The next world would then restore a previous server's skin onto an
+     * unrelated weapon. Preview edits are client-local, so there is nothing to write back
+     * here - just drop the state.
+     */
+    public static void resetSessionState() {
+        clearPreviewState();
+        skinModeActive = false;
+        focusedSkinIndex = 0;
+        animatedSkinIndex = 0f;
+        lastSeenSkinId = null;
+        toastText = null;
+        toastStartTime = 0L;
     }
 
     /** The weapon's real bare skin id, or {@code null} for no skin - unaffected by an active preview. */

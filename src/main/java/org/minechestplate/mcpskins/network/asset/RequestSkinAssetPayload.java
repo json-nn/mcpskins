@@ -15,8 +15,14 @@ import org.minechestplate.mcpskins.MCPSkins;
  * e.g. {@code "mcpskins:textures/skins/rifle/cobra.png"}. Only ever used as a lookup key
  * into {@link ServerSkinAssetStore}'s index - never treated as a real filesystem path.
  * <p>
- * Handled straight on the network thread, no {@link IPayloadContext#enqueueWork} - it's
- * just a cache lookup and a reply, no need to hop onto the main tick thread.
+ * Handled on the network thread - NOT the default. NeoForge runs payload handlers on the
+ * main thread unless the registrar opts into {@code HandlerThread.NETWORK} (see
+ * {@code MCPSkins#registerNetworking}); skipping {@link IPayloadContext#enqueueWork} does
+ * NOT get you off the main thread by itself, it only skips an extra hop that would otherwise
+ * happen from whichever thread you're already on. {@link ServerSkinAssetStore#handleRequest}
+ * does blocking file/zip I/O and Deflate compression, which is exactly the "resource
+ * intensive" case NeoForge's docs point at {@code HandlerThread.NETWORK} for - left on the
+ * main thread, it stalls the entire server's tick loop for every first-time asset request.
  */
 public record RequestSkinAssetPayload(String path) implements CustomPacketPayload {
     public static final Type<RequestSkinAssetPayload> TYPE =

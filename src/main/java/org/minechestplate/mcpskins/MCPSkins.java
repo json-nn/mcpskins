@@ -16,6 +16,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.HandlerThread;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import org.minechestplate.mcpskins.command.SkinCommand;
 import org.minechestplate.mcpskins.config.MCPSkinsClientConfig;
@@ -28,6 +29,7 @@ import org.minechestplate.mcpskins.network.asset.RequestSkinAssetPayload;
 import org.minechestplate.mcpskins.network.asset.ServerSkinAssetStore;
 import org.minechestplate.mcpskins.network.asset.SkinAssetChunkPayload;
 import org.minechestplate.mcpskins.network.asset.SkinAssetMissingPayload;
+import org.minechestplate.mcpskins.network.asset.SkinAssetThrottledPayload;
 import org.minechestplate.mcpskins.pack.MCPSkinsPackFinder;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinComponents;
@@ -122,16 +124,32 @@ public class MCPSkins {
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // Bumped for the new asset-delivery payloads.
-        final PayloadRegistrar registrar = event.registrar("1.2.0");
+        // 1.3.0: ApplySkinPayload gained an explicit unequip flag (closing the "default:"
+        // ownership bypass) and the asset protocol gained a throttled reply. Both are
+        // breaking wire changes; the registrar isn't optional, so mismatched versions are
+        // refused at connect rather than misbehaving.
+        PayloadRegistrar registrar = event.registrar("1.3.0");
 
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);
         registrar.playToClient(SyncUnlocksPayload.TYPE, SyncUnlocksPayload.CODEC, SyncUnlocksPayload::handleData);
 
+        // NeoForge runs payload handlers on the main thread by default - executesOn(NETWORK)
+        // is an explicit opt-in, not something you get automatically by skipping enqueueWork
+        // (see the corrected javadoc on RequestSkinAssetPayload). ServerSkinAssetStore.handleRequest
+        // does blocking file/zip I/O plus Deflate compression; left on the main thread, every
+        // first-time asset request stalls the ENTIRE server's tick loop - all players, all
+        // logic, TACZ's own fire/ammo validation included - for as long as that takes.
+        registrar = registrar.executesOn(HandlerThread.NETWORK);
         registrar.playToServer(RequestSkinAssetPayload.TYPE, RequestSkinAssetPayload.CODEC, RequestSkinAssetPayload::handleData);
+
+        // Chunk/missing handlers register bytes with the client's GL texture manager, which
+        // must run on the client main thread (see ClientSkinAssetCache's class javadoc) -
+        // switch back before registering them.
+        registrar = registrar.executesOn(HandlerThread.MAIN);
         registrar.playToClient(SkinAssetChunkPayload.TYPE, SkinAssetChunkPayload.CODEC, SkinAssetChunkPayload::handleData);
         registrar.playToClient(SkinAssetMissingPayload.TYPE, SkinAssetMissingPayload.CODEC, SkinAssetMissingPayload::handleData);
+        registrar.playToClient(SkinAssetThrottledPayload.TYPE, SkinAssetThrottledPayload.CODEC, SkinAssetThrottledPayload::handleData);
     }
 
     private void onDatapackSync(OnDatapackSyncEvent event) {

@@ -279,10 +279,19 @@ public final class GunDisplayInstancePatcher {
             Unsafe unsafe = getUnsafe();
             Object rawCopy = unsafe.allocateInstance(GunDisplayInstance.class);
             GunDisplayInstance copy = (GunDisplayInstance) rawCopy;
-            for (Field field : GunDisplayInstance.class.getDeclaredFields()) {
-                if (Modifier.isStatic(field.getModifiers())) continue;
-                field.setAccessible(true);
-                field.set(copy, field.get(instance));
+            // Walks the superclass chain, not just GunDisplayInstance's own declared fields.
+            // allocateInstance leaves everything at its default, so anything declared by a
+            // superclass would silently stay null/0 in the copy. GunDisplayInstance extends
+            // Object in the forks seen so far, which is the only reason the narrower version
+            // worked - findField below already assumes inheritance is possible, and this
+            // should not disagree with it.
+            for (Class<?> current = GunDisplayInstance.class; current != null && current != Object.class;
+                 current = current.getSuperclass()) {
+                for (Field field : current.getDeclaredFields()) {
+                    if (Modifier.isStatic(field.getModifiers())) continue;
+                    field.setAccessible(true);
+                    field.set(copy, field.get(instance));
+                }
             }
             return copy;
         } catch (ReflectiveOperationException e) {
@@ -292,10 +301,17 @@ public final class GunDisplayInstancePatcher {
         }
     }
 
+    /** Resolved once - this sits on a path that runs per weapon per frame. */
+    private static volatile Unsafe cachedUnsafe;
+
     private static Unsafe getUnsafe() throws ReflectiveOperationException {
+        Unsafe local = cachedUnsafe;
+        if (local != null) return local;
         Field f = Unsafe.class.getDeclaredField("theUnsafe");
         f.setAccessible(true);
-        return (Unsafe) f.get(null);
+        local = (Unsafe) f.get(null);
+        cachedUnsafe = local;
+        return local;
     }
 
     private static void writeField(Object target, String fieldName, Object value) throws ReflectiveOperationException {

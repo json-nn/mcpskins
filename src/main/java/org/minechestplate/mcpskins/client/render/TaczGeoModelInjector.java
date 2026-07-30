@@ -182,8 +182,30 @@ public final class TaczGeoModelInjector {
                         + "Texture/icon/HUD re-skinning is unaffected.");
     }
 
-    /** Test-only hook to force rediscovery. Not wired up anywhere currently. */
-    static void resetForTests() {
-        supportState = -1;
+    /**
+     * Drops every cached handle into TACZ's internals so the next {@link #inject} rediscovers
+     * them. Called on resource reload and on disconnect.
+     * <p>
+     * {@link #dataMap} is a live reference to a collection TACZ owns, captured once and never
+     * re-validated. If TACZ ever replaces that map rather than clearing it - a reasonable
+     * thing for a reload to do - every subsequent injection would land in an orphaned map and
+     * geo skins would silently stop working until the game restarted, because
+     * {@code supportState == 1} means {@link #discover()} never runs again. Resetting at the
+     * same points we drop our own caches keeps the handle from outliving what it points at.
+     * <p>
+     * Injected entries are intentionally not removed from TACZ's map: they're keyed by our
+     * own synthetic collapsed identity, so they collide with nothing, and reaching in to
+     * delete another mod's map entries is a bigger liberty than reaching in to add them.
+     */
+    public static void reset() {
+        synchronized (TaczGeoModelInjector.class) {
+            supportState = -1;
+            clientAssetsManagerInstance = null;
+            taczGson = null;
+            bedrockModelPojoClass = null;
+            dataMap = null;
+            failedDataSet = null;
+            WARNED_PARSE_FAILURES.clear();
+        }
     }
 }
