@@ -1,5 +1,6 @@
-package org.minechestplate.mcpskins.skin.network;
+package org.minechestplate.mcpskins.network;
 
+import io.netty.handler.codec.DecoderException;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -30,21 +31,40 @@ public record SyncRegistryPayload(Map<String, SkinDataModels.WeaponSkins> regist
         this(readMap(buffer));
     }
 
+    /** Generous ceilings on element counts, so a declared size is never taken on faith. */
+    private static final int MAX_WEAPONS = 4096;
+    private static final int MAX_SKINS_PER_WEAPON = 512;
+
+    /** Per-field string bounds, replacing readUtf()'s 32767 default. */
+    private static final int MAX_ID_LENGTH = 256;
+    private static final int MAX_NAME_LENGTH = 256;
+    private static final int MAX_RARITY_LENGTH = 64;
+    private static final int MAX_DESCRIPTION_LENGTH = 512;
+
+    /**
+     * NeoForge caps a clientbound payload at ~1 MiB. Warn well before that, since this
+     * payload has no chunking fallback - it just fails to send, silently, and every client
+     * ends up with an empty registry.
+     */
+    private static final int SIZE_WARNING_THRESHOLD = 768 * 1024;
+
+    private static volatile boolean oversizeWarningLogged = false;
+
     private static Map<String, SkinDataModels.WeaponSkins> readMap(FriendlyByteBuf buffer) {
         Map<String, SkinDataModels.WeaponSkins> map = new HashMap<>();
-        int mapSize = buffer.readVarInt();
+        int mapSize = readBoundedSize(buffer, MAX_WEAPONS, "weapon count");
         for (int i = 0; i < mapSize; i++) {
-            String key = buffer.readUtf();
-            String baseGun = buffer.readUtf();
-            int skinSize = buffer.readVarInt();
+            String key = buffer.readUtf(MAX_ID_LENGTH);
+            String baseGun = buffer.readUtf(MAX_ID_LENGTH);
+            int skinSize = readBoundedSize(buffer, MAX_SKINS_PER_WEAPON, "skin count");
             List<SkinDataModels.SkinEntry> skins = new ArrayList<>();
             for (int j = 0; j < skinSize; j++) {
-                String id = buffer.readUtf();
-                String name = buffer.readUtf();
+                String id = buffer.readUtf(MAX_ID_LENGTH);
+                String name = buffer.readUtf(MAX_NAME_LENGTH);
                 int color = buffer.readInt();
-                SkinDataModels.Rarity rarity = SkinDataModels.Rarity.byName(buffer.readUtf());
-                String collection = buffer.readUtf();
-                String description = buffer.readUtf();
+                SkinDataModels.Rarity rarity = SkinDataModels.Rarity.byName(buffer.readUtf(MAX_RARITY_LENGTH));
+                String collection = buffer.readUtf(MAX_NAME_LENGTH);
+                String description = buffer.readUtf(MAX_DESCRIPTION_LENGTH);
                 boolean isNew = buffer.readBoolean();
                 skins.add(new SkinDataModels.SkinEntry(id, name, color, rarity, collection, description, isNew));
             }
@@ -53,7 +73,17 @@ public record SyncRegistryPayload(Map<String, SkinDataModels.WeaponSkins> regist
         return map;
     }
 
+    /** Reads a collection size and rejects it before it can drive any allocation or loop. */
+    private static int readBoundedSize(FriendlyByteBuf buffer, int max, String what) {
+        int size = buffer.readVarInt();
+        if (size < 0 || size > max) {
+            throw new DecoderException("Skin registry " + what + " " + size + " is out of range [0, " + max + "]");
+        }
+        return size;
+    }
+
     public void write(FriendlyByteBuf buffer) {
+        int startIndex = buffer.writerIndex();
         buffer.writeVarInt(registryData.size());
         for (Map.Entry<String, SkinDataModels.WeaponSkins> entry : registryData.entrySet()) {
             buffer.writeUtf(entry.getKey());
@@ -68,6 +98,16 @@ public record SyncRegistryPayload(Map<String, SkinDataModels.WeaponSkins> regist
                 buffer.writeUtf(skin.description());
                 buffer.writeBoolean(skin.isNew());
             }
+        }
+
+        int written = buffer.writerIndex() - startIndex;
+        if (written > SIZE_WARNING_THRESHOLD && !oversizeWarningLogged) {
+            oversizeWarningLogged = true;
+            MCPSkins.LOGGER.error(
+                    "[MCPSkins] Skin registry serializes to {} bytes, near NeoForge's ~1 MiB payload cap. "
+                            + "Past the cap this packet fails to send and clients see an empty registry. "
+                            + "Trim skin descriptions or split the datapack.",
+                    written);
         }
     }
 

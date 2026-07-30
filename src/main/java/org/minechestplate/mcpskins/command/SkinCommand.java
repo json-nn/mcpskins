@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.command;
+package org.minechestplate.mcpskins.command;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;

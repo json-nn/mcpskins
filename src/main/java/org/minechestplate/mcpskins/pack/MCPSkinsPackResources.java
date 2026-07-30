@@ -36,7 +36,7 @@ final class MCPSkinsPackResources extends AbstractPackResources implements Pack.
     }
 
     @Override
-    public void listResources(PackType type, String namespace, String path, PackResources.ResourceOutput output) {
+    public void listResources(PackType type, String namespace, String path, ResourceOutput output) {
         delegate.listResources(type, namespace, path, output);
     }
 

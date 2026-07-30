@@ -21,11 +21,11 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
+import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
-import org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -49,15 +49,14 @@ public class SkinUnlockItem extends Item {
 
     @Override
     public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltipComponents, TooltipFlag tooltipFlag) {
-        CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
+        String skinId = TACZSkinHelper.readCustomString(stack, "SkinToUnlock");
 
-        if (!data.contains("SkinToUnlock")) {
+        if (skinId == null) {
             tooltipComponents.add(Component.translatable("tooltip.mcpskins.empty_unlock_item").withStyle(ChatFormatting.DARK_GRAY));
             super.appendHoverText(stack, context, tooltipComponents, tooltipFlag);
             return;
         }
 
-        String skinId = data.copyTag().getString("SkinToUnlock");
         SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(skinId);
 
         if (lookup == null) {
@@ -101,19 +100,20 @@ public class SkinUnlockItem extends Item {
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
-        CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
+        String skinId = TACZSkinHelper.readCustomString(stack, "SkinToUnlock");
 
-        if (!data.contains("SkinToUnlock")) {
+        if (skinId == null) {
             return InteractionResultHolder.pass(stack); // no NBT set, nothing to do
         }
-
-        String skinId = data.copyTag().getString("SkinToUnlock");
 
         if (player.isShiftKeyDown()) {
             return fuse(level, player, hand, stack, skinId, !player.getAbilities().instabuild);
         }
 
-        if (SkinAttachment.hasSkin(player, skinId)) {
+        // isOwnedOrDefault, not hasSkin: an unlock item pointing at a weapon's stock entry
+        // is nonsense, and unlocking it would just put a "default:" id into the unlock set
+        // that nothing ever reads. Report it as already-owned instead.
+        if (SkinAttachment.isOwnedOrDefault(player, skinId)) {
             if (!level.isClientSide()) {
                 player.sendSystemMessage(Component.translatable("message.mcpskins.already_have_skin").withStyle(ChatFormatting.RED));
             }
@@ -263,9 +263,9 @@ public class SkinUnlockItem extends Item {
         for (int i = 0; i < inventory.getContainerSize(); i++) {
             ItemStack invStack = inventory.getItem(i);
             if (invStack.getItem() != this) continue;
-            CompoundTag tag = invStack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
-            if (!tag.contains("SkinToUnlock")) continue;
-            SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(tag.getString("SkinToUnlock"));
+            String slotSkinId = TACZSkinHelper.readCustomString(invStack, "SkinToUnlock");
+            if (slotSkinId == null) continue;
+            SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(slotSkinId);
             if (lookup != null && lookup.skin().rarity() == rarity) {
                 slots.add(i);
             }

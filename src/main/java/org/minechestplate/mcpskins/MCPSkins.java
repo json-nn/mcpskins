@@ -3,13 +3,11 @@ package org.minechestplate.mcpskins;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.packs.PackType;
-import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
-import net.neoforged.fml.loading.FMLLoader;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.AddPackFindersEvent;
 import net.neoforged.neoforge.event.AddReloadListenerEvent;
@@ -18,18 +16,24 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.HandlerThread;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+import org.minechestplate.mcpskins.command.SkinCommand;
 import org.minechestplate.mcpskins.config.MCPSkinsClientConfig;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.item.ModItems;
+import org.minechestplate.mcpskins.network.ApplySkinPayload;
+import org.minechestplate.mcpskins.network.SyncRegistryPayload;
+import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
+import org.minechestplate.mcpskins.network.asset.RequestSkinAssetPayload;
+import org.minechestplate.mcpskins.network.asset.ServerSkinAssetStore;
+import org.minechestplate.mcpskins.network.asset.SkinAssetChunkPayload;
+import org.minechestplate.mcpskins.network.asset.SkinAssetMissingPayload;
+import org.minechestplate.mcpskins.network.asset.SkinAssetThrottledPayload;
 import org.minechestplate.mcpskins.pack.MCPSkinsPackFinder;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinComponents;
 import org.minechestplate.mcpskins.skin.SkinManager;
-import org.minechestplate.mcpskins.skin.command.SkinCommand;
-import org.minechestplate.mcpskins.skin.network.ApplySkinPayload;
-import org.minechestplate.mcpskins.skin.network.SyncRegistryPayload;
-import org.minechestplate.mcpskins.skin.network.SyncUnlocksPayload;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -47,10 +51,6 @@ public class MCPSkins {
         modContainer.registerConfig(ModConfig.Type.CLIENT, MCPSkinsClientConfig.SPEC);
         modContainer.registerConfig(ModConfig.Type.SERVER, MCPSkinsServerConfig.SPEC);
 
-        // Physical-side pack format for the finder's synthetic pack.mcmeta.
-        Dist side = FMLLoader.getDist();
-        MCPSkinsPackFinder.INSTANCE.packType = side.isClient() ? PackType.CLIENT_RESOURCES : PackType.SERVER_DATA;
-
         SkinComponents.DATA_COMPONENTS.register(modEventBus);
 
         NeoForge.EVENT_BUS.addListener(this::onAddReloadListeners);
@@ -61,6 +61,7 @@ public class MCPSkins {
         NeoForge.EVENT_BUS.addListener(this::onPlayerLogIn);
         NeoForge.EVENT_BUS.addListener(this::onPlayerRespawn);
         NeoForge.EVENT_BUS.addListener(this::onPlayerChangeDimension);
+        NeoForge.EVENT_BUS.addListener(this::onPlayerLogOut);
 
         ModItems.ITEMS.register(modEventBus);
         SkinAttachment.ATTACHMENTS.register(modEventBus);
@@ -76,11 +77,21 @@ public class MCPSkins {
 
     private void onAddReloadListeners(AddReloadListenerEvent event) {
         event.addListener(SkinManager.INSTANCE);
+        event.addListener(ServerSkinAssetStore.INSTANCE);
     }
 
-    /** Registers the {@code mcpskins/} folder scanner so skin packs load automatically. */
+    /**
+     * Registers the mcpskins/ folder scanner for SERVER_DATA only - fires on a real
+     * dedicated server and, in singleplayer, on the integrated server sharing this JVM.
+     * <p>
+     * Not registered for CLIENT_RESOURCES: assets are served over the network instead
+     * (see {@link ServerSkinAssetStore}/{@link org.minechestplate.mcpskins.client.render.ClientSkinAssetCache}),
+     * so clients never need a local copy of a skin pack's files.
+     */
     private void onAddPackFinders(AddPackFindersEvent event) {
-        event.addRepositorySource(MCPSkinsPackFinder.INSTANCE);
+        if (event.getPackType() == PackType.SERVER_DATA) {
+            event.addRepositorySource(MCPSkinsPackFinder.INSTANCE);
+        }
     }
 
     private void onPlayerLogIn(PlayerEvent.PlayerLoggedInEvent event) {
@@ -101,18 +112,44 @@ public class MCPSkins {
         }
     }
 
+    private void onPlayerLogOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            ServerSkinAssetStore.INSTANCE.forgetPlayer(player.getUUID());
+        }
+    }
+
     private void syncSkinsToClient(ServerPlayer player) {
         java.util.Set<String> unlockedSkins = player.getData(SkinAttachment.UNLOCKED_SKINS);
         PacketDistributor.sendToPlayer(player, new SyncUnlocksPayload(new ArrayList<>(unlockedSkins)));
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // Bumped for SyncRegistryPayload's new fields (rarity/collection/description/isNew).
-        final PayloadRegistrar registrar = event.registrar("1.1.0");
+        // 1.3.0: ApplySkinPayload gained an explicit unequip flag (closing the "default:"
+        // ownership bypass) and the asset protocol gained a throttled reply. Both are
+        // breaking wire changes; the registrar isn't optional, so mismatched versions are
+        // refused at connect rather than misbehaving.
+        PayloadRegistrar registrar = event.registrar("1.3.0");
 
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);
         registrar.playToClient(SyncUnlocksPayload.TYPE, SyncUnlocksPayload.CODEC, SyncUnlocksPayload::handleData);
+
+        // NeoForge runs payload handlers on the main thread by default - executesOn(NETWORK)
+        // is an explicit opt-in, not something you get automatically by skipping enqueueWork
+        // (see the corrected javadoc on RequestSkinAssetPayload). ServerSkinAssetStore.handleRequest
+        // does blocking file/zip I/O plus Deflate compression; left on the main thread, every
+        // first-time asset request stalls the ENTIRE server's tick loop - all players, all
+        // logic, TACZ's own fire/ammo validation included - for as long as that takes.
+        registrar = registrar.executesOn(HandlerThread.NETWORK);
+        registrar.playToServer(RequestSkinAssetPayload.TYPE, RequestSkinAssetPayload.CODEC, RequestSkinAssetPayload::handleData);
+
+        // Chunk/missing handlers register bytes with the client's GL texture manager, which
+        // must run on the client main thread (see ClientSkinAssetCache's class javadoc) -
+        // switch back before registering them.
+        registrar = registrar.executesOn(HandlerThread.MAIN);
+        registrar.playToClient(SkinAssetChunkPayload.TYPE, SkinAssetChunkPayload.CODEC, SkinAssetChunkPayload::handleData);
+        registrar.playToClient(SkinAssetMissingPayload.TYPE, SkinAssetMissingPayload.CODEC, SkinAssetMissingPayload::handleData);
+        registrar.playToClient(SkinAssetThrottledPayload.TYPE, SkinAssetThrottledPayload.CODEC, SkinAssetThrottledPayload::handleData);
     }
 
     private void onDatapackSync(OnDatapackSyncEvent event) {

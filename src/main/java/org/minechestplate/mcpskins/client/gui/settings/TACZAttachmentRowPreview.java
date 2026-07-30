@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.client.gui.config;
+package org.minechestplate.mcpskins.client.gui.settings;
 
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.resources.ResourceLocation;

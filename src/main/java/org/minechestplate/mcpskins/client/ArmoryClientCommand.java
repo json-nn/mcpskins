@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.client;
+package org.minechestplate.mcpskins.client;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -10,7 +10,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import org.minechestplate.mcpskins.MCPSkins;
-import org.minechestplate.mcpskins.skin.client.gui.SkinArmoryScreen;
+import org.minechestplate.mcpskins.client.gui.SkinArmoryScreen;
 
 /**
  * Registers the client-side "/mcpskins armory" command that opens {@link SkinArmoryScreen}

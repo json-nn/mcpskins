@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.client;
+package org.minechestplate.mcpskins.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.gui.GuiGraphics;

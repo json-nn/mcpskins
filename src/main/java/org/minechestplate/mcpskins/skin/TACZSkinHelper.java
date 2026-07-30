@@ -16,7 +16,7 @@ import net.minecraft.world.item.component.CustomData;
  * matches the physical weapon in hand. Which skin is shown is controlled entirely by
  * the separate {@link SkinComponents#SKIN_ID} component, which
  * {@link org.minechestplate.mcpskins.mixin.TimelessAPIMixin} reads to swap in the
- * matching texture (see {@link org.minechestplate.mcpskins.skin.render.SkinAssetResolver}).
+ * matching texture (see {@link org.minechestplate.mcpskins.client.render.SkinAssetResolver}).
  * This only supports texture recoloring, not geometry changes.
  */
 public class TACZSkinHelper {
@@ -92,12 +92,38 @@ public class TACZSkinHelper {
 
     /**
      * Raw GunId of a TACZ weapon stack, or {@code null} if it isn't one.
+     * <p>
+     * Called on essentially every {@code TimelessAPI.getGunDisplay} invocation (i.e.
+     * several times per weapon per frame), so this reads the tag directly instead of
+     * going through {@link CustomData#copyTag()} - that deep-copies the whole compound
+     * tag (attachments, ammo, everything else TACZ stores there) just to read one string.
+     * {@link CustomData#getUnsafe()} is deprecated (Mojang steering callers toward the
+     * component APIs in general) but is exactly the right tool for a read-only peek at
+     * NBT a different mod owns; we never mutate what it returns.
      */
+    @SuppressWarnings("deprecation")
     public static String getGunId(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return null;
         CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
         if (!data.contains("GunId")) return null;
-        return data.copyTag().getString("GunId");
+        return data.getUnsafe().getString("GunId");
+    }
+
+    /**
+     * Read-only peek at a string in a stack's {@code CUSTOM_DATA}, or {@code null} if absent.
+     * <p>
+     * Same reasoning as {@link #getGunId}: {@link CustomData#copyTag()} deep-copies the whole
+     * compound tag just to read one key, which is real waste on the paths that call this -
+     * per item render for the tint handler, and per inventory slot when scanning for fusable
+     * items. {@link CustomData#getUnsafe()} is deprecated but is precisely the right tool for
+     * a read we never mutate.
+     */
+    @SuppressWarnings("deprecation")
+    public static String readCustomString(ItemStack stack, String key) {
+        if (stack == null || stack.isEmpty()) return null;
+        CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
+        if (!data.contains(key)) return null;
+        return data.getUnsafe().getString(key);
     }
 
     /**

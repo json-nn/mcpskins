@@ -1,4 +1,4 @@
-package org.minechestplate.mcpskins.skin.client.gui;
+package org.minechestplate.mcpskins.client.gui;
 
 import com.tacz.guns.api.TimelessAPI;
 import com.tacz.guns.client.resource.GunDisplayInstance;
@@ -17,27 +17,22 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
+import org.minechestplate.mcpskins.MCPSkins;
+import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
+import org.minechestplate.mcpskins.client.render.GunModelPatcher;
+import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
+import org.minechestplate.mcpskins.network.ApplySkinPayload;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
-import org.minechestplate.mcpskins.skin.network.ApplySkinPayload;
-import org.minechestplate.mcpskins.skin.render.GunModelPatcher;
-import org.minechestplate.mcpskins.skin.render.SkinAssetResolver;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * Full-screen standalone skin catalog/inspector, independent of what's currently in the
- * player's hand (unlike {@link org.minechestplate.mcpskins.skin.client.TACZRefitSkinOverlay}).
- * Opened via hotkey ({@link org.minechestplate.mcpskins.skin.client.ArmoryKeybinds}) or the
+ * player's hand (unlike {@link org.minechestplate.mcpskins.client.TACZRefitSkinOverlay}).
+ * Opened via hotkey ({@link org.minechestplate.mcpskins.client.ArmoryKeybinds}) or the
  * {@code /mcpskins armory} command.
  * <p>
  * Layout has four zones plus a top filter bar:
@@ -104,7 +99,11 @@ public class SkinArmoryScreen extends Screen {
 
     private final List<String> weaponKeys = new ArrayList<>();
     private final Map<String, String> weaponNameCache = new HashMap<>();
-    private final Map<String, Boolean> customModelCache = new HashMap<>();
+    /** Badge results, tagged with the asset generation they were computed at. */
+    private record CustomModelResult(int generation, boolean hasModel) {
+    }
+
+    private final Map<String, CustomModelResult> customModelCache = new HashMap<>();
     private final Item3DPodiumWidget podium = new Item3DPodiumWidget();
 
     private String selectedWeapon;
@@ -428,7 +427,7 @@ public class SkinArmoryScreen extends Screen {
 
                 SkinDataModels.SkinLookupResult lookup = visibleEntries.get(i);
                 SkinDataModels.SkinEntry entry = lookup.skin();
-                boolean unlocked = player != null && SkinAttachment.hasSkin(player, entry.id());
+                boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
                 boolean selected = i == selectedSkinIndex;
                 boolean equippedNow = isSkinCurrentlyEquipped(lookup);
                 boolean hovered = mouseX >= cellX && mouseX < cellX + cell && mouseY >= cellY && mouseY < cellY + cell;
@@ -541,7 +540,7 @@ public class SkinArmoryScreen extends Screen {
         SkinDataModels.SkinLookupResult lookup = visibleEntries.get(index);
         SkinDataModels.SkinEntry entry = lookup.skin();
         Player player = Minecraft.getInstance().player;
-        boolean unlocked = player != null && SkinAttachment.hasSkin(player, entry.id());
+        boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
 
         List<Component> lines = new ArrayList<>();
         lines.add(Component.literal(entry.name()).withStyle(s -> s.withColor(entry.labelColor())));
@@ -791,7 +790,7 @@ public class SkinArmoryScreen extends Screen {
 
         for (SkinDataModels.WeaponSkins weapon : weaponsToScan) {
             for (SkinDataModels.SkinEntry entry : weapon.skins()) {
-                boolean unlocked = player != null && SkinAttachment.hasSkin(player, entry.id());
+                boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
                 if (statusFilter == StatusFilter.OWNED && !unlocked) continue;
                 if (statusFilter == StatusFilter.LOCKED && unlocked) continue;
 
@@ -904,7 +903,7 @@ public class SkinArmoryScreen extends Screen {
         Player player = Minecraft.getInstance().player;
         if (player == null) return;
 
-        if (!SkinAttachment.hasSkin(player, lookup.skin().id())) {
+        if (!SkinAttachment.isOwnedOrDefault(player, lookup.skin().id())) {
             statusMessage = Component.translatable("gui.mcpskins.armory.status_locked").getString();
             playFail();
             return;
@@ -926,7 +925,9 @@ public class SkinArmoryScreen extends Screen {
         if (!optimistic.isEmpty()) {
             player.setItemInHand(hand, optimistic);
         }
-        PacketDistributor.sendToServer(new ApplySkinPayload(lookup.skin().id()));
+        PacketDistributor.sendToServer(isDefaultSkin(lookup)
+                ? ApplySkinPayload.removeSkin()
+                : ApplySkinPayload.equip(lookup.skin().id()));
         statusMessage = null;
         player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.6f, 1.4f);
     }
@@ -936,7 +937,7 @@ public class SkinArmoryScreen extends Screen {
         SkinDataModels.SkinLookupResult lookup = visibleEntries.get(Math.min(selectedSkinIndex, visibleEntries.size() - 1));
         Player player = Minecraft.getInstance().player;
         if (player == null) return false;
-        if (!SkinAttachment.hasSkin(player, lookup.skin().id())) return false;
+        if (!SkinAttachment.isOwnedOrDefault(player, lookup.skin().id())) return false;
         return resolveHand(player, lookup.weapon().baseGun()) != null;
     }
 
@@ -996,14 +997,23 @@ public class SkinArmoryScreen extends Screen {
      * ({@code SkinAssetResolver.resolveModel}) so it's never wrong. Cached for the
      * screen's session - {@code TimelessAPI.getGunDisplay(...)} isn't cheap enough to
      * call every frame for every visible cell.
+     * <p>
+     * The cache is tagged with {@link ClientSkinAssetCache#generation()} rather than being
+     * held for the screen's whole session. The first call for a skin usually lands while its
+     * geo-model is still in flight, which resolves to false - pinning that answer meant the
+     * badge stayed off, and the "custom model only" filter stayed wrong, for as long as the
+     * screen stayed open. Re-checking when the generation moves lets the answer correct
+     * itself once the asset lands, and costs nothing while nothing is arriving.
      */
     private boolean hasCustomModel(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
         String bare = TACZSkinHelper.bareSkinId(entry.id());
         if (bare.equals(weapon.baseGun())) return false;
 
+        int generation = ClientSkinAssetCache.generation();
+
         String cacheKey = weapon.baseGun() + '\u0000' + bare;
-        Boolean cached = customModelCache.get(cacheKey);
-        if (cached != null) return cached;
+        CustomModelResult cached = customModelCache.get(cacheKey);
+        if (cached != null && cached.generation() == generation) return cached.hasModel();
 
         boolean result = false;
         try {
@@ -1013,10 +1023,12 @@ public class SkinArmoryScreen extends Screen {
                 ResourceLocation baseModelLocation = GunModelPatcher.getBaseModelLocation(base.get());
                 result = baseModelLocation != null && SkinAssetResolver.resolveModel(baseModelLocation, bare) != null;
             }
-        } catch (Exception ignored) {
-            // Silent fallback - the badge just doesn't show, the screen doesn't crash
+        } catch (RuntimeException e) {
+            // The badge just doesn't show; the screen stays up. Debug level because this runs
+            // per visible cell, and a real breakage would repeat on every generation bump.
+            MCPSkins.LOGGER.debug("[MCPSkins] Custom-model badge check failed for '{}'.", cacheKey, e);
         }
-        customModelCache.put(cacheKey, result);
+        customModelCache.put(cacheKey, new CustomModelResult(generation, result));
         return result;
     }
 

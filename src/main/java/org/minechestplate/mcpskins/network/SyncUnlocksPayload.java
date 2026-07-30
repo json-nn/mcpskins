@@ -1,5 +1,6 @@
-package org.minechestplate.mcpskins.skin.network;
+package org.minechestplate.mcpskins.network;
 
+import io.netty.handler.codec.DecoderException;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -25,15 +26,33 @@ public record SyncUnlocksPayload(List<String> unlockedSkins) implements CustomPa
             SyncUnlocksPayload::write, SyncUnlocksPayload::new
     );
 
+    /** Far more skins than any pack ships, but bounded so a bad size can't be believed. */
+    private static final int MAX_UNLOCKS = 8192;
+
+    /** Skin ids are short registry strings; readUtf()'s 32767 default is 128x too generous. */
+    private static final int MAX_SKIN_ID_LENGTH = 256;
+
     public SyncUnlocksPayload(FriendlyByteBuf buffer) {
         this(readList(buffer));
     }
 
+    /**
+     * Reads the unlock list without trusting the declared size.
+     * <p>
+     * Note there is no {@code new ArrayList<>(size)} here, deliberately. Pre-sizing from a
+     * wire value means a 5-byte packet claiming {@code Integer.MAX_VALUE} entries allocates
+     * a ~16 GiB backing array before a single element is read - the list never has to
+     * actually contain anything for the client to die. The count is validated first, and the
+     * list grows as elements genuinely arrive.
+     */
     private static List<String> readList(FriendlyByteBuf buffer) {
         int size = buffer.readVarInt();
-        List<String> list = new ArrayList<>(size);
+        if (size < 0 || size > MAX_UNLOCKS) {
+            throw new DecoderException("Unlock list size " + size + " is out of range [0, " + MAX_UNLOCKS + "]");
+        }
+        List<String> list = new ArrayList<>();
         for (int i = 0; i < size; i++) {
-            list.add(buffer.readUtf());
+            list.add(buffer.readUtf(MAX_SKIN_ID_LENGTH));
         }
         return list;
     }

@@ -30,6 +30,23 @@ repositories {
     maven {
         name = "Modrinth"
         url = "https://api.modrinth.com/maven"
+        content {
+            includeModule("maven.modrinth", "OypNE65K") // TACZ
+        }
+    }
+    maven {
+        // Add curse maven to repositories
+        name = "Curse Maven"
+        url = "https://www.cursemaven.com"
+        content {
+            includeGroup "curse.maven"
+        }
+    }
+    maven {
+        url 'https://jitpack.io'
+        content {
+            includeGroup "com.github.mcmodderanchor"
+        }
     }
 }
 
@@ -122,6 +139,20 @@ configurations {
 
 dependencies {
     implementation "maven.modrinth:OypNE65K:SISBXRRW"
+
+    compileOnly jarJar("com.github.mcmodderanchor:simplebedrockmodel:2.2.2-neoforge-mc1.21.1") {
+        version {
+            prefer '2.2.2'
+        }
+    }
+    // The animation library is already included in jar (jar in jar),
+    // but since modrinth maven cannot handle transitive dependencies,
+    // you need to include it to pass the compilation.
+    compileOnly("com.maydaymemory:mae:1.1.2") {
+        exclude group: 'com.google.code.findbugs', module: 'jsr305'
+        exclude group: 'it.unimi.dsi', module: 'fastutil'
+        exclude group: 'org.joml', module: 'joml'
+    }
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.
@@ -136,6 +167,7 @@ var generateModMetadata = tasks.register("generateModMetadata", ProcessResources
             mod_name               : mod_name,
             mod_license            : mod_license,
             mod_version            : mod_version,
+            tacz_version_range     : tacz_version_range,
     ]
     inputs.properties replaceProperties
     expand replaceProperties
