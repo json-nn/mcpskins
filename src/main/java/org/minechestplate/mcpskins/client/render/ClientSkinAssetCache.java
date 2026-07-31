@@ -3,6 +3,7 @@ package org.minechestplate.mcpskins.client.render;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.MCPSkins;
@@ -37,27 +38,32 @@ public final class ClientSkinAssetCache {
     /**
      * An outstanding request.
      *
-     * @param retryAtMillis when to give up waiting and re-send
-     * @param attempts      how many times we've sent this request with no reply of any kind.
-     *                      Reset by {@link #deferredUntil}, so this counts <em>consecutive
-     *                      unanswered</em> sends rather than sends overall
-     * @param firstSentAtMillis backstop so a server that keeps saying "later" forever can't
-     *                          keep one key in flight indefinitely
+     * @param retryAtMillis when to stop waiting and re-send
+     * @param attempts      consecutive unanswered sends, used only to widen the backoff.
+     *                      Reset by {@link #deferredUntil}
+     * @param firstSentAtMillis the single terminal condition - see
+     *                          {@link #GIVE_UP_AFTER_MILLIS}
      */
     private record PendingRequest(Kind kind, ResourceLocation target,
                                   long retryAtMillis, int attempts, long firstSentAtMillis) {
+        /**
+         * Backs off exponentially rather than re-sending on a fixed interval, so a client
+         * that stalls repeatedly doesn't keep poking a server that was never the problem.
+         */
         PendingRequest resent(long now) {
-            return new PendingRequest(kind, target, now + REQUEST_TIMEOUT_MILLIS, attempts + 1, firstSentAtMillis);
+            int nextAttempt = attempts + 1;
+            long delay = Math.min(MAX_RETRY_DELAY_MILLIS,
+                    INITIAL_RETRY_DELAY_MILLIS << Math.min(attempts, 4));
+            return new PendingRequest(kind, target, now + delay, nextAttempt, firstSentAtMillis);
         }
 
         /**
-         * Server said "come back later". Clears the attempt count: a throttle reply is proof
-         * the server is alive and cooperating, which is the opposite of what
-         * {@code MAX_ATTEMPTS} exists to detect. Without the reset, a client throttled while
-         * pulling many assets at once (login, exactly when it matters) would burn its three
-         * attempts on successful round-trips and give up on assets the server was perfectly
-         * willing to send. {@code firstSentAtMillis} is untouched, so the absolute deadline
-         * still bounds the loop.
+         * Server said "come back later". Clears the attempt count so the backoff restarts
+         * narrow: a throttle reply is proof the server is alive and cooperating, which is the
+         * opposite of the situation backing off is meant to relieve. Without the reset, a
+         * client throttled while pulling many assets at once (login, exactly when it matters)
+         * would widen its own backoff on every successful round-trip.
+         * {@code firstSentAtMillis} is untouched, so the absolute deadline still bounds the loop.
          */
         PendingRequest deferredUntil(long deadline) {
             return new PendingRequest(kind, target, deadline, 0, firstSentAtMillis);
@@ -109,12 +115,23 @@ public final class ClientSkinAssetCache {
     private static final int MAX_INFLATED_BYTES = ServerSkinAssetStore.MAX_ASSET_BYTES;
 
     /** How long to wait for any reply before assuming the request was lost and re-sending. */
-    private static final long REQUEST_TIMEOUT_MILLIS = 15_000;
+    private static final long INITIAL_RETRY_DELAY_MILLIS = 15_000;
 
-    /** Re-sends before giving up. Only silent timeouts count; server deferrals don't. */
-    private static final int MAX_ATTEMPTS = 3;
+    /** Ceiling on the exponential backoff between re-sends. */
+    private static final long MAX_RETRY_DELAY_MILLIS = 60_000;
 
-    /** Absolute ceiling on how long one key may stay in flight, deferrals included. */
+    /**
+     * The only condition that marks a key MISSING through inaction, deliberately.
+     * <p>
+     * There used to be an attempt cap alongside this, and it was wrong. Retries are driven
+     * from the render path, so the deadline expiring means "no frame rendered recently", not
+     * "the server failed to answer" - and multi-second stalls are ordinary in a heavy modpack
+     * (chunk loading, shader compilation, a GC pause). Three such hitches over a session were
+     * enough to permanently blank a skin the server had been perfectly willing to serve, with
+     * nothing logged to connect cause to effect. A lost request is nearly impossible on TCP,
+     * and a genuinely absent asset gets an explicit {@code SkinAssetMissingPayload}, so a
+     * generous absolute deadline is the honest bound here.
+     */
     private static final long GIVE_UP_AFTER_MILLIS = 5 * 60_000L;
 
     private ClientSkinAssetCache() {
@@ -160,7 +177,7 @@ public final class ClientSkinAssetCache {
         if (state == null) {
             // putIfAbsent, not put - two render calls racing here shouldn't fire two requests.
             if (STATE.putIfAbsent(key, State.PENDING) == null) {
-                PENDING_META.put(key, new PendingRequest(kind, target, now + REQUEST_TIMEOUT_MILLIS, 1, now));
+                PENDING_META.put(key, new PendingRequest(kind, target, now + INITIAL_RETRY_DELAY_MILLIS, 1, now));
                 PacketDistributor.sendToServer(new RequestSkinAssetPayload(key));
             }
             return false;
@@ -177,12 +194,13 @@ public final class ClientSkinAssetCache {
         PendingRequest meta = PENDING_META.get(key);
         if (meta == null || now < meta.retryAtMillis()) return;
 
-        if (meta.attempts() >= MAX_ATTEMPTS || now - meta.firstSentAtMillis() > GIVE_UP_AFTER_MILLIS) {
+        if (now - meta.firstSentAtMillis() > GIVE_UP_AFTER_MILLIS) {
             if (PENDING_META.remove(key, meta)) {
                 STATE.put(key, State.MISSING);
                 GENERATION.incrementAndGet();
-                MCPSkins.LOGGER.warn("[MCPSkins] Giving up on skin asset '{}' after {} attempt(s) with no reply.",
-                        key, meta.attempts());
+                MCPSkins.LOGGER.warn(
+                        "[MCPSkins] Giving up on skin asset '{}' - no reply in {} ms across {} attempt(s).",
+                        key, now - meta.firstSentAtMillis(), meta.attempts());
             }
             return;
         }
@@ -194,8 +212,8 @@ public final class ClientSkinAssetCache {
     }
 
     /**
-     * The server has the asset but is pacing us. Push the deadline out without spending an
-     * attempt - it answered, so this isn't the lost-request case {@link #MAX_ATTEMPTS} guards.
+     * The server has the asset but is pacing us. Push the deadline out and restart the
+     * backoff - it answered, so this isn't the unresponsive case backing off is meant for.
      */
     public static void onThrottled(String path, int retryAfterMillis) {
         PendingRequest meta = PENDING_META.get(path);
@@ -209,7 +227,22 @@ public final class ClientSkinAssetCache {
     // ------------------------------------------------------------------
 
     public static void onMissing(String path) {
+        if (isStaleArrival(path)) return;
         resolve(path, State.MISSING);
+    }
+
+    /**
+     * Whether a server reply is for a request this session no longer has outstanding.
+     * <p>
+     * Payload handlers are dispatched through {@code enqueueWork}, so a reply that was
+     * already queued when the player disconnected runs <em>after</em> {@link #clearAll()} has
+     * wiped the session. Acting on it wrote a MISSING verdict for a key nobody had asked
+     * about - and MISSING is terminal, so the next server would never even request that
+     * asset and the skin stayed blank with nothing logged. Only a key we currently have in
+     * flight is allowed to be resolved by an incoming reply.
+     */
+    private static boolean isStaleArrival(String path) {
+        return STATE.get(path) != State.PENDING;
     }
 
     /**
@@ -226,6 +259,10 @@ public final class ClientSkinAssetCache {
     }
 
     public static void onChunk(long transferId, String path, int index, int totalChunks, byte[] data) {
+        // Chunks queued before a disconnect can land after the session was torn down. Drop
+        // them rather than reassembling into a transfer nothing is waiting for.
+        if (isStaleArrival(path)) return;
+
         // totalChunks arrives as an unbounded VAR_INT and sizes the array allocated below,
         // so it has to be bounded BEFORE it is used - otherwise one small packet declaring
         // Integer.MAX_VALUE chunks is enough to OOM the client outright.
@@ -321,8 +358,10 @@ public final class ClientSkinAssetCache {
     private static void finish(String path, byte[] rawBytes) {
         PendingRequest meta = PENDING_META.get(path);
         if (meta == null) {
-            // Shouldn't happen, but don't leave it stuck on PENDING if it somehow does.
-            resolve(path, State.MISSING);
+            // PENDING with no metadata shouldn't happen. Leave the state alone rather than
+            // forcing MISSING: the retry path will re-request and repair it, whereas a
+            // MISSING verdict here would be terminal for a key we can't even describe.
+            MCPSkins.LOGGER.debug("[MCPSkins] Received asset '{}' with no pending request metadata; ignoring.", path);
             return;
         }
 
@@ -374,12 +413,17 @@ public final class ClientSkinAssetCache {
         TRANSFERS.clear();
         WARNED_DECODE_FAILURES.clear();
 
-        // Not calling TextureManager#release() here too - unsure if it also closes on this
-        // MC version, and double-closing a GL texture is a nasty bug to chase down later.
-        // Closing our own DynamicTexture is enough; the leftover TextureManager entry is
-        // harmless and gets overwritten on the next register() for the same key.
-        for (DynamicTexture texture : REGISTERED_TEXTURES.values()) {
-            texture.close();
+        // release() unregisters AND closes, which is what we want on both call sites.
+        // The old code closed the textures itself and deliberately left the TextureManager
+        // entries behind, on the theory that a leftover mapping was harmless because the
+        // next register() for the same key overwrites it. That holds only for keys that come
+        // back - across a session of server-hopping, every asset unique to a server visited
+        // once stays mapped to a closed texture forever. Double-closing was the stated worry
+        // and isn't one: DynamicTexture#close no-ops once its pixels are null, and
+        // AbstractTexture#releaseId no-ops once the id is -1.
+        TextureManager textureManager = Minecraft.getInstance().getTextureManager();
+        for (ResourceLocation location : REGISTERED_TEXTURES.keySet()) {
+            textureManager.release(location);
         }
         REGISTERED_TEXTURES.clear();
 
