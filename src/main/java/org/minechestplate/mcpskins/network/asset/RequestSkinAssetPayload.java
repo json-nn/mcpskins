@@ -15,20 +15,16 @@ import org.minechestplate.mcpskins.MCPSkins;
  * e.g. {@code "mcpskins:textures/skins/rifle/cobra.png"}. Only ever used as a lookup key
  * into {@link ServerSkinAssetStore}'s index - never treated as a real filesystem path.
  * <p>
- * Handled on the network thread - NOT the default. NeoForge runs payload handlers on the
- * main thread unless the registrar opts into {@code HandlerThread.NETWORK} (see
- * {@code MCPSkins#registerNetworking}); skipping {@link IPayloadContext#enqueueWork} does
- * NOT get you off the main thread by itself, it only skips an extra hop that would otherwise
- * happen from whichever thread you're already on. {@link ServerSkinAssetStore#handleRequest}
- * does blocking file/zip I/O and Deflate compression, which is exactly the "resource
- * intensive" case NeoForge's docs point at {@code HandlerThread.NETWORK} for - left on the
- * main thread, it stalls the entire server's tick loop for every first-time asset request.
+ * Handled on the network thread, which requires the registrar to opt into
+ * {@code HandlerThread.NETWORK} - skipping {@link IPayloadContext#enqueueWork} does not get
+ * you off the main thread by itself. {@link ServerSkinAssetStore#handleRequest} does blocking
+ * file/zip I/O and Deflate; on the main thread that stalls the tick loop per first-time asset.
  */
 public record RequestSkinAssetPayload(String path) implements CustomPacketPayload {
     public static final Type<RequestSkinAssetPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "request_skin_asset"));
 
-    /** Generous but bounded - real keys are short file paths, never anywhere near this. */
+    /** Bounded; real keys are short file paths. */
     private static final int MAX_PATH_LENGTH = 512;
 
     public static final StreamCodec<FriendlyByteBuf, RequestSkinAssetPayload> CODEC = StreamCodec.composite(

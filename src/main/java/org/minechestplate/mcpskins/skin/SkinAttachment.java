@@ -32,39 +32,24 @@ public class SkinAttachment {
 
     /**
      * Whether {@code skinId} names a weapon's stock appearance rather than a real skin.
-     * <p>
-     * These entries are synthesized per weapon by {@link SkinManager#apply} so the UIs
-     * have something to render for "no skin"; they are never unlockable and never appear
-     * in {@link #UNLOCKED_SKINS}.
+     * {@link SkinManager#apply} synthesizes one per weapon so the UIs have something to draw
+     * for "no skin"; they're never unlockable.
      */
     public static boolean isDefaultEntry(String skinId) {
         return skinId != null && skinId.startsWith(DEFAULT_PREFIX);
     }
 
     /**
-     * Strictly whether the player has unlocked this skin. This is the <em>authorization</em>
-     * predicate - it is what stands between a client and a skin it hasn't earned, so it
-     * must never grant anything based on the shape of the id.
-     * <p>
-     * It deliberately does <em>not</em> special-case {@link #isDefaultEntry default:} ids.
-     * It used to, which meant any client could equip any locked skin just by prefixing the
-     * request with {@code "default:"} - the prefix check fired before the unlock set was
-     * ever consulted, and every downstream check then passed because
-     * {@link SkinManager#getBaseGun} strips the prefix before matching. Removing a skin is
-     * now a separate, explicitly-flagged request that carries no skin id at all
-     * (see {@code ApplySkinPayload}), so nothing about an id needs to be trusted here.
-     * <p>
-     * For UI code that wants "should this render as unlocked", use
-     * {@link #isOwnedOrDefault} instead - stock entries should still show as available.
+     * The <em>authorization</em> predicate. Must never grant anything based on the shape of an
+     * id - special-casing {@code default:} here is what let any client equip any locked skin.
+     * Removal is a separate flagged request now (see {@code ApplySkinPayload}), so no id needs
+     * trusting. For "should the UI show this as unlocked", use {@link #isOwnedOrDefault}.
      */
     public static boolean hasSkin(Player player, String skinId) {
         return skinId != null && player.getData(UNLOCKED_SKINS).contains(skinId);
     }
 
-    /**
-     * Display predicate: whether this entry should read as available to the player.
-     * Stock entries always do. Never use this to gate a privileged action.
-     */
+    /** Display only - stock entries always read as available. Never gate an action on this. */
     public static boolean isOwnedOrDefault(Player player, String skinId) {
         return isDefaultEntry(skinId) || hasSkin(player, skinId);
     }

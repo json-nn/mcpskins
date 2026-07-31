@@ -10,15 +10,11 @@ import org.minechestplate.mcpskins.MCPSkins;
 import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 
 /**
- * Server-to-client: "I have this asset, but you've asked for too much too fast - try again
- * in {@code retryAfterMillis}."
+ * Server-to-client: "I have this, but you're asking too fast - retry in
+ * {@code retryAfterMillis}."
  * <p>
- * This exists so the rate limiter has something to say. It used to simply drop the request
- * and return, which left the client's entry on PENDING with no timeout and no retry - so a
- * single throttled request meant that texture silently never loaded again for the whole
- * session, and the weapon quietly kept its base skin. Every other outcome (bytes, or
- * {@link SkinAssetMissingPayload}) already produced a reply; this was the one path that
- * didn't, and a state machine with one silent dead end is a state machine that hangs.
+ * Exists so the rate limiter has something to say. Dropping the request silently left the
+ * client on PENDING forever, and that asset never loaded again for the session.
  */
 public record SkinAssetThrottledPayload(String path, int retryAfterMillis) implements CustomPacketPayload {
     public static final Type<SkinAssetThrottledPayload> TYPE =

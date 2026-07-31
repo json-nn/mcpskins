@@ -21,58 +21,27 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Builds a full geometry replacement for a skin (main model and, independently, TACZ's
- * separate LOD model/texture), when a matching geo-model file is found by
- * {@link SkinAssetResolver#resolveModel}.
+ * Builds a full geometry replacement for a skin - main model plus TACZ's separate LOD
+ * model/texture - when {@link SkinAssetResolver#resolveModel} finds a geo-model file.
  * <p>
- * A weapon's geometry isn't a simple field once loaded, it's a parsed
- * {@code BedrockGunModel} built by TACZ's own asset pipeline. Rather than reimplementing
- * that, this class copies the base weapon's config ({@code GunDisplay}, the parsed
- * display.json) with only its model/LOD fields swapped, then calls
- * {@code GunDisplayInstance}'s real {@code (ResourceLocation, GunDisplay)} constructor
- * again, so TACZ's own code does the parsing.
+ * Geometry is a parsed {@code BedrockGunModel}, not a field that can be swapped. So this
+ * copies the base weapon's {@code GunDisplay} config with the model/LOD fields replaced and
+ * re-runs {@code GunDisplayInstance}'s real constructor, letting TACZ do the parsing.
+ * Everything but {@code getModelLocation()} is discovered reflectively in {@link #discover};
+ * LOD is discovered separately and fails independently, leaving main-model skinning intact.
  * <p>
- * Nothing here is hardcoded by field name beyond one verified method
- * ({@code getModelLocation()}); everything else is discovered by reflection in
- * {@link #discover} (constructor signature, field type, or matching a field's value
- * against a known-good getter result). LOD support is discovered separately in
- * {@link #discoverLod} and fails independently: if it can't be found, main-model/texture/
- * icon/HUD skinning is unaffected, only LOD overrides are ignored.
+ * The skin's bone names must match what the base weapon's animations expect. A mismatch is
+ * caught in {@link #createInstance} and degrades to base geometry.
  * <p>
- * The one hard requirement is that the skin's geo-model skeleton (bone names) matches
- * what the base weapon's animations expect; a mismatch is caught by
- * {@code GunDisplayInstance}'s own validation and handled in {@link #createInstance},
- * degrading to the base geometry rather than crashing.
- * <p>
- * <b>Why a freshly built instance needs its animation state machine primed:</b> every
- * {@code GunDisplayInstance} owns its own {@code LuaAnimationStateMachine}, built new by
- * the constructor and never initialized on its own - {@code initialize()} is only ever
- * called by TACZ's {@code AnimateGeoItemRenderer.tryInit}. Normally that happens
- * automatically the next time the currently-held weapon is ticked, but TACZ's own
- * auto-recovery (in {@code TickAnimationEvent}) explicitly skips first-person, which is
- * exactly where a held weapon is rendered. Until something initializes it, the state
- * machine has no current pose to write to the model, so the gun renders at its raw bind
- * pose - the same "detached hands" look this fork already has on an F3+T resource reload
- * (which likewise rebuilds every {@code GunDisplayInstance} from scratch). Swapping to a
- * skin with its own geo-model hits the same gap: {@link #createInstance} builds a brand
- * new instance, so its state machine starts uninitialized too. {@link #primeAnimation}
- * closes that gap immediately after the instance is cached, by driving the same
- * init/draw sequence TACZ's own renderer would eventually run, so nothing ever renders
- * the uninitialized state. Plain texture-only skins never hit this: they reuse the base
- * weapon's already-initialized instance via {@link GunDisplayInstancePatcher}'s shallow
- * copy, which carries the same (already-primed) state machine reference over.
+ * Freshly built instances need {@link #primeAnimation}: each one owns an uninitialized
+ * {@code LuaAnimationStateMachine}, and TACZ's auto-recovery skips first person - exactly
+ * where held weapons render. Without priming the gun draws at its bind pose (the "detached
+ * hands" look this fork shows after F3+T). Texture-only skins avoid this by shallow-copying
+ * the base instance, which carries its already-primed state machine.
  */
 public final class GunModelPatcher {
 
-    /**
-     * A build result keyed by the overrides <em>as they were requested</em>.
-     *
-     * @param modelOverride      the requested model override, before any filtering - see the
-     *                           note in {@link #getOrCreate} on why the unfiltered values are
-     *                           what get stored
-     * @param generation         the {@link ClientSkinAssetCache#generation()} this was built at
-     * @param result             the patched instance, or null if this combination can't be built
-     */
+    /** Keyed on the overrides as requested, before {@link #getOrCreate}'s filtering. */
     private record CacheEntry(ResourceLocation modelOverride,
                               ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride,
                               int generation, GunDisplayInstance result) {
@@ -80,20 +49,11 @@ public final class GunModelPatcher {
 
     private static final Map<String, CacheEntry> CACHE = new ConcurrentHashMap<>();
 
-    // cacheKeys currently inside createInstance()+primeAnimation() on this thread. Both
-    // TACZ's own per-frame context refresh (GunAnimationStateContext#setCurrentGunItem)
-    // and primeAnimation()'s own tryInit() call re-enter TimelessAPI.getGunDisplay(stack)
-    // - i.e. this exact method, for this exact cacheKey - WHILE we're still inside the
-    // first build. Without this guard that reentrant call used to re-check identity
-    // (see the removed CacheEntry.base()), see it not match, and race a second,
-    // independent createInstance()+primeAnimation() for the same logical (weapon, skin):
-    // two GunDisplayInstances, two LuaAnimationStateMachines, and whichever one a given
-    // caller happens to hold a reference to next initializes/exits out of sync with the
-    // one actually cached - that's what threw "State machine is already initialized,
-    // call exit() first" on login, and is also the most likely reason shots went missing
-    // for a while right after equipping a geo-skinned weapon (the fire trigger and the
-    // ammo/cooldown bookkeeping ending up on two different orphaned instances). A
-    // reentrant call for a key already mid-build just gets whatever's cached so far.
+    // cacheKeys mid-build on this thread. TACZ's context refresh and primeAnimation's own
+    // tryInit both re-enter getGunDisplay for the same key while the first build is still
+    // running. Unguarded, that races a second instance with its own state machine - the
+    // "State machine is already initialized" crash on login, and probably the dropped shots
+    // right after equipping a geo skin.
     private static final ThreadLocal<Set<String>> BUILDING = ThreadLocal.withInitial(HashSet::new);
 
     // -1 = not checked, 0 = discovery failed, 1 = discovery succeeded. Checked once per session.
@@ -126,22 +86,12 @@ public final class GunModelPatcher {
     }
 
     /**
-     * @param cacheKey           stable key for the (weapon, skin) pair
-     * @param base                the base weapon's unskinned instance, used as the config template
-     *                            the next time this key actually needs to be (re)built - NOT used
-     *                            to decide whether a rebuild is needed, since TACZ's own object
-     *                            lifetime for its base instance can't be relied on (see
-     *                            {@link PatchedGunDisplayCache} for the same caveat) - only the
-     *                            override values below and an explicit {@link #clear()} do that
-     * @param stack               the item stack this lookup is for, used only to prime the
-     *                            new instance's animation state machine the first time it's
-     *                            built (see {@link #primeAnimation}); never {@code null} in
-     *                            practice, but if it were, priming is skipped rather than NPEing
-     * @param modelOverride       skin's main geo-model, or {@code null} to leave it untouched
-     * @param lodModelOverride    skin's LOD geo-model, or {@code null}
-     * @param lodTextureOverride  skin's LOD texture, or {@code null}
-     * @return a new instance with the requested overrides, or {@code null} if nothing was
-     *         applied (unsupported fork, unrecognized model, or all overrides filtered out)
+     * @param cacheKey stable key for the (weapon, skin) pair
+     * @param base     config template for the build. Not part of the hit check - TACZ's base
+     *                 instance identity isn't stable (see {@link PatchedGunDisplayCache})
+     * @param stack    only used to prime the new instance's animation state machine
+     * @return the patched instance, or {@code null} if nothing was applied (unsupported fork,
+     *         unrecognized model, or all overrides filtered out)
      */
     public static GunDisplayInstance getOrCreate(String cacheKey, GunDisplayInstance base, ItemStack stack, ResourceLocation modelOverride,
                                                  ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride) {
@@ -149,8 +99,7 @@ public final class GunModelPatcher {
         if (modelOverride == null && lodModelOverride == null && lodTextureOverride == null) return null;
         if (!ensureSupported(base)) return null;
 
-        // Held so the cache entry can be keyed on what was ASKED for, not on what survives
-        // the isModelRecognized() filtering below.
+        // Keyed on what was asked for, not what survives the filtering below.
         ResourceLocation requestedModel = modelOverride;
         ResourceLocation requestedLodModel = lodModelOverride;
 
@@ -164,9 +113,7 @@ public final class GunModelPatcher {
             return existing.result();
         }
 
-        // Reentrant call for a key we're already building further down this same call
-        // stack (see the BUILDING field javadoc) - hand back whatever's cached so far
-        // rather than racing a second, independent build for the same (weapon, skin).
+        // Reentrant call for a key already building further down this stack - see BUILDING.
         Set<String> building = BUILDING.get();
         if (building.contains(cacheKey)) {
             return existing != null ? existing.result() : null;
@@ -181,11 +128,8 @@ public final class GunModelPatcher {
             lodModelOverride = null;
         }
         if (modelOverride == null && lodModelOverride == null && lodTextureOverride == null) {
-            // Keyed on the REQUESTED overrides, not the filtered-to-null ones. Storing the
-            // nulls made this entry unmatchable by the hit check above, which compares
-            // against what the caller passed in - so an unrecognized model fell through to
-            // isModelRecognized() (a reflective call into TACZ internals) on every single
-            // render call, forever, instead of being answered from cache.
+            // Requested values, not the filtered nulls - otherwise the hit check above can
+            // never match this entry and every frame re-runs isModelRecognized().
             CACHE.put(cacheKey, new CacheEntry(requestedModel, requestedLodModel, lodTextureOverride, generation, null));
             return null;
         }
@@ -193,10 +137,8 @@ public final class GunModelPatcher {
         building.add(cacheKey);
         try {
             GunDisplayInstance created = createInstance(base, modelOverride, lodModelOverride, lodTextureOverride);
-            // Cache first, priming second: priming below re-enters TimelessAPI.getGunDisplay(stack)
-            // (see primeAnimation's javadoc), which comes straight back through this same method.
-            // With the entry already cached AND this cacheKey marked as building, that reentrant
-            // call resolves to a cheap cache hit instead of racing a second build.
+            // Cache before priming: priming re-enters this method, and the entry has to be
+            // visible for that call to resolve as a hit.
             CACHE.put(cacheKey, new CacheEntry(requestedModel, requestedLodModel, lodTextureOverride, generation, created));
             if (created != null) {
                 MCPSkins.LOGGER.info("[MCPSkins] Built geo-model skin for '{}' (model: {}, lodModel: {}, lodTexture: {}).",
@@ -209,27 +151,17 @@ public final class GunModelPatcher {
         }
     }
 
-    // Reentrancy guard for primeAnimation - belt-and-suspenders alongside the cache-first
-    // ordering above, in case a future TACZ change makes the reentrant getGunDisplay() call
-    // reachable before this entry is visible.
+    // Second line of defence behind the cache-first ordering in getOrCreate.
     private static final ThreadLocal<Boolean> PRIMING = ThreadLocal.withInitial(() -> false);
     private static volatile boolean primeWarningLogged = false;
 
     /**
-     * Drives the same init/draw sequence TACZ's own {@code AnimateGeoItemRenderer} uses to
-     * bring a freshly-built instance's animation state machine out of its uninitialized
-     * "bind pose" state - see the class javadoc for why this is needed at all. A no-op once
-     * the state machine is initialized, so this only ever does real work the first time a
-     * given (weapon, skin) geo-model pair is built.
+     * Runs TACZ's own init/draw sequence to bring a new instance's state machine out of its
+     * bind pose (see class javadoc). No-op once initialized.
      * <p>
-     * Calling {@code GunItemRendererWrapper.tryInit} means building a
-     * {@code GunAnimationStateContext}, whose {@code setCurrentGunItem} calls
-     * {@code TimelessAPI.getGunDisplay(stack)} itself - reentering the very mixin that
-     * called {@link #getOrCreate} in the first place. That's intentional: it's the only
-     * public way to get a context wired up the way TACZ's own scripts expect, and it's safe
-     * here specifically because the cache entry is already in place by the time this runs
-     * (see the comment in {@link #getOrCreate}), so the reentrant call resolves to a cache
-     * hit rather than looping.
+     * {@code tryInit} re-enters {@code getGunDisplay} via {@code setCurrentGunItem}. That's
+     * intentional - it's the only public way to build the context TACZ's scripts expect - and
+     * safe because {@link #getOrCreate} caches the entry before calling this.
      */
     private static void primeAnimation(GunDisplayInstance created, ItemStack stack) {
         if (stack == null || stack.isEmpty()) return;
@@ -339,10 +271,8 @@ public final class GunModelPatcher {
             Object result = getBedrockModelPOJOMethod.invoke(clientAssetsManagerInstance, location);
             return result != null;
         } catch (ReflectiveOperationException | RuntimeException e) {
-            // Fail open: if the probe itself breaks we can't tell recognized from
-            // unrecognized, and refusing every model would disable geo skins wholesale.
-            // Letting the build attempt proceed is the safer wrong answer - createInstance
-            // catches and reports its own failure with real context.
+            // Fail open - refusing every model would disable geo skins outright, and
+            // createInstance reports its own failures with better context anyway.
             if (WARNED_UNRECOGNIZED.add("probe-failure")) {
                 MCPSkins.LOGGER.warn("[MCPSkins] ClientAssetsManager model probe failed; "
                         + "geo-model overrides will be attempted without pre-validation.", e);
@@ -440,16 +370,15 @@ public final class GunModelPatcher {
         Object currentModelLocation = getModelLocation.invoke(sampleConfig);
         if (!(currentModelLocation instanceof ResourceLocation)) return false;
 
-        // Diagnostic line: real model location on a known-good weapon, for comparing
-        // against the path SkinAssetResolver builds for a skin
+        // For comparing against the path SkinAssetResolver builds for a skin.
         ResourceLocation realModelLocation = (ResourceLocation) currentModelLocation;
         MCPSkins.LOGGER.info(
                 "[MCPSkins][diag] Base weapon's real model ResourceLocation: '{}' "
                         + "(namespace='{}', path='{}').",
                 realModelLocation, realModelLocation.getNamespace(), realModelLocation.getPath());
 
-        // 4) The model field on GunDisplay, found by value (equals, not ==, in case the
-        //    getter returns a rebuilt copy rather than the field itself)
+        // 4) Model field on GunDisplay, matched by value - equals, not ==, since the getter
+        //    may return a rebuilt copy
         Field foundModelField = null;
         for (Field field : displayClass.getDeclaredFields()) {
             if (Modifier.isStatic(field.getModifiers())) continue;
@@ -480,10 +409,9 @@ public final class GunModelPatcher {
     }
 
     /**
-     * Locates GunDisplay's LOD config field by <i>type</i>, not value, since {@code sample}
-     * may not itself define a {@code "lod"} block (its declared field type is inspectable
-     * either way). The two sub-fields are both {@code ResourceLocation}, so they're told
-     * apart by writing a sentinel into each and checking which getter reflects it back.
+     * Finds the LOD config field by type rather than value, since the sample weapon may have
+     * no {@code "lod"} block. Its two {@code ResourceLocation} sub-fields are told apart by
+     * writing a sentinel into each and seeing which getter reflects it back.
      */
     private static boolean discoverLod(Class<?> displayClass) throws ReflectiveOperationException {
         Field foundLodField = null;
@@ -545,8 +473,7 @@ public final class GunModelPatcher {
                 modelLocationField.set(configCopy, modelOverride);
             }
             if (lodSupported && (lodModelOverride != null || lodTextureOverride != null)) {
-                // LOD is a separate nested object - copy it too rather than mutating in
-                // place, or the change would leak into the base weapon's own GunDisplay
+                // Nested object - copy rather than mutate, or it leaks into the base weapon.
                 Object baseLod = lodConfigField.get(configCopy);
                 if (baseLod != null) {
                     Object lodCopy = shallowCopy(baseLod, lodClass);
@@ -565,19 +492,15 @@ public final class GunModelPatcher {
             Object instance = displayInstanceConstructor.newInstance(identity, configCopy);
             GunDisplayInstance created = (GunDisplayInstance) instance;
 
-            // Forces the lazy load now, synchronously, so this instance is fully ready
-            // before the mixin ever sees it - otherwise it'd be returned not-yet-loaded,
-            // then a second differently-loaded copy on the next call, which TACZ's
-            // animation system reads as the weapon changing and retriggers the equip pose
-            // (most visible on the refit screen, which doesn't tick weapon animation).
-            // LOD stays a normal lazy field, it's only read at distance/third-person.
+            // Force the lazy load now so the mixin never sees a half-loaded instance. TACZ
+            // reads that as the weapon changing and retriggers the equip pose - most visible
+            // on the refit screen, which doesn't tick weapon animation.
             created.getAnimationStateMachine();
 
             return created;
         } catch (Throwable t) {
             rethrowIfFatal(t);
-            // Covers checkAnimation() throwing on a skeleton mismatch between the skin's
-            // geo-model and the base weapon's animations - degrade rather than crash
+            // Usually checkAnimation() rejecting a skeleton mismatch - degrade, don't crash.
             MCPSkins.LOGGER.warn(
                     "[MCPSkins] Failed to build geo-model (model: {}, lodModel: {}, lodTexture: {}) - "
                             + "the skin's geo-model skeleton likely doesn't match the base weapon's "
@@ -588,14 +511,8 @@ public final class GunModelPatcher {
     }
 
     /**
-     * Rethrows the throwables that must not be swallowed.
-     * <p>
-     * The build path catches {@link Throwable} on purpose - it drives a reflective call into
-     * another mod's constructor, and the realistic failure (a skin skeleton whose bone names
-     * don't match the base weapon's animations) can surface as almost anything. But an
-     * {@link OutOfMemoryError} or {@link StackOverflowError} is not a "this skin didn't work"
-     * signal, and turning one into a cached null just hides a dying JVM behind a weapon that
-     * quietly keeps its base geometry.
+     * The build path catches {@link Throwable} because a reflective call into another mod's
+     * constructor can fail in almost any way. A dying JVM isn't one of those ways.
      */
     private static void rethrowIfFatal(Throwable t) {
         if (t instanceof VirtualMachineError || t instanceof LinkageError || t instanceof ThreadDeath) {
@@ -607,9 +524,7 @@ public final class GunModelPatcher {
         try {
             Unsafe unsafe = getUnsafe();
             Object copy = unsafe.allocateInstance(type);
-            // Superclass fields included - allocateInstance leaves them at their defaults,
-            // and TACZ's display config types are more likely to use inheritance than
-            // GunDisplayInstance itself is.
+            // Superclass fields included - allocateInstance leaves them at their defaults.
             for (Class<?> current = type; current != null && current != Object.class;
                  current = current.getSuperclass()) {
                 for (Field field : current.getDeclaredFields()) {
@@ -620,14 +535,12 @@ public final class GunModelPatcher {
             }
             return copy;
         } catch (ReflectiveOperationException e) {
-            // Caller (createInstance) reports the failure with the override paths in hand,
-            // which is far more useful context than anything available here.
+            // createInstance logs this properly, with the override paths in hand.
             MCPSkins.LOGGER.debug("[MCPSkins] Unsafe shallow copy of {} failed.", type.getName(), e);
             return null;
         }
     }
 
-    /** Resolved once - this sits on a path that runs per weapon per frame. */
     private static volatile Unsafe cachedUnsafe;
 
     private static Unsafe getUnsafe() throws ReflectiveOperationException {

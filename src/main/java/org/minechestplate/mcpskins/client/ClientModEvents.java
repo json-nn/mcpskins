@@ -40,16 +40,9 @@ public class ClientModEvents {
                                                                  backgroundExecutor, gameExecutor) ->
                 CompletableFuture.completedFuture((Void) null)
                         .thenCompose(preparationBarrier::wait)
-                        // Everything here runs on gameExecutor, deliberately. Closing a
-                        // DynamicTexture is a GL call and has to be on the main client
-                        // thread - but so does the rest of it, for a subtler reason: the
-                        // render thread reads and writes these same caches every frame, and
-                        // clearing them from the background executor raced it directly. That
-                        // is exactly the cross-thread interleaving GunModelPatcher's
-                        // ThreadLocal build guard cannot cover, and it also meant
-                        // RefitButtonPositionScreen's two plain (non-volatile) static ints
-                        // were written from one thread and read from another. None of this
-                        // work is expensive enough to be worth a background hop.
+                        // All on gameExecutor. Closing a DynamicTexture is a GL call, and the
+                        // render thread touches these caches every frame - clearing them off
+                        // the background executor raced it. None of this is worth a hop.
                         .thenRunAsync(() -> {
                             SkinAssetResolver.clearCache();
                             PatchedGunDisplayCache.clear();
@@ -68,8 +61,7 @@ public class ClientModEvents {
             if (tintIndex == 0) {
                 String skinId = TACZSkinHelper.readCustomString(stack, "SkinToUnlock");
                 if (skinId != null) {
-                    // Indexed lookup rather than walking every skin of every weapon - this
-                    // runs per tint query, i.e. per render of the item.
+                    // Indexed lookup - this runs per tint query, i.e. per item render.
                     SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(skinId);
                     if (lookup != null) {
                         return lookup.skin().labelColor() | 0xFF000000; // force opaque alpha

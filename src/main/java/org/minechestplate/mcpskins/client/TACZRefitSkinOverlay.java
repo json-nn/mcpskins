@@ -34,21 +34,16 @@ import java.util.List;
  * Embeds skin browsing/selection directly into TACZ's weapon refit screen
  * ({@code com.tacz.guns.client.gui.GunRefitScreen}).
  * <p>
- * Which skin is shown is controlled entirely by the {@link SkinComponents#SKIN_ID}
- * component (read via {@link TACZSkinHelper#getSkinId(ItemStack)}) - the weapon's GunId
- * itself is never touched, so previewing a locked skin is just a temporary local edit of
- * that component, with no packet sent and no effect on ownership.
+ * The displayed skin is entirely a function of {@link SkinComponents#SKIN_ID}; the GunId is
+ * never touched. Previewing a locked skin is just a local edit of that component - no packet,
+ * no effect on ownership.
  * <p>
- * The toggle button, carousel and toast are all hand-drawn instead of widgets: switching
- * attachment tabs on {@code GunRefitScreen} rebuilds its widget list without a full
- * {@code Screen.init()}, so anything added as a widget would disappear on the next tab
- * switch. They're drawn in {@link #onScreenRenderPost} and hit-tested in
- * {@link #onMouseClicked}.
+ * Everything is hand-drawn rather than added as widgets: switching attachment tabs rebuilds
+ * {@code GunRefitScreen}'s widget list without a full {@code Screen.init()}, so widgets would
+ * vanish. Drawn in {@link #onScreenRenderPost}, hit-tested in {@link #onMouseClicked}.
  * <p>
- * Assumes the refit screen always operates on the weapon in the player's hand (main or
- * offhand) - see {@link #getViewedGunStack()}. The toggle button's position comes from
- * {@link MCPSkinsClientConfig} (see {@code RefitButtonPositionScreen} for the in-game
- * picker, or {@link #toggleButtonBounds} for the default).
+ * Assumes the refit screen always operates on a weapon in hand - see
+ * {@link #getViewedGunStack()}. Button position comes from {@link MCPSkinsClientConfig}.
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, value = Dist.CLIENT)
 public class TACZRefitSkinOverlay {
@@ -71,8 +66,7 @@ public class TACZRefitSkinOverlay {
     private static boolean skinModeActive = false;
     private static int focusedSkinIndex = 0;
     private static float animatedSkinIndex = 0f;
-    // Last seen equipped bare skin id (or baseGun if no skin) - lets us tell "the weapon/skin
-    // actually changed" apart from "the player is just scrolling the carousel"
+    // Tells "the weapon/skin changed" apart from "the player is scrolling the carousel".
     private static String lastSeenSkinId = null;
 
     // ---- Client-side preview state (no unlock/grant involved) --------------------------
@@ -114,9 +108,7 @@ public class TACZRefitSkinOverlay {
     // Rendering the carousel, toast, and toggle button over the native screen
     // -----------------------------------------------------------------------------------
 
-    // LOWEST priority so we draw last among all Render.Post subscribers on this screen -
-    // TACZ itself draws attachment icons/tab highlights on Render.Post too and could
-    // otherwise cover our overlay
+    // LOWEST so we draw after TACZ's own Render.Post work, which would otherwise cover us.
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void onScreenRenderPost(ScreenEvent.Render.Post event) {
         Screen screen = event.getScreen();
@@ -550,15 +542,10 @@ public class TACZRefitSkinOverlay {
     }
 
     /**
-     * Wipes all per-session UI state. Called on disconnect.
-     * <p>
-     * Every field here is static, which is fine while a session is running - there's only
-     * ever one refit screen. Across sessions it isn't: {@link #restorePreviewIfActive()} is
-     * driven by {@code ScreenEvent.Closing}, so being disconnected mid-preview (kick, timeout,
-     * server restart) never fires it and leaves {@code previewActive} set with a stale hand
-     * and skin id. The next world would then restore a previous server's skin onto an
-     * unrelated weapon. Preview edits are client-local, so there is nothing to write back
-     * here - just drop the state.
+     * Wipes per-session UI state on disconnect. {@link #restorePreviewIfActive()} runs from
+     * {@code ScreenEvent.Closing}, which never fires on a kick or timeout - that left
+     * {@code previewActive} set with a stale hand and skin id for the next world. Preview
+     * edits are client-local, so there's nothing to write back.
      */
     public static void resetSessionState() {
         clearPreviewState();

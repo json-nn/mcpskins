@@ -12,23 +12,13 @@ import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
 import org.minechestplate.mcpskins.client.render.TaczGeoModelInjector;
 
 /**
- * Drops every piece of session-scoped client state when the player leaves a server.
+ * Drops session-scoped client state on disconnect.
  * <p>
- * Skin assets are delivered by the server and keyed by {@code namespace:path}, but nothing
- * about those keys is server-specific - two servers can and will ship different bytes under
- * the same key. Without this, everything a session accumulated outlived it:
- * <ul>
- *   <li>registered {@code DynamicTexture}s stayed on the GPU, so switching servers leaked
- *       video memory and server B rendered server A's texture bytes;</li>
- *   <li>PRESENT/MISSING verdicts persisted, so an asset server A lacked was never even
- *       requested from server B;</li>
- *   <li>geo-models injected into TACZ's model registry stayed injected under the same keys.</li>
- * </ul>
- * {@code ClientSkinAssetCache.clearAll()} always documented itself as running "on disconnect",
- * but nothing ever called it that way - reload was its only trigger.
+ * Asset keys are {@code namespace:path} with nothing server-specific in them, so two servers
+ * can ship different bytes under the same key. Anything kept across sessions - GPU textures,
+ * PRESENT/MISSING verdicts, injected geo-models - leaks into the next one.
  * <p>
- * This runs on the client main thread, which is required: closing a {@code DynamicTexture}
- * is a GL call.
+ * Runs on the client main thread; closing a {@code DynamicTexture} is a GL call.
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, value = Dist.CLIENT)
 public final class ClientNetworkEvents {

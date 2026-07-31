@@ -31,20 +31,17 @@ public record SyncRegistryPayload(Map<String, SkinDataModels.WeaponSkins> regist
         this(readMap(buffer));
     }
 
-    /** Generous ceilings on element counts, so a declared size is never taken on faith. */
     private static final int MAX_WEAPONS = 4096;
     private static final int MAX_SKINS_PER_WEAPON = 512;
 
-    /** Per-field string bounds, replacing readUtf()'s 32767 default. */
     private static final int MAX_ID_LENGTH = 256;
     private static final int MAX_NAME_LENGTH = 256;
     private static final int MAX_RARITY_LENGTH = 64;
     private static final int MAX_DESCRIPTION_LENGTH = 512;
 
     /**
-     * NeoForge caps a clientbound payload at ~1 MiB. Warn well before that, since this
-     * payload has no chunking fallback - it just fails to send, silently, and every client
-     * ends up with an empty registry.
+     * NeoForge caps clientbound payloads at ~1 MiB. There's no chunking fallback here - past
+     * the cap this silently fails to send and every client gets an empty registry.
      */
     private static final int SIZE_WARNING_THRESHOLD = 768 * 1024;
 

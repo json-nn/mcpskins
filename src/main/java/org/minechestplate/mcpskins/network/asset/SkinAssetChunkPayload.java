@@ -12,13 +12,9 @@ import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 /**
  * Server-to-client: one chunk of a compressed asset transfer.
  * <p>
- * NeoForge caps clientbound payloads around 1 MiB, so every asset gets split into
- * {@link ServerSkinAssetStore#CHUNK_SIZE}-byte pieces instead of betting on always
- * fitting in one packet. data's codec is bounded to the same size so a bad packet can't
- * force an oversized allocation.
- * <p>
- * transferId only needs to be unique per sender - each client only reassembles its own
- * chunks.
+ * NeoForge caps clientbound payloads around 1 MiB, so assets are split into
+ * {@link ServerSkinAssetStore#CHUNK_SIZE} pieces. The data codec is bounded to the same size.
+ * transferId only needs to be unique per sender.
  */
 public record SkinAssetChunkPayload(long transferId, String path, int index, int totalChunks, byte[] data)
         implements CustomPacketPayload {

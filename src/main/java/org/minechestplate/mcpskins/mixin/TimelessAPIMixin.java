@@ -19,19 +19,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.util.Optional;
 
 /**
- * Mixin into {@code TimelessAPI.getGunDisplay} that swaps in a skin's texture, icon,
- * HUD icon(s), and/or geometry (main and LOD) when the item stack has a
- * {@link SkinComponents#SKIN_ID} set. The weapon's GunId is never changed, only what
- * gets rendered for it.
+ * Swaps a skin's texture, icon, HUD icons, and geometry into
+ * {@code TimelessAPI.getGunDisplay} when the stack carries a {@link SkinComponents#SKIN_ID}.
+ * The weapon's GunId never changes, only what renders for it.
  * <p>
- * Every override is resolved via {@link SkinAssetResolver} and is fully optional,
- * falling back to the base weapon's asset when the corresponding file is missing or
- * unsupported on this TACZ fork.
- * <p>
- * {@code stack} is passed into {@link GunModelPatcher#getOrCreate} purely so a freshly
- * built geo-model instance can have its animation state machine primed immediately - see
- * {@link GunModelPatcher}'s class javadoc for why that matters (it's what prevents
- * "detached hands" the first time a geo-model skin is equipped in first person).
+ * Every override is optional and resolved through {@link SkinAssetResolver}, falling back to
+ * the base asset when a file is missing or unsupported on this fork. {@code stack} is threaded
+ * through to {@link GunModelPatcher#getOrCreate} only for animation priming.
  */
 @Mixin(TimelessAPI.class)
 public class TimelessAPIMixin {
@@ -61,8 +55,7 @@ public class TimelessAPIMixin {
         ResourceLocation model = baseModelLocation != null ? SkinAssetResolver.resolveModel(baseModelLocation, skinId) : null;
         boolean hasModel = model != null;
 
-        // baseLodModelLocation is null both when the fork isn't reflection-compatible and
-        // when this weapon simply has no "lod" block - either way, nothing to override.
+        // Null when the fork isn't reflection-compatible or the weapon has no "lod" block.
         ResourceLocation baseLodModelLocation = GunModelPatcher.getBaseLodModelLocation(base);
         ResourceLocation lodModel = baseLodModelLocation != null ? SkinAssetResolver.resolveModel(baseLodModelLocation, skinId) : null;
         boolean hasLodModel = lodModel != null;
@@ -86,8 +79,7 @@ public class TimelessAPIMixin {
 
         String cacheKey = baseGunId + '\u0000' + skinId;
 
-        // Geometry is built first; texture/icon/HUD overrides layer on top of the
-        // geo-patched instance (or the base instance, if geometry wasn't needed)
+        // Geometry first; texture/icon/HUD layer on top of whatever base that produced.
         GunDisplayInstance patchBase = base;
         if (hasModel || hasLodModel || hasLodTexture) {
             GunDisplayInstance geoInstance = GunModelPatcher.getOrCreate(cacheKey, base, stack,
@@ -117,8 +109,7 @@ public class TimelessAPIMixin {
         if (patched != null) {
             cir.setReturnValue(Optional.of(patched));
         } else if (patchBase != base) {
-            // Texture/icon/HUD patch isn't ready yet - show the correct geometry with the
-            // base texture for now, the patch resolves on a later call
+            // Patch not ready - show correct geometry on the base texture until it resolves.
             cir.setReturnValue(Optional.of(patchBase));
         }
         // If both fall through, the original unskinned instance stands.

@@ -37,13 +37,9 @@ public final class TaczGeoModelInjector {
     private static final Set<String> WARNED_PARSE_FAILURES = ConcurrentHashMap.newKeySet();
 
     /**
-     * Keys we put into TACZ's map ourselves, so {@link #reset()} can take back exactly what
-     * it added and {@link #inject} knows which entries it owns.
-     * <p>
-     * Without this, entries outlived the session that produced them: a plain
-     * {@code putIfAbsent} on the next connection would find the previous server's model still
-     * sitting under the same synthetic identity, quietly do nothing, and report success -
-     * so the weapon rendered the old server's geometry with nothing to indicate why.
+     * Keys we added, so {@link #reset()} removes exactly those and {@link #inject} knows what
+     * it owns. Without it a model from one server survives into the next session and shadows
+     * its replacement, since {@code putIfAbsent} would silently keep the stale entry.
      */
     private static final Set<ResourceLocation> INJECTED = ConcurrentHashMap.newKeySet();
 
@@ -52,14 +48,9 @@ public final class TaczGeoModelInjector {
 
     /**
      * Parses jsonBytes as a BedrockModelPOJO and makes it available under collapsedIdentity.
-     * <p>
-     * An entry this mod previously injected is overwritten; one that came from somewhere else
-     * (a resource pack shipping a model at the same path) is left alone. That distinction is
-     * why {@link #INJECTED} is tracked rather than just calling {@code put} - we want fresh
-     * bytes to win over our own stale entry without clobbering someone else's asset.
+     * Overwrites our own previous entry; leaves a pack-provided one alone.
      *
-     * @return true if a model is available under collapsedIdentity, false if parsing or the
-     *         reflective injection failed
+     * @return true if a model is available under collapsedIdentity
      */
     public static boolean inject(ResourceLocation collapsedIdentity, byte[] jsonBytes) {
         if (!ensureSupported()) return false;
@@ -202,21 +193,12 @@ public final class TaczGeoModelInjector {
     }
 
     /**
-     * Drops every cached handle into TACZ's internals so the next {@link #inject} rediscovers
-     * them. Called on resource reload and on disconnect.
+     * Removes our injected entries and drops every cached handle, forcing rediscovery on the
+     * next {@link #inject}. Called on resource reload and on disconnect.
      * <p>
-     * {@link #dataMap} is a live reference to a collection TACZ owns, captured once and never
-     * re-validated. If TACZ ever replaces that map rather than clearing it - a reasonable
-     * thing for a reload to do - every subsequent injection would land in an orphaned map and
-     * geo skins would silently stop working until the game restarted, because
-     * {@code supportState == 1} means {@link #discover()} never runs again. Resetting at the
-     * same points we drop our own caches keeps the handle from outliving what it points at.
-     * <p>
-     * Entries this mod injected are removed first. Leaving them behind looked harmless -
-     * they're under our own synthetic identities, so they collide with nothing - but it meant
-     * a model from one server survived into the next session and shadowed the replacement,
-     * since {@link #inject} could not overwrite what it no longer knew it owned. Only keys in
-     * {@link #INJECTED} are touched, so nothing another mod or pack put in the map is at risk.
+     * {@link #dataMap} is a live reference to a map TACZ owns. If TACZ ever replaces it rather
+     * than clearing it, injections would land in an orphaned map forever, since
+     * {@code supportState == 1} blocks rediscovery.
      */
     public static void reset() {
         synchronized (TaczGeoModelInjector.class) {

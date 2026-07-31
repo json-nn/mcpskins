@@ -22,14 +22,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Client-to-server packet requesting a skin be applied to, or removed from, the held weapon.
+ * Client-to-server: apply a skin to, or remove one from, the held weapon.
  * <p>
- * Removing a skin is signalled by {@link #unequip}, not by a magic id. Previously the
- * client asked for removal by sending {@code "default:<gunId>"}, and
- * {@code SkinAttachment.hasSkin} short-circuited to "owned" for anything with that prefix -
- * so {@code "default:<any locked skin>"} sailed through the ownership gate and every check
- * after it. With an explicit flag, the removal path needs no id at all and the equip path
- * can validate the id strictly.
+ * Removal is signalled by {@link #unequip}, never by a magic id. Sending
+ * {@code "default:<gunId>"} for it used to make {@code SkinAttachment.hasSkin} report "owned"
+ * on the prefix alone, which let any locked skin through the ownership gate.
  */
 public record ApplySkinPayload(String skinId, boolean unequip) implements CustomPacketPayload {
     public static final Type<ApplySkinPayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "apply_skin"));
@@ -37,8 +34,7 @@ public record ApplySkinPayload(String skinId, boolean unequip) implements Custom
     // Matched by translation key rather than rendered text, so it works regardless of language
     private static final String OWNER_LORE_KEY = "tooltip.mcpskins.skin_owner";
 
-    /** Generous but bounded - real skin ids are short. The old hand-rolled codec used
-     *  {@code readUtf()}'s 32767 default, which is 128x more than anything legitimate. */
+    /** Bounded; readUtf()'s 32767 default is far beyond any real skin id. */
     private static final int MAX_SKIN_ID_LENGTH = 256;
 
     public static final StreamCodec<FriendlyByteBuf, ApplySkinPayload> CODEC = StreamCodec.composite(
@@ -47,12 +43,12 @@ public record ApplySkinPayload(String skinId, boolean unequip) implements Custom
             ApplySkinPayload::new
     );
 
-    /** Requests the given skin be applied. The server still verifies ownership. */
+    /** Server still verifies ownership. */
     public static ApplySkinPayload equip(String skinId) {
         return new ApplySkinPayload(skinId, false);
     }
 
-    /** Requests the held weapon be returned to its stock appearance. Carries no skin id. */
+    /** Returns the held weapon to stock. Carries no skin id. */
     public static ApplySkinPayload removeSkin() {
         return new ApplySkinPayload("", true);
     }

@@ -44,14 +44,9 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     public static final int CHUNK_SIZE = 256 * 1024;
 
     /**
-     * Hard ceiling on how many chunks one asset may be split into - 64 x 256 KiB = 16 MiB
-     * compressed, far above any real skin texture or geo-model.
-     * <p>
-     * This exists mainly for the <em>receiving</em> side. {@code totalChunks} arrives as an
-     * unbounded VAR_INT, and the client allocates its reassembly array straight from it, so
-     * without a cap a single 6-byte packet from a hostile server asks for a ~16 GiB array.
-     * Enforced on send too, so an oversized pack file fails loudly here instead of producing
-     * a transfer no well-behaved client will accept.
+     * 64 x 256 KiB = 16 MiB compressed. Mainly for the receiving side: {@code totalChunks} is
+     * an unbounded VAR_INT that sizes the client's reassembly array. Enforced on send too, so
+     * an oversized pack file fails loudly here.
      */
     public static final int MAX_CHUNKS = 64;
 
@@ -65,13 +60,8 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     private static final int MAX_REQUESTS_PER_SECOND = 200;
 
     /**
-     * Per-player outbound budget for asset data.
-     * <p>
-     * The request cap alone doesn't bound anything that matters. Once an asset is in
-     * {@link #hotCache} a re-request costs no I/O, so 200 requests/second for the largest
-     * indexed asset is 200x its size per second of allocation and unbacked-pressured netty
-     * buffering, per attacking player - a 4 MiB asset gets you most of a gigabyte a second
-     * out of a limit that looks conservative. Charging bytes is what actually caps it.
+     * The request cap alone bounds nothing - a cached asset re-requested 200x/second costs no
+     * I/O but still buffers 200x its size out to netty. Charging bytes is the real limit.
      */
     private static final long MAX_BYTES_PER_SECOND = 2L * 1024 * 1024;
 
@@ -184,11 +174,8 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     }
 
     /**
-     * Flags assets too big to ever be delivered, at reload time rather than at first render.
-     * <p>
-     * Compares the <em>uncompressed</em> size, so it's a heuristic: the real check is on the
-     * compressed payload in {@link #sendChunks}. Textures are already-deflated PNGs that
-     * barely shrink again, so in practice anything tripping this will trip that too.
+     * Flags undeliverable assets at reload time instead of at first render. Heuristic - this
+     * is the uncompressed size, while {@link #sendChunks} checks the real (compressed) one.
      *
      * @param sizeBytes uncompressed size, or negative if unknown
      */
@@ -224,10 +211,8 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     // ------------------------------------------------------------------
 
     /**
-     * Serves one asset request. Runs on a netty thread (see {@code HandlerThread.NETWORK} in
-     * {@code MCPSkins#registerNetworking}), so it must never let a throwable escape - an
-     * exception here would surface inside NeoForge's payload handler rather than anywhere
-     * useful, and can take the connection with it.
+     * Serves one asset request. Runs on a netty thread ({@code HandlerThread.NETWORK}), so
+     * nothing may escape - an exception here can take the connection with it.
      */
     public void handleRequest(ServerPlayer player, String path) {
         try {
@@ -250,8 +235,7 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
                 hotCache.put(path, compressed);
             }
 
-            // Charged after the payload is known, so the budget reflects bytes actually put
-            // on the wire rather than requests made.
+            // Charged once the size is known, so the budget tracks bytes, not requests.
             if (rate.bytes.addAndGet(compressed.length) > MAX_BYTES_PER_SECOND) {
                 sendThrottled(player, path);
                 return;
@@ -279,14 +263,10 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
         return state;
     }
 
-    /**
-     * Tells a throttled client when to come back. Always replies - see
-     * {@link SkinAssetThrottledPayload} for why silence here used to strand the asset.
-     */
+    /** Always replies - silence here strands the client's request forever. */
     private static void sendThrottled(ServerPlayer player, String path) {
         long now = System.currentTimeMillis();
-        // Time left in the current window, plus a small margin so the retry lands in the next
-        // one rather than racing the boundary.
+        // Time left in this window, plus margin so the retry doesn't race the boundary.
         int retryAfter = (int) (1000L - (now % 1000L)) + 250;
         PacketDistributor.sendToPlayer(player, new SkinAssetThrottledPayload(path, retryAfter));
     }
@@ -294,18 +274,10 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     private final Map<Path, ZipFile> openZips = new HashMap<>();
 
     /**
-     * Guards {@link #openZips} across the two threads that touch it: reads arrive on netty
-     * threads, while {@link #closeOpenZips()} runs on the game executor during a reload.
-     * <p>
-     * A plain concurrent map wasn't enough. Closing a handle outside the same lock a reader
-     * holds means a reload landing mid-request makes {@code getEntry}/{@code getInputStream}
-     * throw {@link IllegalStateException} ("zip file closed"), which isn't an
-     * {@link IOException} and so escaped the catch below entirely. And a reader that reached
-     * the map after {@code clear()} would reopen the zip into the now-discarded map: a leaked
-     * handle that also keeps serving pre-reload bytes, the exact thing closing them prevents.
-     * <p>
-     * The read lock is held for the whole lookup-and-read so a handle cannot be closed while
-     * in use; the write lock makes close-and-clear atomic against that.
+     * Reads arrive on netty threads; {@link #closeOpenZips()} runs on the game executor during
+     * a reload. The read lock spans the whole lookup-and-read so a handle can't be closed
+     * mid-use - that threw {@link IllegalStateException}, which isn't an {@link IOException}
+     * and escaped the catch below - and makes close-and-clear atomic against reopens.
      */
     private final ReadWriteLock zipLock = new ReentrantReadWriteLock();
 
@@ -327,13 +299,9 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     private byte[] readZipEntry(String key, AssetSource source) throws IOException {
         zipLock.readLock().lock();
         try {
-            // Kept open across requests instead of reopening per miss: opening a ZipFile
-            // reads and parses the whole central directory, which for a large gun pack
-            // (hundreds of entries) is real, avoidable cost on every first-time asset -
-            // exactly the kind of work that used to also stall the main server thread
-            // before HandlerThread.NETWORK was added for this payload's handler. Access is
-            // synchronized per-handle since java.util.zip.ZipFile's contract doesn't commit
-            // to safe concurrent reads from multiple threads.
+            // Handles stay open across requests - opening a ZipFile parses the whole central
+            // directory, which is real cost per first-time asset on a large gun pack.
+            // Synchronized per handle; ZipFile doesn't promise safe concurrent reads.
             ZipFile zip;
             synchronized (openZips) {
                 zip = openZips.computeIfAbsent(source.zipFile(), ServerSkinAssetStore::openZipQuietly);
@@ -353,14 +321,11 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     }
 
     /**
-     * Refuses to materialize an asset that could never be delivered anyway.
-     * <p>
-     * Deliberately looser than {@link #MAX_ASSET_BYTES}: geo-model JSON compresses very well,
-     * so a raw file several times the delivery limit can still fit once deflated. The point
-     * here is only to stop {@code readAllBytes} pulling a runaway file into the server's heap
-     * before {@link #sendChunks} gets a chance to reject it.
+     * Stops {@code readAllBytes} pulling a runaway file into the heap before
+     * {@link #sendChunks} can reject it. Looser than {@link #MAX_ASSET_BYTES} because JSON
+     * compresses well enough that a much larger raw file can still fit.
      *
-     * @param sizeBytes uncompressed size, or negative if unknown (then we allow the read)
+     * @param sizeBytes uncompressed size, or negative if unknown (read is allowed)
      */
     private static boolean isTooLargeToRead(String key, long sizeBytes) {
         long limit = (long) MAX_ASSET_BYTES * 4;
@@ -381,11 +346,8 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
         }
     }
 
-    /** Closes every zip handle opened by {@link #readBytes}. Called on reload so a stale
-     *  handle never keeps serving bytes from a pack that's since changed on disk. */
+    /** Called on reload, so a stale handle never keeps serving bytes from a changed pack. */
     private void closeOpenZips() {
-        // Write lock: waits for in-flight readers to finish and blocks new ones, so no
-        // handle is ever closed out from under a read in progress.
         zipLock.writeLock().lock();
         try {
             synchronized (openZips) {
@@ -412,9 +374,7 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
             // Can't really fail on an in-memory array, but don't swallow it silently.
             throw new IllegalStateException("Failed to compress skin asset in memory", e);
         } finally {
-            // DeflaterOutputStream#close only calls end() on a deflater it created itself.
-            // We hand it one, so the native zlib stream is ours to release - without this
-            // every cache miss leaks one until a cleaner eventually gets to it.
+            // Only auto-end()ed if the stream created it, and we passed one in.
             deflater.end();
         }
         return out.toByteArray();
@@ -423,8 +383,7 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     private void sendChunks(ServerPlayer player, String path, byte[] compressed) {
         int totalChunks = Math.max(1, (compressed.length + CHUNK_SIZE - 1) / CHUNK_SIZE);
         if (totalChunks > MAX_CHUNKS) {
-            // Refuse rather than emit a transfer the client is required to reject. Logged at
-            // error level because this is a pack-authoring problem the admin needs to see.
+            // A pack-authoring problem the admin needs to see, hence error level.
             MCPSkins.LOGGER.error(
                     "[MCPSkins] Skin asset '{}' is {} bytes compressed, over the {} byte limit - not sending. "
                             + "Shrink the file or raise MAX_CHUNKS.",
@@ -434,8 +393,7 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
         }
 
         long transferId = TRANSFER_ID.incrementAndGet();
-        // Sliced and sent one at a time - buffering every chunk into a List first meant a
-        // second full copy of the asset resident before a single byte went out.
+        // Sent as sliced - buffering them all first kept a second full copy resident.
         for (int i = 0; i < totalChunks; i++) {
             int from = i * CHUNK_SIZE;
             int to = Math.min(compressed.length, from + CHUNK_SIZE);
@@ -444,7 +402,6 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
         }
     }
 
-    /** Drops a disconnected player's rate-limit state. Safe to call even if they never sent a request. */
     public void forgetPlayer(UUID player) {
         rateLimits.remove(player);
     }

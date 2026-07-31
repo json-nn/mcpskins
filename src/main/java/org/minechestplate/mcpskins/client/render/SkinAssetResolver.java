@@ -15,13 +15,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * folded into a subfolder since it's not valid in a ResourceLocation path.
  * <p>
  * Presence checks go through {@link ClientSkinAssetCache}, which fetches bytes from the
- * server the first time each path is asked about. Runs on basically every render frame,
- * so the {@code ResourceLocation}s themselves (String.format + parsing) are memoized per
- * (baseGunId, skinId, kind) below - that part is a pure function of its inputs and never
- * changes while a skin stays equipped. The presence check itself is deliberately NOT
- * memoized and still runs every call: while a network-delivered asset is still in flight
- * it needs to keep polling {@link ClientSkinAssetCache} to notice the moment it arrives.
- * Call {@link #clearCache()} after adding skin files without a client restart.
+ * server on first use. This runs every render frame, so path construction is memoized - but
+ * the presence check deliberately is not, since an in-flight asset has to be re-polled to
+ * notice it arriving. Call {@link #clearCache()} to pick up new skin files without a restart.
  */
 public final class SkinAssetResolver {
     private static final Set<String> WARNED_INVALID = ConcurrentHashMap.newKeySet();
@@ -39,13 +35,8 @@ public final class SkinAssetResolver {
     private static final Map<ModelKey, ModelPaths> MODEL_PATH_CACHE = new ConcurrentHashMap<>();
 
     /**
-     * Stand-ins for "this input can never produce a valid path", compared by identity.
-     * <p>
-     * {@link ConcurrentHashMap#computeIfAbsent} stores nothing when the mapper returns null,
-     * so returning null for an invalid path meant the mapper ran again on the very next call -
-     * string manipulation plus {@code ResourceLocation.tryBuild}, every frame, forever.
-     * {@link #WARNED_INVALID} kept that quiet in the log but did nothing about the work.
-     * Caching a sentinel makes the negative result stick like any other.
+     * "Never a valid path", compared by identity. {@code computeIfAbsent} stores nothing when
+     * the mapper returns null, so a null here would rebuild the path every frame forever.
      */
     private static final ResourceLocation INVALID_LOCATION =
             ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "invalid_path_sentinel");

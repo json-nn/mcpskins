@@ -46,10 +46,8 @@ import java.util.*;
  * [ skin name · rarity · collection · [Custom model]        [Equip] ]
  * </pre>
  * <p>
- * Layout is computed proportionally (see {@link #computeLayout()}), unlike
+ * Laid out proportionally (see {@link #computeLayout()}), unlike
  * {@code TACZRefitSkinOverlay}, which has to match a fixed-pixel third-party background.
- * No vanilla background blur either - see {@link Item3DPodiumWidget} and
- * {@link #renderBackground}.
  */
 public class SkinArmoryScreen extends Screen {
 
@@ -145,8 +143,7 @@ public class SkinArmoryScreen extends Screen {
     protected void init() {
         podium.resetView();
 
-        // Search is its own full-width row above the filter buttons (see
-        // computeHeaderLayout()), so the buttons render below it and can never overlap it
+        // Search gets its own full-width row, so the filter buttons can't overlap it.
         HeaderLayout header = computeHeaderLayout();
         this.searchBox = new EditBox(this.font, header.searchX(), header.searchY(),
                 header.searchWidth(), header.searchHeight(),
@@ -179,9 +176,7 @@ public class SkinArmoryScreen extends Screen {
     }
 
     /**
-     * Recomputes every screen zone from {@code this.width}/{@code this.height} each frame -
-     * cheap enough that recomputing on every call is simpler and safer than caching and
-     * risking staleness after a window resize.
+     * Recomputed every frame - cheaper than caching and risking staleness after a resize.
      */
     private Layout computeLayout() {
         int margin = 6;
@@ -314,9 +309,8 @@ public class SkinArmoryScreen extends Screen {
         renderSkinGrid(guiGraphics, layout, mouseX, mouseY);
         renderBottomBar(guiGraphics, layout, mouseX, mouseY);
 
-        // Renders real widgets (the search box) over our hand-drawn top bar. This also
-        // calls renderBackground(...) internally - overridden below as a no-op, or it'd
-        // trigger vanilla's blur over everything already drawn here.
+        // Draws real widgets (the search box) over the hand-drawn top bar. Calls
+        // renderBackground() internally, which is why that's a no-op below.
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         renderHoverTooltip(guiGraphics, layout, mouseX, mouseY);
@@ -993,17 +987,11 @@ public class SkinArmoryScreen extends Screen {
     }
 
     /**
-     * "Custom model" badge check, using the same path as the actual render
-     * ({@code SkinAssetResolver.resolveModel}) so it's never wrong. Cached for the
-     * screen's session - {@code TimelessAPI.getGunDisplay(...)} isn't cheap enough to
-     * call every frame for every visible cell.
-     * <p>
-     * The cache is tagged with {@link ClientSkinAssetCache#generation()} rather than being
-     * held for the screen's whole session. The first call for a skin usually lands while its
-     * geo-model is still in flight, which resolves to false - pinning that answer meant the
-     * badge stayed off, and the "custom model only" filter stayed wrong, for as long as the
-     * screen stayed open. Re-checking when the generation moves lets the answer correct
-     * itself once the asset lands, and costs nothing while nothing is arriving.
+     * "Custom model" badge, resolved through the real render path so it can't disagree with
+     * it. Cached because {@code getGunDisplay} is too expensive per cell per frame, but keyed
+     * on {@link ClientSkinAssetCache#generation()} - the first check usually runs while the
+     * geo-model is still in flight, and pinning that {@code false} left the badge and the
+     * "has model" filter wrong for as long as the screen stayed open.
      */
     private boolean hasCustomModel(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
         String bare = TACZSkinHelper.bareSkinId(entry.id());
@@ -1024,8 +1012,7 @@ public class SkinArmoryScreen extends Screen {
                 result = baseModelLocation != null && SkinAssetResolver.resolveModel(baseModelLocation, bare) != null;
             }
         } catch (RuntimeException e) {
-            // The badge just doesn't show; the screen stays up. Debug level because this runs
-            // per visible cell, and a real breakage would repeat on every generation bump.
+            // Badge just doesn't show. Debug level - this runs per visible cell.
             MCPSkins.LOGGER.debug("[MCPSkins] Custom-model badge check failed for '{}'.", cacheKey, e);
         }
         customModelCache.put(cacheKey, new CustomModelResult(generation, result));

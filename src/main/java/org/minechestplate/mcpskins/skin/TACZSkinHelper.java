@@ -93,13 +93,9 @@ public class TACZSkinHelper {
     /**
      * Raw GunId of a TACZ weapon stack, or {@code null} if it isn't one.
      * <p>
-     * Called on essentially every {@code TimelessAPI.getGunDisplay} invocation (i.e.
-     * several times per weapon per frame), so this reads the tag directly instead of
-     * going through {@link CustomData#copyTag()} - that deep-copies the whole compound
-     * tag (attachments, ammo, everything else TACZ stores there) just to read one string.
-     * {@link CustomData#getUnsafe()} is deprecated (Mojang steering callers toward the
-     * component APIs in general) but is exactly the right tool for a read-only peek at
-     * NBT a different mod owns; we never mutate what it returns.
+     * Runs several times per weapon per frame, so it reads the tag directly rather than via
+     * {@link CustomData#copyTag()}, which deep-copies the whole compound to read one string.
+     * {@code getUnsafe()} is deprecated but correct for a read we never mutate.
      */
     @SuppressWarnings("deprecation")
     public static String getGunId(ItemStack stack) {
@@ -111,12 +107,8 @@ public class TACZSkinHelper {
 
     /**
      * Read-only peek at a string in a stack's {@code CUSTOM_DATA}, or {@code null} if absent.
-     * <p>
-     * Same reasoning as {@link #getGunId}: {@link CustomData#copyTag()} deep-copies the whole
-     * compound tag just to read one key, which is real waste on the paths that call this -
-     * per item render for the tint handler, and per inventory slot when scanning for fusable
-     * items. {@link CustomData#getUnsafe()} is deprecated but is precisely the right tool for
-     * a read we never mutate.
+     * Same {@code copyTag()} reasoning as {@link #getGunId} - callers run per item render and
+     * per inventory slot.
      */
     @SuppressWarnings("deprecation")
     public static String readCustomString(ItemStack stack, String key) {
@@ -142,14 +134,11 @@ public class TACZSkinHelper {
     }
 
     /**
-     * Localized weapon name from a raw GunId - safe to call server-side (chat messages,
-     * commands), unlike {@code ItemStack#getHoverName()}: that needs gun-pack display
-     * data which is only ever loaded client-side, and falls back to the raw
-     * "item.tacz.modern_kinetic_gun" key (untranslated anywhere) when called from the server.
+     * Localized weapon name from a raw GunId, safe to call server-side - unlike
+     * {@code ItemStack#getHoverName()}, which needs client-only gun-pack display data.
      * <p>
-     * Assumes guns follow TACZ's "&lt;namespace&gt;.gun.&lt;path&gt;.name" convention, the
-     * same shape as their ammo items. Worth spot-checking in-game against any non-default
-     * gun packs this server uses.
+     * Assumes TACZ's "&lt;namespace&gt;.gun.&lt;path&gt;.name" convention; worth spot-checking
+     * against third-party gun packs.
      */
     public static Component gunDisplayName(String gunId) {
         String bare = bareSkinId(gunId);

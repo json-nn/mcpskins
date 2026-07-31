@@ -30,11 +30,8 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
     public static final SkinManager INSTANCE = new SkinManager();
 
     /**
-     * Everything the registry is looked up by, published as one immutable unit.
-     * <p>
-     * The two index maps exist because {@link #findSkin} and {@link #getBaseGun} used to scan
-     * every skin of every weapon, and both are called from the render path (per weapon, per
-     * frame) and from packet handlers. They're built once per load alongside the registry.
+     * Everything the registry is looked up by, published as one immutable unit. The indices
+     * keep {@link #findSkin} and {@link #getBaseGun} off the render path's critical path.
      *
      * @param registry     baseGun -&gt; that weapon's skins
      * @param skinsById    skin id -&gt; the (weapon, skin) pair it belongs to
@@ -47,16 +44,10 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
     }
 
     /**
-     * Replaced wholesale, never mutated in place.
-     * <p>
-     * This was a plain {@link HashMap} written by {@link #apply} on the reload thread and by
-     * {@link #syncFromNetwork} on the client main thread, and read from the render thread and
-     * from packet handlers - with {@code clear()}-then-repopulate in the middle, so readers
-     * could see a half-built registry. Worse, {@link #getRegistry()} handed the live map
-     * straight to {@code SyncRegistryPayload}, which serializes it on a netty encode thread:
-     * a {@code /reload} landing at the wrong moment was a {@link java.util.ConcurrentModificationException}
-     * mid-packet. A volatile reference to an immutable snapshot makes every read consistent
-     * and every publish atomic.
+     * Replaced wholesale, never mutated in place. Written by {@link #apply} on the reload
+     * thread and {@link #syncFromNetwork} on the client main thread, read from the render
+     * thread and from packet handlers - and {@link #getRegistry()} hands it to
+     * {@code SyncRegistryPayload}, which serializes on a netty encode thread.
      */
     private volatile Snapshot snapshot = Snapshot.EMPTY;
 
@@ -114,8 +105,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
             baseGunById.put(weapon.baseGun(), weapon.baseGun());
             for (SkinDataModels.SkinEntry skin : weapon.skins()) {
                 skinsById.putIfAbsent(skin.id(), new SkinDataModels.SkinLookupResult(weapon, skin));
-                // Indexed under both spellings so getBaseGun keeps resolving a "default:"
-                // prefixed id the same way its old linear scan did.
+                // Both spellings, so getBaseGun still resolves a "default:" prefixed id.
                 baseGunById.putIfAbsent(skin.id(), weapon.baseGun());
                 baseGunById.putIfAbsent(TACZSkinHelper.bareSkinId(skin.id()), weapon.baseGun());
             }
@@ -124,10 +114,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         snapshot = new Snapshot(Map.copyOf(registry), Map.copyOf(skinsById), Map.copyOf(baseGunById));
     }
 
-    /**
-     * The live registry. Safe to hand around and iterate: it's immutable, and a reload
-     * publishes a whole new map rather than mutating this one.
-     */
+    /** Immutable - safe to hand around and iterate. A reload publishes a new map. */
     public Map<String, SkinDataModels.WeaponSkins> getRegistry() {
         return snapshot.registry();
     }

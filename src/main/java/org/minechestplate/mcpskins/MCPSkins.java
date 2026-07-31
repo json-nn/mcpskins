@@ -81,12 +81,8 @@ public class MCPSkins {
     }
 
     /**
-     * Registers the mcpskins/ folder scanner for SERVER_DATA only - fires on a real
-     * dedicated server and, in singleplayer, on the integrated server sharing this JVM.
-     * <p>
-     * Not registered for CLIENT_RESOURCES: assets are served over the network instead
-     * (see {@link ServerSkinAssetStore}/{@link org.minechestplate.mcpskins.client.render.ClientSkinAssetCache}),
-     * so clients never need a local copy of a skin pack's files.
+     * SERVER_DATA only - assets are streamed over the network by {@link ServerSkinAssetStore}
+     * instead, so clients never need a local copy of a skin pack.
      */
     private void onAddPackFinders(AddPackFindersEvent event) {
         if (event.getPackType() == PackType.SERVER_DATA) {
@@ -124,28 +120,21 @@ public class MCPSkins {
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // 1.3.0: ApplySkinPayload gained an explicit unequip flag (closing the "default:"
-        // ownership bypass) and the asset protocol gained a throttled reply. Both are
-        // breaking wire changes; the registrar isn't optional, so mismatched versions are
-        // refused at connect rather than misbehaving.
+        // 1.3.0: ApplySkinPayload's unequip flag and the throttled reply. Both break the
+        // wire format; the registrar isn't optional, so mismatched versions can't connect.
         PayloadRegistrar registrar = event.registrar("1.3.0");
 
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);
         registrar.playToClient(SyncUnlocksPayload.TYPE, SyncUnlocksPayload.CODEC, SyncUnlocksPayload::handleData);
 
-        // NeoForge runs payload handlers on the main thread by default - executesOn(NETWORK)
-        // is an explicit opt-in, not something you get automatically by skipping enqueueWork
-        // (see the corrected javadoc on RequestSkinAssetPayload). ServerSkinAssetStore.handleRequest
-        // does blocking file/zip I/O plus Deflate compression; left on the main thread, every
-        // first-time asset request stalls the ENTIRE server's tick loop - all players, all
-        // logic, TACZ's own fire/ammo validation included - for as long as that takes.
+        // Payload handlers run on the main thread by default; executesOn(NETWORK) is an
+        // explicit opt-in. handleRequest does blocking file/zip I/O plus Deflate, which would
+        // otherwise stall the whole tick loop on every first-time asset request.
         registrar = registrar.executesOn(HandlerThread.NETWORK);
         registrar.playToServer(RequestSkinAssetPayload.TYPE, RequestSkinAssetPayload.CODEC, RequestSkinAssetPayload::handleData);
 
-        // Chunk/missing handlers register bytes with the client's GL texture manager, which
-        // must run on the client main thread (see ClientSkinAssetCache's class javadoc) -
-        // switch back before registering them.
+        // Back to MAIN: these register bytes with the client's GL texture manager.
         registrar = registrar.executesOn(HandlerThread.MAIN);
         registrar.playToClient(SkinAssetChunkPayload.TYPE, SkinAssetChunkPayload.CODEC, SkinAssetChunkPayload::handleData);
         registrar.playToClient(SkinAssetMissingPayload.TYPE, SkinAssetMissingPayload.CODEC, SkinAssetMissingPayload::handleData);
