@@ -12,16 +12,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * Caches patched {@link GunDisplayInstance} objects so {@link GunDisplayInstancePatcher}
  * doesn't rebuild one via Unsafe on every {@code TimelessAPI.getGunDisplay} call.
  * <p>
- * Keyed by {@code (baseGunId, skinId)} and the override values, deliberately <b>not</b> by
- * {@code original}'s identity: TACZ hands back different objects for the same weapon, even
- * within a frame, because {@code setCurrentGunItem} re-enters {@code getGunDisplay} on every
- * context refresh. Comparing identity meant a rebuild per call - wasteful here, and the same
- * mistake that made {@link GunModelPatcher} hand out duplicate state machines.
- * <p>
- * Not keyed on {@link ClientSkinAssetCache#generation()} either. A late-arriving asset changes
- * what {@link SkinAssetResolver} returns, so the override comparison already catches it. Keying
- * on that global counter rebuilt every entry whenever any unrelated asset finished streaming,
- * which replayed the held weapon's draw animation - and its sound - once per skin browsed.
+ * Keyed by {@code (baseGunId, skinId)} plus the overrides - not by {@code original}'s identity,
+ * which TACZ changes within a frame, and not by {@link ClientSkinAssetCache#generation()}, which
+ * invalidated every entry on any unrelated asset and replayed the held weapon's draw sound.
+ * A late asset shows up as a changed override anyway.
  */
 public final class PatchedGunDisplayCache {
 
@@ -63,8 +57,7 @@ public final class PatchedGunDisplayCache {
                         "[MCPSkins] Built patched GunDisplayInstance for '{}' (build #{} this session).",
                         cacheKey, count);
             } else {
-                // An override changed - normally an asset arriving after the first resolution
-                // ran with a fallback. Logged in full so anything else stands out.
+                // An override changed - usually a late asset replacing a fallback.
                 MCPSkins.LOGGER.info(
                         "[MCPSkins] Rebuilt patched GunDisplayInstance for '{}' (rebuild #{} this session) - "
                                 + "texture {} -> {}, icon {} -> {}, hud {} -> {}, hudEmpty {} -> {}.",

@@ -24,29 +24,23 @@ import java.util.concurrent.ConcurrentHashMap;
  * Builds a full geometry replacement for a skin - main model plus TACZ's separate LOD
  * model/texture - when {@link SkinAssetResolver#resolveModel} finds a geo-model file.
  * <p>
- * Geometry is a parsed {@code BedrockGunModel}, not a field that can be swapped. So this
- * copies the base weapon's {@code GunDisplay} config with the model/LOD fields replaced and
- * re-runs {@code GunDisplayInstance}'s real constructor, letting TACZ do the parsing.
- * Everything but {@code getModelLocation()} is discovered reflectively in {@link #discover};
- * LOD is discovered separately and fails independently, leaving main-model skinning intact.
+ * Geometry is a parsed {@code BedrockGunModel}, not a swappable field, so this copies the base
+ * weapon's {@code GunDisplay} config with the model/LOD fields replaced and re-runs
+ * {@code GunDisplayInstance}'s constructor. Fields come from {@link #discover}; LOD fails
+ * independently, leaving main-model skinning intact. Bone names must match the base weapon's
+ * animations - {@link #createInstance} catches a mismatch and degrades to base geometry.
  * <p>
- * The skin's bone names must match what the base weapon's animations expect. A mismatch is
- * caught in {@link #createInstance} and degrades to base geometry.
- * <p>
- * Freshly built instances need {@link #primeAnimation}: each one owns an uninitialized
- * {@code LuaAnimationStateMachine}, and TACZ's auto-recovery skips first person - exactly
- * where held weapons render. Without priming the gun draws at its bind pose (the "detached
- * hands" look this fork shows after F3+T). Texture-only skins avoid this by shallow-copying
- * the base instance, which carries its already-primed state machine.
+ * New instances own an uninitialized state machine, so a held weapon needs
+ * {@link #primeAnimation} or it renders at its bind pose (the "detached hands" look TACZ also
+ * shows after F3+T). Texture-only skins shallow-copy the base instance and keep its primed one.
  */
 public final class GunModelPatcher {
 
     /**
      * Keyed on the overrides as requested, before {@link #getOrCreate}'s filtering.
-     * <p>
-     * {@code generation} only matters for negative entries ({@code result == null}): a model
-     * TACZ hasn't registered yet leaves the overrides identical, so nothing else would retry it.
-     * Positive entries ignore it, for the reason in {@link PatchedGunDisplayCache}.
+     * {@code generation} only retries negative entries ({@code result == null}) - a model TACZ
+     * hasn't registered yet leaves the overrides identical. Positive entries ignore it, see
+     * {@link PatchedGunDisplayCache}.
      */
     private record CacheEntry(ResourceLocation modelOverride,
                               ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride,
@@ -55,11 +49,9 @@ public final class GunModelPatcher {
 
     private static final Map<String, CacheEntry> CACHE = new ConcurrentHashMap<>();
 
-    // cacheKeys mid-build on this thread. TACZ's context refresh and primeAnimation's own
-    // tryInit both re-enter getGunDisplay for the same key while the first build is still
-    // running. Unguarded, that races a second instance with its own state machine - the
-    // "State machine is already initialized" crash on login, and probably the dropped shots
-    // right after equipping a geo skin.
+    // cacheKeys mid-build on this thread. TACZ's context refresh and primeAnimation's tryInit
+    // both re-enter getGunDisplay for a key still building; unguarded that races a second
+    // instance with its own state machine ("State machine is already initialized" on login).
     private static final ThreadLocal<Set<String>> BUILDING = ThreadLocal.withInitial(HashSet::new);
 
     // -1 = not checked, 0 = discovery failed, 1 = discovery succeeded. Checked once per session.
@@ -163,17 +155,15 @@ public final class GunModelPatcher {
     private static volatile boolean primeWarningLogged = false;
 
     /**
-     * Runs TACZ's own init/draw sequence to bring a new instance's state machine out of its
-     * bind pose (see class javadoc). No-op once initialized.
+     * Runs TACZ's init/draw sequence to get a new instance's state machine out of its bind pose
+     * (see class javadoc). No-op once initialized.
      * <p>
-     * {@code tryInit} re-enters {@code getGunDisplay} via {@code setCurrentGunItem}. That's
-     * intentional - it's the only public way to build the context TACZ's scripts expect - and
-     * safe because {@link #getOrCreate} caches the entry before calling this.
+     * {@code tryInit} re-enters {@code getGunDisplay} via {@code setCurrentGunItem} - the only
+     * public way to build the context TACZ's scripts expect, and safe because
+     * {@link #getOrCreate} caches the entry first.
      * <p>
-     * Held stack only. {@code tryInit} ends in {@code trigger("draw")} and the draw animation
-     * carries sound keyframes, so priming is audible - the Armory podium and refit carousel
-     * render synthetic stacks through {@code getGunDisplay}, and priming those fired a draw
-     * sound per skin browsed.
+     * Held stack only: {@code tryInit} ends in {@code trigger("draw")} and that animation carries
+     * sound keyframes, so priming the Armory's preview stacks fired a draw sound per skin browsed.
      */
     private static void primeAnimation(GunDisplayInstance created, ItemStack stack) {
         if (stack == null || stack.isEmpty()) return;
