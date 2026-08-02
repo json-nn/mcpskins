@@ -133,10 +133,25 @@ public enum MCPSkinsPackFinder implements RepositorySource {
                   assets/mcpskins/textures/skins/<gun_addon>/<gun>/<skin>.png   (and _icon.png, optional)
                   assets/<gun_addon>/geo_models/gun/<gun>_geo__skin_<skin>.json (optional geometry override)
                   data/mcpskins/skins/<gun>.json                               (skin registry entries)
+                  data/mcpskins/skin_rarities/<rarity>.json                    (optional custom rarities)
 
                 Geometry overrides go under the target gun addon's own namespace (e.g.
                 create_armorer), not mcpskins' - that's the namespace TACZ looks up model
                 overrides in.
+
+                Rarities: common/uncommon/rare/epic/legendary exist by default. A file named
+                after one of them replaces it; any other name adds a tier. Fields:
+
+                  name          display name, shown as-is (no lang file needed)
+                  color         accent color, e.g. "#FF4FD8"
+                  order         ladder position; the built-ins sit at 0/100/200/300/400
+                  fusable       optional, default true; false excludes it from fusing entirely
+                  fuse_cost     optional; overrides the server config's global cost
+                  fuses_into    optional; a rarity id, or [{"rarity": "x", "weight": 85}, ...]
+                                Defaults to the next fusable tier by order.
+
+                A skin entry may also set "weight" (default 1) for its relative chance of
+                being rolled when a fuse lands on its tier - higher is more common.
 
                 Server-side only: this whole folder - assets/ AND data/ - only needs to
                 exist on the SERVER (or, in singleplayer, wherever the world is hosted).

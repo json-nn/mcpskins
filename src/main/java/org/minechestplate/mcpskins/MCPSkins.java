@@ -31,6 +31,7 @@ import org.minechestplate.mcpskins.network.asset.SkinAssetChunkPayload;
 import org.minechestplate.mcpskins.network.asset.SkinAssetMissingPayload;
 import org.minechestplate.mcpskins.network.asset.SkinAssetThrottledPayload;
 import org.minechestplate.mcpskins.pack.MCPSkinsPackFinder;
+import org.minechestplate.mcpskins.skin.RarityManager;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinComponents;
 import org.minechestplate.mcpskins.skin.SkinManager;
@@ -76,6 +77,9 @@ public class MCPSkins {
     }
 
     private void onAddReloadListeners(AddReloadListenerEvent event) {
+        // No ordering guarantee against SkinManager - skins hold rarity ids and resolve on
+        // read, so either load order is fine.
+        event.addListener(RarityManager.INSTANCE);
         event.addListener(SkinManager.INSTANCE);
         event.addListener(ServerSkinAssetStore.INSTANCE);
     }
@@ -120,9 +124,9 @@ public class MCPSkins {
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // 1.3.0: ApplySkinPayload's unequip flag and the throttled reply. Both break the
-        // wire format; the registrar isn't optional, so mismatched versions can't connect.
-        PayloadRegistrar registrar = event.registrar("1.3.0");
+        // 1.4.0: SyncRegistryPayload now carries the rarity table. Breaks the wire format;
+        // the registrar isn't optional, so mismatched versions can't connect.
+        PayloadRegistrar registrar = event.registrar("1.4.0");
 
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);

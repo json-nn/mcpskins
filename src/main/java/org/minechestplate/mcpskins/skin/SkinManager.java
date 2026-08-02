@@ -12,6 +12,7 @@ import org.minechestplate.mcpskins.MCPSkins;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -68,7 +69,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
 
                 skins.add(new SkinDataModels.SkinEntry(
                         "default:" + baseGun, "Default", 0xFFFFFF,
-                        SkinDataModels.Rarity.COMMON, "", "", false));
+                        SkinDataModels.DEFAULT_RARITY_ID, "", "", false, 1));
 
                 json.getAsJsonArray("skins").forEach(skinElement -> {
                     JsonObject skinObj = skinElement.getAsJsonObject();
@@ -77,14 +78,15 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                     int color = Integer.decode(skinObj.get("label_color").getAsString());
 
                     // Optional fields - missing in older datapacks is expected, not an error
-                    SkinDataModels.Rarity rarity = skinObj.has("rarity")
-                            ? SkinDataModels.Rarity.byName(skinObj.get("rarity").getAsString())
-                            : SkinDataModels.Rarity.COMMON;
+                    String rarityId = skinObj.has("rarity")
+                            ? skinObj.get("rarity").getAsString().trim().toLowerCase(Locale.ROOT)
+                            : SkinDataModels.DEFAULT_RARITY_ID;
                     String collection = skinObj.has("collection") ? skinObj.get("collection").getAsString() : "";
                     String description = skinObj.has("description") ? skinObj.get("description").getAsString() : "";
                     boolean isNew = skinObj.has("is_new") && skinObj.get("is_new").getAsBoolean();
+                    int weight = skinObj.has("weight") ? Math.max(1, skinObj.get("weight").getAsInt()) : 1;
 
-                    skins.add(new SkinDataModels.SkinEntry(id, name, color, rarity, collection, description, isNew));
+                    skins.add(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection, description, isNew, weight));
                 });
 
                 registry.put(baseGun, new SkinDataModels.WeaponSkins(baseGun, skins));
@@ -146,13 +148,15 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
     }
 
     /**
-     * All real (non-"default:") skins of a given rarity, across every weapon.
+     * All real (non-"default:") skins of a given rarity, across every weapon. Matched on the
+     * raw id, so a skin pointing at an undefined rarity stays in its own group rather than
+     * silently joining the fallback tier's fuse pool.
      */
-    public List<SkinDataModels.SkinLookupResult> getSkinsByRarity(SkinDataModels.Rarity rarity) {
+    public List<SkinDataModels.SkinLookupResult> getSkinsByRarity(String rarityId) {
         List<SkinDataModels.SkinLookupResult> list = new ArrayList<>();
         for (SkinDataModels.SkinLookupResult result : snapshot.skinsById().values()) {
             if (SkinAttachment.isDefaultEntry(result.skin().id())) continue;
-            if (result.skin().rarity() == rarity) {
+            if (result.skin().rarityId().equals(rarityId)) {
                 list.add(result);
             }
         }

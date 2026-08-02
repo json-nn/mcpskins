@@ -22,6 +22,7 @@ import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 import org.minechestplate.mcpskins.client.render.GunModelPatcher;
 import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
 import org.minechestplate.mcpskins.network.ApplySkinPayload;
+import org.minechestplate.mcpskins.skin.RarityManager;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
@@ -469,8 +470,7 @@ public class SkinArmoryScreen extends Screen {
             guiGraphics.drawString(this.font, nameLine, 10, layout.bottomY() + 5, 0xFFFFFFFF, false);
 
             // Rarity's own accent color, not static gray, so it reads visually distinct
-            MutableComponent detail = Component.translatable("gui.mcpskins.armory.rarity_" + entry.rarity().name().toLowerCase(Locale.ROOT))
-                    .withStyle(s -> s.withColor(entry.rarity().accentColor));
+            MutableComponent detail = RarityManager.INSTANCE.get(entry.rarityId()).label();
             if (entry.hasCollection()) {
                 detail = detail.copy().append(Component.literal("  \u2022  " + entry.collection()).withStyle(ChatFormatting.GRAY));
             }
@@ -540,8 +540,7 @@ public class SkinArmoryScreen extends Screen {
         lines.add(Component.literal(entry.name()).withStyle(s -> s.withColor(entry.labelColor())));
         lines.add(Component.literal(weaponDisplayName(lookup.weapon().baseGun())).withStyle(ChatFormatting.GRAY));
         // Same rarity-accent-color fix as renderBottomBar()
-        lines.add(Component.translatable("gui.mcpskins.armory.rarity_" + entry.rarity().name().toLowerCase(Locale.ROOT))
-                .withStyle(s -> s.withColor(entry.rarity().accentColor)));
+        lines.add(RarityManager.INSTANCE.get(entry.rarityId()).label());
         if (!unlocked) {
             lines.add(Component.translatable("gui.mcpskins.armory.status_locked").withStyle(ChatFormatting.RED));
         }
@@ -804,7 +803,8 @@ public class SkinArmoryScreen extends Screen {
         Comparator<SkinDataModels.SkinLookupResult> sortModeComparator = switch (sortMode) {
             case ALPHABETICAL -> byName;
             case NEWEST -> Comparator.<SkinDataModels.SkinLookupResult>comparingInt(r -> r.skin().isNew() ? 0 : 1).thenComparing(byName);
-            case RARITY -> Comparator.<SkinDataModels.SkinLookupResult>comparingInt(r -> r.skin().rarity().ordinal()).reversed().thenComparing(byName);
+            case RARITY -> Comparator.<SkinDataModels.SkinLookupResult>comparingInt(
+                    r -> RarityManager.INSTANCE.get(r.skin().rarityId()).order()).reversed().thenComparing(byName);
         };
         // The weapon's default (stock, no custom model) skin always sorts first in the
         // right panel, regardless of sort mode - a primary sort key that dominates the rest

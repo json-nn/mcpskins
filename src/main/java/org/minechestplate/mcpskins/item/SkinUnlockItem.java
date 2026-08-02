@@ -10,6 +10,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
 import net.minecraft.world.entity.player.Inventory;
@@ -22,14 +23,16 @@ import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
+import org.minechestplate.mcpskins.skin.RarityManager;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
+import java.util.function.ToIntFunction;
 
 /**
  * Consumable item that unlocks one specific skin when used. The target skin ID is
@@ -84,14 +87,19 @@ public class SkinUnlockItem extends Item {
         // No HoverEvent on the preview stack here - Minecraft doesn't render nested tooltips
         tooltipComponents.add(line);
 
-        SkinDataModels.Rarity[] tiers = SkinDataModels.Rarity.values();
-        SkinDataModels.Rarity rarity = lookup.skin().rarity();
-        if (rarity.ordinal() < tiers.length - 1) {
-            Component nextRarity = rarityLabel(tiers[rarity.ordinal() + 1]);
-            tooltipComponents.add(Component.translatable("tooltip.mcpskins.fuse_hint", MCPSkinsServerConfig.fuseCost(), rarityLabel(rarity), nextRarity)
-                    .withStyle(ChatFormatting.DARK_GRAY));
-        } else {
+        SkinDataModels.Rarity rarity = RarityManager.INSTANCE.get(lookup.skin().rarityId());
+        List<SkinDataModels.FuseTarget> targets = resolveTargets(rarity);
+        if (!rarity.fusable()) {
+            tooltipComponents.add(Component.translatable("tooltip.mcpskins.fuse_unfusable_hint").withStyle(ChatFormatting.DARK_GRAY));
+        } else if (targets.isEmpty()) {
             tooltipComponents.add(Component.translatable("tooltip.mcpskins.fuse_max_rarity_hint").withStyle(ChatFormatting.DARK_GRAY));
+        } else {
+            // Heaviest target, so a weighted spread advertises its most likely outcome.
+            SkinDataModels.Rarity likeliest = RarityManager.INSTANCE.get(
+                    targets.stream().max(Comparator.comparingInt(SkinDataModels.FuseTarget::weight))
+                            .orElse(targets.get(0)).rarityId());
+            tooltipComponents.add(Component.translatable("tooltip.mcpskins.fuse_hint", fuseCostOf(rarity), rarity.label(), likeliest.label())
+                    .withStyle(ChatFormatting.DARK_GRAY));
         }
 
         super.appendHoverText(stack, context, tooltipComponents, tooltipFlag);
@@ -197,33 +205,45 @@ public class SkinUnlockItem extends Item {
             return InteractionResultHolder.pass(stack);
         }
 
-        int fuseCost = MCPSkinsServerConfig.fuseCost();
-        SkinDataModels.Rarity[] tiers = SkinDataModels.Rarity.values();
-        SkinDataModels.Rarity rarity = heldLookup.skin().rarity();
-        if (rarity.ordinal() == tiers.length - 1) {
+        SkinDataModels.Rarity rarity = RarityManager.INSTANCE.get(heldLookup.skin().rarityId());
+        if (!rarity.fusable()) {
+            if (!level.isClientSide()) {
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_unfusable", rarity.label()).withStyle(ChatFormatting.RED));
+            }
+            return InteractionResultHolder.fail(stack);
+        }
+
+        List<SkinDataModels.FuseTarget> targets = resolveTargets(rarity);
+        if (targets.isEmpty()) {
             if (!level.isClientSide()) {
                 player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_max_rarity").withStyle(ChatFormatting.RED));
             }
             return InteractionResultHolder.fail(stack);
         }
-        SkinDataModels.Rarity targetRarity = tiers[rarity.ordinal() + 1];
 
-        List<SkinDataModels.SkinLookupResult> pool = SkinManager.INSTANCE.getSkinsByRarity(targetRarity);
-        if (pool.isEmpty()) {
+        // Targets with nothing to hand out are dropped before the weighted pick, so a spread
+        // can't roll into an empty tier and fail on luck alone.
+        List<SkinDataModels.FuseTarget> viable = targets.stream()
+                .filter(target -> !SkinManager.INSTANCE.getSkinsByRarity(target.rarityId()).isEmpty())
+                .toList();
+        if (viable.isEmpty()) {
             if (!level.isClientSide()) {
-                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_no_higher_rarity", rarityLabel(targetRarity)).withStyle(ChatFormatting.YELLOW));
+                SkinDataModels.Rarity named = RarityManager.INSTANCE.get(targets.get(0).rarityId());
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_no_higher_rarity", named.label()).withStyle(ChatFormatting.YELLOW));
             }
             return InteractionResultHolder.fail(stack);
         }
 
+        int fuseCost = fuseCostOf(rarity);
+
         // Distinct inventory slots holding a matching-rarity unlock item - NOT the same as
         // the item count, since several unlock items of the same skin stack into one slot
         // (see countItems). Only used for consumeSlots' iteration order.
-        List<Integer> matchingSlots = findMatchingSlots(player, rarity);
+        List<Integer> matchingSlots = findMatchingSlots(player, rarity.id());
         int availableCount = countItems(player, matchingSlots);
         if (consumesItems && availableCount < fuseCost) {
             if (!level.isClientSide()) {
-                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_not_enough", fuseCost, rarityLabel(rarity), availableCount).withStyle(ChatFormatting.RED));
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_not_enough", fuseCost, rarity.label(), availableCount).withStyle(ChatFormatting.RED));
             }
             return InteractionResultHolder.fail(stack);
         }
@@ -233,13 +253,16 @@ public class SkinUnlockItem extends Item {
             return InteractionResultHolder.success(stack);
         }
 
+        String targetRarityId = weightedPick(viable, SkinDataModels.FuseTarget::weight, player.getRandom()).rarityId();
+        List<SkinDataModels.SkinLookupResult> pool = SkinManager.INSTANCE.getSkinsByRarity(targetRarityId);
+
         // Prefer a skin the player doesn't already own; fall back to the full pool once
         // every skin of the target rarity is unlocked
         List<SkinDataModels.SkinLookupResult> unowned = pool.stream()
                 .filter(entry -> !SkinAttachment.hasSkin(player, entry.skin().id()))
                 .toList();
         List<SkinDataModels.SkinLookupResult> rollPool = unowned.isEmpty() ? pool : unowned;
-        SkinDataModels.SkinLookupResult rolled = rollPool.get(player.getRandom().nextInt(rollPool.size()));
+        SkinDataModels.SkinLookupResult rolled = weightedPick(rollPool, entry -> entry.skin().weight(), player.getRandom());
 
         if (consumesItems) {
             consumeSlots(player, matchingSlots, fuseCost);
@@ -257,7 +280,7 @@ public class SkinUnlockItem extends Item {
      * more than one, so use {@link #countItems} for the actual quantity, not
      * {@code List#size()} on the result.
      */
-    private List<Integer> findMatchingSlots(Player player, SkinDataModels.Rarity rarity) {
+    private List<Integer> findMatchingSlots(Player player, String rarityId) {
         List<Integer> slots = new ArrayList<>();
         Inventory inventory = player.getInventory();
         for (int i = 0; i < inventory.getContainerSize(); i++) {
@@ -266,11 +289,44 @@ public class SkinUnlockItem extends Item {
             String slotSkinId = TACZSkinHelper.readCustomString(invStack, "SkinToUnlock");
             if (slotSkinId == null) continue;
             SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(slotSkinId);
-            if (lookup != null && lookup.skin().rarity() == rarity) {
+            if (lookup != null && lookup.skin().rarityId().equals(rarityId)) {
                 slots.add(i);
             }
         }
         return slots;
+    }
+
+    /**
+     * This rarity's declared fuse targets, or the next fusable tier by order when it declares
+     * none. Empty means the top of the ladder.
+     */
+    private static List<SkinDataModels.FuseTarget> resolveTargets(SkinDataModels.Rarity rarity) {
+        if (!rarity.fuseTargets().isEmpty()) {
+            // A target that has since been made unfusable stops being a valid outcome.
+            return rarity.fuseTargets().stream()
+                    .filter(target -> RarityManager.INSTANCE.get(target.rarityId()).fusable())
+                    .toList();
+        }
+        SkinDataModels.Rarity next = RarityManager.INSTANCE.nextByOrder(rarity);
+        return next == null ? List.of() : List.of(new SkinDataModels.FuseTarget(next.id(), 1));
+    }
+
+    private static int fuseCostOf(SkinDataModels.Rarity rarity) {
+        return rarity.fuseCost() != null ? rarity.fuseCost() : MCPSkinsServerConfig.fuseCost();
+    }
+
+    /** Picks one entry with probability proportional to its weight. Weights are clamped to >= 1. */
+    private static <T> T weightedPick(List<T> items, ToIntFunction<T> weightOf, RandomSource random) {
+        int total = 0;
+        for (T item : items) {
+            total += Math.max(1, weightOf.applyAsInt(item));
+        }
+        int roll = random.nextInt(total);
+        for (T item : items) {
+            roll -= Math.max(1, weightOf.applyAsInt(item));
+            if (roll < 0) return item;
+        }
+        return items.get(items.size() - 1); // unreachable while total > 0
     }
 
     /** Total item count across every slot in {@code slots} (several may stack in one slot). */
@@ -330,14 +386,9 @@ public class SkinUnlockItem extends Item {
                     .withColor(ChatFormatting.YELLOW)
                     .withUnderlined(true)
                     .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(previewGun))));
-            return Component.translatable("message.mcpskins.fuse_success_for", rarityLabel(fromRarity), skinName, gunName).withStyle(ChatFormatting.GREEN);
+            return Component.translatable("message.mcpskins.fuse_success_for", fromRarity.label(), skinName, gunName).withStyle(ChatFormatting.GREEN);
         }
-        return Component.translatable("message.mcpskins.fuse_success", rarityLabel(fromRarity), skinName).withStyle(ChatFormatting.GREEN);
+        return Component.translatable("message.mcpskins.fuse_success", fromRarity.label(), skinName).withStyle(ChatFormatting.GREEN);
     }
 
-    /** Same "gui.mcpskins.armory.rarity_*" keys the Armory screen already uses, so rarity names stay consistent everywhere. */
-    private static Component rarityLabel(SkinDataModels.Rarity rarity) {
-        return Component.translatable("gui.mcpskins.armory.rarity_" + rarity.name().toLowerCase(Locale.ROOT))
-                .withStyle(style -> style.withColor(rarity.accentColor));
-    }
 }
