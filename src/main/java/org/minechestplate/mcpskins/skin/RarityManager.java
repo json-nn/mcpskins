@@ -32,8 +32,6 @@ import java.util.concurrent.ConcurrentHashMap;
  * so resolution has to happen on read.
  */
 public class RarityManager extends SimpleJsonResourceReloadListener {
-    public static final RarityManager INSTANCE = new RarityManager();
-
     private static final List<SkinDataModels.Rarity> BUILT_INS = List.of(
             builtIn("common", "Common", 0xB0B0B0, 0),
             builtIn("uncommon", "Uncommon", 0x55FF55, 100),
@@ -54,6 +52,13 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
     private volatile Snapshot snapshot = build(defaults());
 
     private static final Set<String> WARNED_UNKNOWN = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Must stay below every static field above it. Constructing it seeds {@link #snapshot} from
+     * {@link #BUILT_INS}, and static initializers run in textual order - declared any higher and
+     * the constructor reads a null BUILT_INS.
+     */
+    public static final RarityManager INSTANCE = new RarityManager();
 
     public RarityManager() {
         super(new GsonBuilder().create(), "skin_rarities");
