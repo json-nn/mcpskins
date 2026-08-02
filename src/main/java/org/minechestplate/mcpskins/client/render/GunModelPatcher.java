@@ -41,7 +41,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class GunModelPatcher {
 
-    /** Keyed on the overrides as requested, before {@link #getOrCreate}'s filtering. */
+    /**
+     * Keyed on the overrides as requested, before {@link #getOrCreate}'s filtering.
+     * <p>
+     * {@code generation} only matters for negative entries ({@code result == null}): a model
+     * TACZ hasn't registered yet leaves the overrides identical, so nothing else would retry it.
+     * Positive entries ignore it, for the reason in {@link PatchedGunDisplayCache}.
+     */
     private record CacheEntry(ResourceLocation modelOverride,
                               ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride,
                               int generation, GunDisplayInstance result) {
@@ -106,10 +112,11 @@ public final class GunModelPatcher {
         int generation = ClientSkinAssetCache.generation();
         CacheEntry existing = CACHE.get(cacheKey);
         if (existing != null
-                && existing.generation() == generation
                 && Objects.equals(existing.modelOverride(), requestedModel)
                 && Objects.equals(existing.lodModelOverride(), requestedLodModel)
-                && Objects.equals(existing.lodTextureOverride(), lodTextureOverride)) {
+                && Objects.equals(existing.lodTextureOverride(), lodTextureOverride)
+                // Negative entries retry as assets land; positive ones stand until an override changes.
+                && (existing.result() != null || existing.generation() == generation)) {
             return existing.result();
         }
 
@@ -162,10 +169,24 @@ public final class GunModelPatcher {
      * {@code tryInit} re-enters {@code getGunDisplay} via {@code setCurrentGunItem}. That's
      * intentional - it's the only public way to build the context TACZ's scripts expect - and
      * safe because {@link #getOrCreate} caches the entry before calling this.
+     * <p>
+     * Held stack only. {@code tryInit} ends in {@code trigger("draw")} and the draw animation
+     * carries sound keyframes, so priming is audible - the Armory podium and refit carousel
+     * render synthetic stacks through {@code getGunDisplay}, and priming those fired a draw
+     * sound per skin browsed.
      */
     private static void primeAnimation(GunDisplayInstance created, ItemStack stack) {
         if (stack == null || stack.isEmpty()) return;
         if (Boolean.TRUE.equals(PRIMING.get())) return;
+
+        GunItemRendererWrapper renderer = GunItemRendererWrapper.INSTANCE;
+        Minecraft mc = Minecraft.getInstance();
+        Player player = mc.player;
+        if (renderer == null || player == null) return;
+
+        // Identity, not equality - a preview stack can carry the same gun and skin. Missing a
+        // real held stack is harmless; FirstPersonAnimationFix re-inits it next frame.
+        if (stack != player.getMainHandItem()) return;
 
         LuaAnimationStateMachine<?> stateMachine;
         try {
@@ -174,11 +195,6 @@ public final class GunModelPatcher {
             return; // already logged/handled by the eager load in createInstance
         }
         if (stateMachine == null || stateMachine.isInitialized()) return;
-
-        GunItemRendererWrapper renderer = GunItemRendererWrapper.INSTANCE;
-        Minecraft mc = Minecraft.getInstance();
-        Player player = mc.player;
-        if (renderer == null || player == null) return;
 
         PRIMING.set(true);
         try {
