@@ -22,6 +22,7 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
+import org.minechestplate.mcpskins.network.SkinFusionPayload;
 import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
 import org.minechestplate.mcpskins.skin.RarityManager;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
@@ -249,7 +250,8 @@ public class SkinUnlockItem extends Item {
         }
 
         if (level.isClientSide()) {
-            level.playSound(player, player.blockPosition(), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.0f);
+            // Feedback rides on SkinFusionPayload instead, so it only fires for a fuse the
+            // server actually accepted rather than every optimistic client-side pass.
             return InteractionResultHolder.success(stack);
         }
 
@@ -269,6 +271,8 @@ public class SkinUnlockItem extends Item {
         }
         grantUnlockItem(player, hand, stack, rolled.skin().id());
         player.sendSystemMessage(buildFuseChatMessage(rarity, rolled));
+        PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
+                SkinFusionPayload.create(player, hand, fuseCost, heldSkinId, rolled.skin().id()));
 
         // Re-fetch instead of returning `stack` - grantUnlockItem may have replaced the
         // hand's contents outright (see its javadoc).

@@ -23,6 +23,7 @@ import org.minechestplate.mcpskins.config.MCPSkinsClientConfig;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.item.ModItems;
 import org.minechestplate.mcpskins.network.ApplySkinPayload;
+import org.minechestplate.mcpskins.network.SkinFusionPayload;
 import org.minechestplate.mcpskins.network.SyncRegistryPayload;
 import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
 import org.minechestplate.mcpskins.network.asset.RequestSkinAssetPayload;
@@ -124,13 +125,14 @@ public class MCPSkins {
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // 1.4.0: SyncRegistryPayload now carries the rarity table. Breaks the wire format;
-        // the registrar isn't optional, so mismatched versions can't connect.
-        PayloadRegistrar registrar = event.registrar("1.4.0");
+        // 1.5.0: adds SkinFusionPayload. The registrar isn't optional, so mismatched versions
+        // can't connect and an older client can never receive a payload type it doesn't know.
+        PayloadRegistrar registrar = event.registrar("1.5.0");
 
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);
         registrar.playToClient(SyncUnlocksPayload.TYPE, SyncUnlocksPayload.CODEC, SyncUnlocksPayload::handleData);
+        registrar.playToClient(SkinFusionPayload.TYPE, SkinFusionPayload.CODEC, SkinFusionPayload::handleData);
 
         // Payload handlers run on the main thread by default; executesOn(NETWORK) is an
         // explicit opt-in. handleRequest does blocking file/zip I/O plus Deflate, which would

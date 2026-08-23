@@ -23,6 +23,12 @@ public class MCPSkinsClientConfig {
     public static final ModConfigSpec.IntValue CAROUSEL_SLOT_SIZE;
     public static final ModConfigSpec.IntValue CAROUSEL_SLOT_SPACING;
 
+    public static final ModConfigSpec.BooleanValue FUSION_ANIM_ENABLED;
+    public static final ModConfigSpec.IntValue FUSION_ANIM_DURATION_MS;
+    public static final ModConfigSpec.BooleanValue FUSION_ANIM_SHOW_OTHERS;
+    public static final ModConfigSpec.BooleanValue FUSION_ANIM_PARTICLES;
+    public static final ModConfigSpec.BooleanValue FUSION_ANIM_SOUND;
+
     static {
         ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
 
@@ -68,6 +74,24 @@ public class MCPSkinsClientConfig {
         CAROUSEL_SLOT_SPACING = builder
                 .comment("Horizontal spacing in pixels between carousel slots.")
                 .defineInRange("slotSpacing", 60, 30, 120);
+        builder.pop();
+
+        builder.push("fusion_animation");
+        FUSION_ANIM_ENABLED = builder
+                .comment("Play the world animation when skin unlock items are fused.")
+                .define("enabled", true);
+        FUSION_ANIM_DURATION_MS = builder
+                .comment("Total length of the fusion animation, in milliseconds.")
+                .defineInRange("durationMs", 1800, 600, 5000);
+        FUSION_ANIM_SHOW_OTHERS = builder
+                .comment("Also play the animation for fusions performed by other players.")
+                .define("showOtherPlayers", true);
+        FUSION_ANIM_PARTICLES = builder
+                .comment("Emit particles during the fusion animation.")
+                .define("particles", true);
+        FUSION_ANIM_SOUND = builder
+                .comment("Play the fusion sound cues.")
+                .define("sound", true);
         builder.pop();
 
         SPEC = builder.build();
@@ -121,6 +145,26 @@ public class MCPSkinsClientConfig {
 
     public static int carouselSlotSpacing() {
         return safe(CAROUSEL_SLOT_SPACING, 60);
+    }
+
+    public static boolean fusionAnimEnabled() {
+        return safe(FUSION_ANIM_ENABLED, true);
+    }
+
+    public static int fusionAnimDurationMs() {
+        return safe(FUSION_ANIM_DURATION_MS, 1800);
+    }
+
+    public static boolean fusionAnimShowOthers() {
+        return safe(FUSION_ANIM_SHOW_OTHERS, true);
+    }
+
+    public static boolean fusionAnimParticles() {
+        return safe(FUSION_ANIM_PARTICLES, true);
+    }
+
+    public static boolean fusionAnimSound() {
+        return safe(FUSION_ANIM_SOUND, true);
     }
 
     /** No-op once loaded fails silently instead of crashing while the spec isn't ready. */

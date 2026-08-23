@@ -69,6 +69,12 @@ public class MCPSkinsConfigScreen extends Screen {
         y = addStepperRow(y, centerX, "gui.mcpskins.config.carousel_slot_size", MCPSkinsClientConfig.CAROUSEL_SLOT_SIZE, 44, 4, 24, 80);
         y = addStepperRow(y, centerX, "gui.mcpskins.config.carousel_slot_spacing", MCPSkinsClientConfig.CAROUSEL_SLOT_SPACING, 60, 4, 30, 120);
 
+        y = addToggleRow(y, centerX, "gui.mcpskins.config.fusion_anim_enabled", MCPSkinsClientConfig.FUSION_ANIM_ENABLED, true);
+        y = addStepperRow(y, centerX, "gui.mcpskins.config.fusion_anim_duration", MCPSkinsClientConfig.FUSION_ANIM_DURATION_MS, 1800, 100, 600, 5000);
+        y = addToggleRow(y, centerX, "gui.mcpskins.config.fusion_anim_show_others", MCPSkinsClientConfig.FUSION_ANIM_SHOW_OTHERS, true);
+        y = addToggleRow(y, centerX, "gui.mcpskins.config.fusion_anim_particles", MCPSkinsClientConfig.FUSION_ANIM_PARTICLES, true);
+        y = addToggleRow(y, centerX, "gui.mcpskins.config.fusion_anim_sound", MCPSkinsClientConfig.FUSION_ANIM_SOUND, true);
+
         contentHeight = y - CONTENT_TOP;
         viewportTop = CONTENT_TOP;
         viewportBottom = Math.max(viewportTop + ROW_HEIGHT, this.height - RESERVED_BOTTOM);

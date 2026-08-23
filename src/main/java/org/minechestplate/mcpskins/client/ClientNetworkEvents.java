@@ -9,6 +9,7 @@ import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 import org.minechestplate.mcpskins.client.render.GunModelPatcher;
 import org.minechestplate.mcpskins.client.render.PatchedGunDisplayCache;
 import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
+import org.minechestplate.mcpskins.client.render.SkinFusionAnimator;
 import org.minechestplate.mcpskins.client.render.TaczGeoModelInjector;
 
 /**
@@ -33,6 +34,7 @@ public final class ClientNetworkEvents {
         GunModelPatcher.clear();
         TaczGeoModelInjector.reset();
         ClientSkinAssetCache.clearAll();
+        SkinFusionAnimator.reset();
         TACZRefitSkinOverlay.resetSessionState();
         MCPSkins.LOGGER.info("[MCPSkins] Disconnected - skin caches and GPU textures released.");
     }
