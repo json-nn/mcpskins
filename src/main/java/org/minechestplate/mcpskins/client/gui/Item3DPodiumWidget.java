@@ -17,14 +17,9 @@ import org.minechestplate.mcpskins.MCPSkins;
 import java.lang.reflect.Field;
 
 /**
- * A mouse-controlled 3D preview of an {@link ItemStack} inside a GUI screen (used by
- * {@code SkinArmoryScreen}): drag to rotate, scroll to zoom, and a fault-tolerant
- * fallback to a flat icon if rendering ever throws.
- * <p>
- * Uses a dark backdrop instead of Minecraft's blur, since that only triggers via
- * {@code Screen#renderBackground(...)}, which {@code SkinArmoryScreen} never calls.
- * Renders with {@link #RENDER_CONTEXT} - {@code FIXED} is the only
- * {@code ItemDisplayContext} that doesn't clip or flatten long weapon models on this podium.
+ * Mouse-controlled 3D preview of an {@link ItemStack}: drag to rotate, scroll to zoom, with a
+ * fallback to a flat icon if rendering throws. {@code FIXED} is the only
+ * {@link ItemDisplayContext} that neither clips nor flattens long weapon models here.
  */
 public final class Item3DPodiumWidget {
 
@@ -43,7 +38,7 @@ public final class Item3DPodiumWidget {
     private ItemStack stack = ItemStack.EMPTY;
     private int x, y, width, height;
 
-    /** False when the caller already frames the podium, so it stops drawing its own. */
+    /** False when the caller frames the podium itself. */
     private boolean chrome = true;
 
     private float yaw = 25f;
@@ -141,12 +136,10 @@ public final class Item3DPodiumWidget {
 
         guiGraphics.enableScissor(x, y, x + width, y + height);
         try {
-            // The panel and stage behind this sit at GUI z=0, which is the middle of the
-            // depth buffer. A long gun scaled up and turned edge-on reaches past z=0 and its
-            // far end fails the depth test, so it vanishes into the background. Clearing
-            // depth here removes the thing that was occluding it. glClear honours the scissor
-            // box, so only the podium is touched, and the model keeps the full depth range
-            // for its own self-occlusion. Tooltips draw later and nearer, so they still win.
+            // The panel behind sits at GUI z=0, mid depth buffer, so a long gun scaled up and
+            // turned edge-on reaches past it and its far end fails the depth test. glClear
+            // honours the scissor, so this clears only the podium and the model keeps the full
+            // range for self-occlusion. Tooltips draw later and nearer, so they still win.
             RenderSystem.depthMask(true);
             GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
 
@@ -219,16 +212,9 @@ public final class Item3DPodiumWidget {
     }
 
     /**
-     * Closes the window {@link RenderDistance#markGuiRenderTimestamp()} opens.
-     * <p>
-     * TACZ picks gun model LOD from a 100ms "a GUI is rendering" flag, and the podium has to
-     * set it to get the full-detail model. Left set it also covers every other gun on screen -
-     * the rail icons, the skin tiles, the weapon held behind the panel - all of which draw at
-     * 16px and gain nothing from the extra geometry. Closing it right after the preview keeps
-     * the detail where it can actually be seen.
-     * <p>
-     * The field is private, so this is reflective and optional. If TACZ moves it the hint just
-     * stays open, which is exactly the behaviour this replaces.
+     * Closes the 100ms window {@link RenderDistance#markGuiRenderTimestamp()} opens. Left set,
+     * it also forces full geometry for every 16px gun icon on screen. Reflective and optional:
+     * if TACZ moves the field the hint just stays open, as it did before.
      */
     private static final Field GUI_RENDER_TIMESTAMP = resolveTimestampField();
 
@@ -265,11 +251,7 @@ public final class Item3DPodiumWidget {
         guiGraphics.fillGradient(x, y, x1, y1, 0xE0141414, 0xF2060606);
     }
 
-    /**
-     * Border and rarity accent stripe, drawn last so it stays above long weapon models.
-     * Depth test is off and flushed explicitly, otherwise these buffered vertices would
-     * reach the GPU after the depth test is back on and lose to {@link #renderItem3D}.
-     */
+    /** Drawn last, depth test off, so it stays above long weapon models. */
     private void renderFrame(GuiGraphics guiGraphics, int accentColor) {
         int x1 = x + width;
         int y1 = y + height;

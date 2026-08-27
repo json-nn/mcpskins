@@ -36,13 +36,8 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Full-screen standalone skin catalog and inspector, independent of what is currently in the
- * player's hand (unlike {@link org.minechestplate.mcpskins.client.TACZRefitSkinOverlay}).
- * Opened via hotkey ({@link org.minechestplate.mcpskins.client.ArmoryKeybinds}) or the
- * {@code /mcpskins armory} command.
- * <p>
- * Three columns under one header: browse on the left, look in the middle, decide on the
- * right.
+ * Standalone skin catalog and inspector, independent of what is in the player's hand. Opened
+ * by hotkey or {@code /mcpskins armory}.
  * <pre>
  * ┌ search ──────────────────┐ [All][Owned][Locked][Custom] [Sort]
  * ├───────────┬──────────────────────────┬──────────────────┐
@@ -52,17 +47,12 @@ import java.util.Optional;
  * │   skin    │                          │  [ Equip ]       │
  * └───────────┴──────────────────────────┴──────────────────┘
  * </pre>
- * The panel is centred and capped, and picks one of three tiers from its own width, so a
- * high GUI scale drops a tier rather than crushing the columns. Every surface comes from
- * {@link ArmoryTheme}'s sprites, so a resource pack can reskin the screen without touching
- * this file.
+ * The panel is centred and capped, picking one of three tiers from its own width so a high
+ * GUI scale drops a tier rather than crushing the columns.
  */
 public class SkinArmoryScreen extends Screen {
 
-    /**
-     * Column widths and type sizes per panel width. Anything that has to shrink lives here
-     * rather than being recomputed from ratios at each use site.
-     */
+    /** Column widths and type sizes per panel width. */
     private enum Tier {
         WIDE(132, 128, 2.0f, 17, true),
         MID(112, 112, 1.5f, 17, false),
@@ -109,12 +99,12 @@ public class SkinArmoryScreen extends Screen {
     private static final int INFO_ROW_H = 9;
     private static final int EQUIP_H = 17;
     private static final int ICON = 8;
-    /** Stage sprite's visible frame: 1px outline plus a 1px bevel, over a radius-4 corner. */
+    /** Past the stage frame, so a zoomed model cannot paint over its border. */
     private static final int STAGE_INSET = 3;
     private static final int CHIP_PAD = 8;
     private static final int SEARCH_MIN_W = 46;
 
-    /** Cache-key joiner. A pipe cannot occur in a gun or skin id, so keys never collide. */
+    /** A pipe cannot occur in a gun or skin id, so composite keys never collide. */
     private static final char SEPARATOR = '|';
 
     private record Rect(int x0, int y0, int x1, int y1) {
@@ -143,7 +133,7 @@ public class SkinArmoryScreen extends Screen {
     private record GunGroup(SkinDataModels.WeaponSkins weapon, List<SkinDataModels.SkinEntry> skins) {
     }
 
-    /** Badge results, tagged with the asset generation they were computed at. */
+    /** Tagged with the asset generation it was computed at. */
     private record CustomModelResult(int generation, boolean hasModel) {
     }
 
@@ -175,11 +165,8 @@ public class SkinArmoryScreen extends Screen {
     }
 
     /**
-     * Opens with {@code focusSkinId}'s weapon selected and that skin highlighted, instead of
-     * the usual "currently held weapon" default - used by the clickable skin name in the
-     * unlock and fuse chat messages (see {@code SkinUnlockItem}).
-     *
-     * @param focusSkinId a skin id to jump to, or null for the normal default selection
+     * Opens on {@code focusSkinId} instead of the held weapon, for the clickable skin name in
+     * unlock and fuse chat messages.
      */
     public SkinArmoryScreen(String focusSkinId) {
         super(Component.translatable("gui.mcpskins.armory.title"));
@@ -228,7 +215,7 @@ public class SkinArmoryScreen extends Screen {
         scrollRailToSelection(computeLayout());
     }
 
-    /** Recomputed every frame - cheaper than caching and risking staleness after a resize. */
+    /** Recomputed every frame; cheaper than caching and risking staleness after a resize. */
     private Layout computeLayout() {
         int panelW = Mth.clamp(this.width - PANEL_MARGIN * 2, PANEL_MIN_W, PANEL_MAX_W);
         int panelH = Mth.clamp(this.height - PANEL_MARGIN * 2, PANEL_MIN_H, PANEL_MAX_H);
@@ -242,8 +229,7 @@ public class SkinArmoryScreen extends Screen {
         int innerX1 = panel.x1() - PAD;
         int headerY = panel.y0() + PAD;
 
-        // Chips are laid out from the right edge inward, so the search field absorbs the
-        // slack instead of the buttons drifting.
+        // Laid out from the right edge inward, so the search field absorbs the slack.
         int sortW = chipWidth(sortModeLabel(sortMode, tier));
         int filterW = 0;
         for (StatusFilter f : StatusFilter.values()) {
@@ -275,8 +261,7 @@ public class SkinArmoryScreen extends Screen {
         Rect detail = new Rect(innerX1 - tier.detailWidth, contentY0, innerX1, contentY1);
         Rect stage = new Rect(rail.x1() + GAP, contentY0, detail.x0() - GAP, contentY1);
 
-        // The detail column stacks bottom-up: Equip is pinned to the floor, the info rows sit
-        // on top of it, and the tile grid takes whatever height is left.
+        // Stacked bottom-up: Equip pinned to the floor, info above it, tiles take the rest.
         Rect equip = new Rect(detail.x0(), detail.y1() - EQUIP_H, detail.x1(), detail.y1());
         int infoRows = 2;
         Rect info = new Rect(detail.x0(), equip.y0() - GAP_TIGHT - infoRows * INFO_ROW_H,
@@ -296,10 +281,8 @@ public class SkinArmoryScreen extends Screen {
     // -----------------------------------------------------------------------------------
 
     /**
-     * Rebuilds {@link #groups} and {@link #railRows} from the current search, filters and
-     * sort. A non-empty search is global across every weapon, so the rail expands each
-     * matching gun rather than only the selected one; that keeps every hit reachable in one
-     * view the way the old flat grid did.
+     * Rebuilds the rail from the current search, filters and sort. A non-empty search is global,
+     * so every matching gun expands rather than only the selected one.
      */
     private void rebuild() {
         groups.clear();
@@ -365,10 +348,7 @@ public class SkinArmoryScreen extends Screen {
         updatePodiumStack();
     }
 
-    /**
-     * The weapon's default (stock, no custom model) skin always sorts first regardless of
-     * sort mode - a primary key that dominates the rest.
-     */
+    /** The weapon's stock skin pins first, whatever the sort mode. */
     private Comparator<SkinDataModels.SkinEntry> skinComparator(SkinDataModels.WeaponSkins weapon) {
         Comparator<SkinDataModels.SkinEntry> byName =
                 Comparator.comparing(SkinDataModels.SkinEntry::name, String.CASE_INSENSITIVE_ORDER);
@@ -437,8 +417,8 @@ public class SkinArmoryScreen extends Screen {
         Layout layout = computeLayout();
         Rect panel = layout.panel();
 
-        // A plain fill rather than a sprite: blitSprite is immediate mode, so a nine-slice
-        // behind an opaque panel costs about 35 draw calls to show a few pixels of edge.
+        // A fill, not a sprite: blitSprite is immediate mode, so a nine-slice hidden behind
+        // an opaque panel would cost ~35 draw calls for a few pixels of edge.
         guiGraphics.fill(panel.x0() - 3, panel.y0() - 3, panel.x1() + 3, panel.y1() + 3, 0x66000000);
         ArmoryTheme.sprite(guiGraphics, ArmoryTheme.PANEL, panel.x0(), panel.y0(), panel.width(), panel.height());
 
@@ -449,14 +429,13 @@ public class SkinArmoryScreen extends Screen {
         renderInfo(guiGraphics, layout);
         renderEquip(guiGraphics, layout, mouseX, mouseY);
 
-        // Draws the search box over the hand-drawn chrome. Calls renderBackground()
-        // internally, which is why that is a no-op below.
+        // Draws the search box over the chrome; calls renderBackground(), hence the no-op.
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         renderTooltips(guiGraphics, layout, mouseX, mouseY);
     }
 
-    /** No-op - avoids vanilla's background blur, which {@code Screen#render(...)} always triggers. */
+    /** No-op: skips vanilla's background blur, which {@code Screen#render} always triggers. */
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
     }
@@ -565,8 +544,7 @@ public class SkinArmoryScreen extends Screen {
                     list.x1() - x0, row.height(), ArmoryTheme.ROW_HOVER);
         }
 
-        // Rarity reads as a 2px spine rather than colouring the label, so a dim datapack
-        // colour never costs legibility.
+        // A spine rather than a coloured label, so a dim datapack colour costs no legibility.
         guiGraphics.fill(x0, y + 1, x0 + 2, y + row.height() - 1, ArmoryTheme.readable(entry.labelColor()));
 
         Player player = Minecraft.getInstance().player;
@@ -586,7 +564,7 @@ public class SkinArmoryScreen extends Screen {
     private void renderStage(GuiGraphics guiGraphics, Layout layout) {
         Rect stage = layout.stage();
         ArmoryTheme.sprite(guiGraphics, ArmoryTheme.STAGE, stage.x0(), stage.y0(), stage.width(), stage.height());
-        // The stage sprite tiles its inner region, so the vertical falloff has to be a fill.
+        // The stage sprite tiles its interior, so the falloff has to be a fill.
         guiGraphics.fillGradient(stage.x0() + 1, stage.y0() + 1, stage.x1() - 1, stage.y1() - 1,
                 0x00000000, ArmoryTheme.STAGE_FLOOR);
 
@@ -605,14 +583,13 @@ public class SkinArmoryScreen extends Screen {
         int textBlockH = Math.round(8f * layout.tier().nameScale) + 12 + (layout.tier().lore ? 20 : 0);
         int podiumH = Math.max(40, stage.height() - textBlockH - PAD * 2);
 
-        // Floor pool under the weapon, tinted by rarity, so the model does not float.
+        // Floor pool, tinted by rarity, so the model does not read as floating.
         int glowW = Math.min(stage.width() - 2, 160);
         ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.GLOW,
                 stage.x0() + (stage.width() - glowW) / 2, stage.y0() + podiumH - 18, glowW, 24,
                 ArmoryTheme.withAlpha(accent, 0.22f));
 
-        // Inset past the frame, not just inside it. The podium scissors to these bounds, so
-        // anything less lets a zoomed-in model paint over the stage border.
+        // The podium scissors to these bounds, so this has to clear the frame.
         podium.setBounds(stage.x0() + STAGE_INSET, stage.y0() + STAGE_INSET,
                 stage.width() - STAGE_INSET * 2, podiumH - STAGE_INSET);
         podium.render(guiGraphics, 0f, accent);
@@ -645,7 +622,6 @@ public class SkinArmoryScreen extends Screen {
                     ArmoryTheme.truncate(this.font, statusMessage, stage.width() - PAD * 2, ArmoryTheme.SMALL),
                     stage.x0() + PAD, stage.y1() - 10, ArmoryTheme.SMALL, 0xFFFF8080);
         } else if (layout.tier().lore) {
-            // Nothing else advertises that the preview is draggable.
             ArmoryTheme.textRight(guiGraphics, this.font,
                     Component.translatable("gui.mcpskins.armory.stage_hint").getString(),
                     stage.x1() - PAD, stage.y1() - 9, ArmoryTheme.SMALL, ArmoryTheme.TEXT_28);
@@ -731,8 +707,7 @@ public class SkinArmoryScreen extends Screen {
         Player player = Minecraft.getInstance().player;
         boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
 
-        // Built rather than fixed, so a skin with no collection doesn't leave a placeholder
-        // row behind. Two slots, best-first.
+        // Built, not fixed, so a skin with no collection leaves no placeholder row.
         List<String[]> rows = new ArrayList<>();
         if (!unlocked && entry.hasUnlock()) {
             rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_unlock").getString(),
@@ -798,9 +773,8 @@ public class SkinArmoryScreen extends Screen {
     private void renderTooltips(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
         RailRow row = railRowAt(layout, mouseX, mouseY);
         if (row != null && row.skinId() == null) {
-            // Every gun row, not only the ones whose name got cut. Showing it conditionally
-            // tracks truncation exactly, but from the outside it just looks arbitrary, and
-            // the count means the tooltip still says something when the name already fits.
+            // Every row, not only truncated ones: conditional tooltips read as arbitrary, and
+            // the count keeps it useful when the name already fits.
             GunGroup group = findGroup(row.gunId());
             List<Component> lines = new ArrayList<>();
             lines.add(Component.literal(weaponDisplayName(row.gunId())));
@@ -1094,10 +1068,8 @@ public class SkinArmoryScreen extends Screen {
     // -----------------------------------------------------------------------------------
 
     /**
-     * Unlike {@code TACZRefitSkinOverlay}, browsing here doesn't require holding the weapon -
-     * the stage shows a synthetic preview, not the real item. Holding it is only required to
-     * actually equip, since the server applies the skin to whichever hand holds it; if it
-     * isn't in hand, the status line explains why.
+     * Browsing needs no weapon in hand; the stage is a synthetic preview. Equipping does, since
+     * the server applies the skin to whichever hand holds the gun.
      */
     private void equipSelected() {
         SkinDataModels.SkinEntry entry = selectedSkin();
@@ -1121,9 +1093,7 @@ public class SkinArmoryScreen extends Screen {
             return;
         }
 
-        // Same optimistic client-side update as TACZRefitSkinOverlay - set the skin component
-        // locally right away rather than waiting for the server response, which arrives
-        // shortly after with the authoritative value anyway.
+        // Optimistic: set the component locally rather than waiting for the server echo.
         ItemStack held = player.getItemInHand(hand);
         ItemStack optimistic = TACZSkinHelper.applySkin(held, entry.id());
         if (!optimistic.isEmpty()) {
@@ -1177,9 +1147,8 @@ public class SkinArmoryScreen extends Screen {
     }
 
     /**
-     * A preview stack for a gun, optionally wearing a skin. Cached for the life of the screen:
-     * the stack depends only on the two ids, not on whether the skin's assets have streamed in
-     * yet, so nothing here goes stale as {@link ClientSkinAssetCache} advances.
+     * Cached for the life of the screen. The stack depends only on the two ids, not on whether
+     * the skin's assets have streamed in, so it never goes stale.
      */
     private ItemStack previewStack(String baseGun, String skinId) {
         String key = baseGun + SEPARATOR + (skinId == null ? "" : skinId);
@@ -1201,11 +1170,9 @@ public class SkinArmoryScreen extends Screen {
     }
 
     /**
-     * "Custom model" badge, resolved through the real render path so it can't disagree with
-     * it. Cached because {@code getGunDisplay} is too expensive per tile per frame, but keyed
-     * on {@link ClientSkinAssetCache#generation()} - the first check usually runs while the
-     * geo-model is still in flight, and pinning that {@code false} left the badge and the
-     * filter wrong for as long as the screen stayed open.
+     * Resolved through the real render path so the badge cannot disagree with it. Keyed on
+     * {@link ClientSkinAssetCache#generation()}: the first check usually runs while the
+     * geo-model is still in flight, and pinning that {@code false} would stick.
      */
     private boolean hasCustomModel(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
         String bare = TACZSkinHelper.bareSkinId(entry.id());

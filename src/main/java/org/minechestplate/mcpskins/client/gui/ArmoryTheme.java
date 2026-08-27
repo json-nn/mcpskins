@@ -9,16 +9,12 @@ import net.minecraft.util.Mth;
 import org.minechestplate.mcpskins.MCPSkins;
 
 /**
- * Sprites, colours and text scaling for {@link SkinArmoryScreen}.
+ * Sprites, colours and text scaling shared by {@link SkinArmoryScreen} and the refit carousel.
  * <p>
- * Every surface with a corner is a nine-slice sprite under
- * {@code textures/gui/sprites/armory/}, so a resource pack can replace any of them without
- * touching the layout. Straight edges - spines, bars, hairlines - stay {@code fill} calls,
- * which cost less than an atlas lookup and can take a colour directly.
- * <p>
- * The white sprites ({@code row}, {@code tile_ring}, {@code rule_fade}, {@code glow} and the
- * icons) carry shape in their alpha only, so one sprite covers every rarity including
- * datapack-defined ones.
+ * Anything with a corner is a nine-slice sprite under {@code textures/gui/sprites/armory/}, so
+ * a resource pack can reskin both without touching layout. Straight edges stay {@code fill}
+ * calls, which batch and take a colour directly. The white sprites carry shape in their alpha
+ * and are tinted at draw, so one sprite covers every rarity including datapack-defined ones.
  */
 public final class ArmoryTheme {
 
@@ -52,15 +48,10 @@ public final class ArmoryTheme {
     public static final int ROW_SELECTED = 0x4478AAC8;
     public static final int STAGE_FLOOR = 0xFF0E1013;
 
-    /** 6px and 7px in the design both land on the vanilla font's small variant. */
     public static final float SMALL = 0.75f;
     public static final float BASE = 1.0f;
 
-    /**
-     * A blit past this is always a bug rather than a layout, and a nine-slice tiles its
-     * inner region, so an absurd size turns into millions of quads and hangs the client.
-     * Dropping the draw degrades one panel instead of the whole game.
-     */
+    /** A nine-slice tiles its interior, so an absurd size turns into millions of quads. */
     private static final int MAX_SPRITE_DIM = 4096;
 
     private static boolean oversizeWarned = false;
@@ -75,37 +66,31 @@ public final class ArmoryTheme {
     /**
      * Draws a sprite at its own colours.
      * <p>
-     * Deliberately not overloaded with a tinted form. {@code GuiGraphics#blitSprite} has a
-     * six-int signature ending {@code blitOffset, width, height} and no tint parameter at
-     * all, so an extra colour argument binds silently to {@code height}. Naming the tinted
-     * path differently means that mistake cannot compile.
+     * Deliberately not overloaded with a tinted form: {@code blitSprite}'s six-int signature
+     * ends {@code blitOffset, width, height} and takes no tint, so a colour passed as an extra
+     * argument binds silently to {@code height} and hangs the client. Naming the tinted path
+     * differently means that cannot compile.
      */
     public static void sprite(GuiGraphics graphics, ResourceLocation sprite, int x, int y, int width, int height) {
-        if (!drawable(sprite, width, height)) {
-            return;
+        if (drawable(sprite, width, height)) {
+            graphics.blitSprite(sprite, x, y, width, height);
         }
-        graphics.blitSprite(sprite, x, y, width, height);
     }
 
     /**
-     * Draws a sprite multiplied by {@code argb}, for the white shape sprites and the icons.
-     * <p>
-     * 1.21.1 has no tinted blit, so the colour goes through the shader. {@code innerBlit}
-     * draws immediately rather than buffering, so the tint applies to this call alone. The
-     * reset is in a {@code finally} because a leaked shader colour tints the rest of the
-     * frame, not just this screen.
+     * Draws a sprite multiplied by {@code argb}. 1.21.1 has no tinted blit, so the colour goes
+     * through the shader; {@code innerBlit} draws immediately, so it applies to this call
+     * alone. The reset is in a {@code finally} because a leaked shader colour tints the rest
+     * of the frame.
      */
     public static void spriteTinted(GuiGraphics graphics, ResourceLocation sprite,
                                     int x, int y, int width, int height, int argb) {
         if (!drawable(sprite, width, height)) {
             return;
         }
-        float a = (argb >>> 24) / 255f;
-        float r = ((argb >> 16) & 0xFF) / 255f;
-        float g = ((argb >> 8) & 0xFF) / 255f;
-        float b = (argb & 0xFF) / 255f;
         RenderSystem.enableBlend();
-        RenderSystem.setShaderColor(r, g, b, a);
+        RenderSystem.setShaderColor(((argb >> 16) & 0xFF) / 255f, ((argb >> 8) & 0xFF) / 255f,
+                (argb & 0xFF) / 255f, (argb >>> 24) / 255f);
         try {
             graphics.blitSprite(sprite, x, y, width, height);
         } finally {
@@ -128,21 +113,17 @@ public final class ArmoryTheme {
         return true;
     }
 
-    /** Replaces the alpha byte, leaving the RGB alone. */
     public static int withAlpha(int argb, float alpha) {
-        int a = Mth.clamp(Math.round(alpha * 255f), 0, 255);
-        return (a << 24) | (argb & 0xFFFFFF);
+        return (Mth.clamp(Math.round(alpha * 255f), 0, 255) << 24) | (argb & 0xFFFFFF);
     }
 
-    /** An opaque colour from a packed RGB, for values that arrive without an alpha byte. */
     public static int opaque(int rgb) {
         return 0xFF000000 | (rgb & 0xFFFFFF);
     }
 
     /**
-     * A rarity colour bright enough to read on the dark ground. A pack can declare any
-     * {@code label_color} it likes, and a near-black one would vanish on the tile ring and
-     * the stage rule, so anything below the floor gets lifted toward it rather than dropped.
+     * Lifts a rarity colour to a readable luminance. A pack can declare any {@code label_color},
+     * and a near-black one would vanish against the dark ground.
      */
     public static int readable(int rgb) {
         int r = (rgb >> 16) & 0xFF;
@@ -162,11 +143,6 @@ public final class ArmoryTheme {
         return Math.round(font.width(text) * scale);
     }
 
-    public static int scaledHeight(float scale) {
-        return Math.round(8f * scale);
-    }
-
-    /** Draws at a fraction of the font's native size, for the small label rows. */
     public static void text(GuiGraphics graphics, Font font, String value, int x, int y, float scale, int color) {
         if (value == null || value.isEmpty()) {
             return;
@@ -186,7 +162,6 @@ public final class ArmoryTheme {
         }
     }
 
-    /** Same as {@link #text}, right-aligned so the value ends at {@code rightX}. */
     public static void textRight(GuiGraphics graphics, Font font, String value, int rightX, int y, float scale, int color) {
         text(graphics, font, value, rightX - scaledWidth(font, value, scale), y, scale, color);
     }
