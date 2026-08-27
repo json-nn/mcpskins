@@ -266,13 +266,16 @@ public class SkinUnlockItem extends Item {
         List<SkinDataModels.SkinLookupResult> rollPool = unowned.isEmpty() ? pool : unowned;
         SkinDataModels.SkinLookupResult rolled = weightedPick(rollPool, entry -> entry.skin().weight(), player.getRandom());
 
+        // Read before consuming, since consumeSlots empties the stacks it takes from.
+        List<String> fusedSkinIds = collectFusedSkins(player, matchingSlots, fuseCost, heldSkinId);
+
         if (consumesItems) {
             consumeSlots(player, matchingSlots, fuseCost);
         }
         grantUnlockItem(player, hand, stack, rolled.skin().id());
         player.sendSystemMessage(buildFuseChatMessage(rarity, rolled));
         PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
-                SkinFusionPayload.create(player, hand, fuseCost, heldSkinId, rolled.skin().id()));
+                SkinFusionPayload.create(player, hand, fusedSkinIds, rolled.skin().id()));
 
         // Re-fetch instead of returning `stack` - grantUnlockItem may have replaced the
         // hand's contents outright (see its javadoc).
@@ -341,6 +344,35 @@ public class SkinUnlockItem extends Item {
             total += inventory.getItem(slot).getCount();
         }
         return total;
+    }
+
+    /**
+     * Skin ids of the items {@link #consumeSlots} is about to take, one entry per item and in
+     * the same order, for the fuse effect. Fusing matches on rarity, so these are usually a mix
+     * of skins and the client needs each one to tint its own orbiting item.
+     * <p>
+     * Stops at {@link SkinFusionPayload#MAX_RING_ITEMS} because that is all the effect can show.
+     * Falls back to the held skin so a creative-mode fuse, which consumes nothing, still has
+     * something to animate.
+     */
+    private List<String> collectFusedSkins(Player player, List<Integer> slots, int amount, String heldSkinId) {
+        List<String> skinIds = new ArrayList<>();
+        Inventory inventory = player.getInventory();
+        int remaining = amount;
+        for (int slot : slots) {
+            if (remaining <= 0 || skinIds.size() >= SkinFusionPayload.MAX_RING_ITEMS) break;
+            ItemStack slotStack = inventory.getItem(slot);
+            String slotSkinId = TACZSkinHelper.readCustomString(slotStack, "SkinToUnlock");
+            int take = Math.min(remaining, slotStack.getCount());
+            for (int i = 0; i < take && skinIds.size() < SkinFusionPayload.MAX_RING_ITEMS; i++) {
+                skinIds.add(slotSkinId == null ? heldSkinId : slotSkinId);
+            }
+            remaining -= take;
+        }
+        if (skinIds.isEmpty()) {
+            skinIds.add(heldSkinId);
+        }
+        return skinIds;
     }
 
     /**

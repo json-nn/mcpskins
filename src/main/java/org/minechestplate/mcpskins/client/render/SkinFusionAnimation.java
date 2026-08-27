@@ -7,6 +7,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3f;
 
+import java.util.List;
+
 /**
  * One running fusion effect: the consumed items lob out of the hands, orbit a point in front of
  * the player while the ring contracts, collapse to the center, and the rolled skin pops out.
@@ -73,8 +75,7 @@ public final class SkinFusionAnimation {
 
     private final int entityId;
     private final boolean mainHand;
-    private final int ringSize;
-    private final ItemStack ringStack;
+    private final List<ItemStack> ringStacks;
     private final ItemStack resultStack;
     private final DustParticleOptions fromDust;
     private final DustParticleOptions toDust;
@@ -83,14 +84,13 @@ public final class SkinFusionAnimation {
 
     private Phase lastTickedPhase;
 
-    public SkinFusionAnimation(int entityId, boolean mainHand, int ringSize,
-                               ItemStack ringStack, ItemStack resultStack,
+    public SkinFusionAnimation(int entityId, boolean mainHand,
+                               List<ItemStack> ringStacks, ItemStack resultStack,
                                int fromAccent, int toAccent,
                                long startGameTime, double durationTicks) {
         this.entityId = entityId;
         this.mainHand = mainHand;
-        this.ringSize = Math.max(1, ringSize);
-        this.ringStack = ringStack;
+        this.ringStacks = List.copyOf(ringStacks);
         this.resultStack = resultStack;
         this.fromDust = new DustParticleOptions(rgb(fromAccent), 0.9f);
         this.toDust = new DustParticleOptions(rgb(toAccent), 1.3f);
@@ -107,11 +107,12 @@ public final class SkinFusionAnimation {
     }
 
     public int ringSize() {
-        return ringSize;
+        return ringStacks.size();
     }
 
-    public ItemStack ringStack() {
-        return ringStack;
+    /** Each orbiting item keeps the tint of the skin it was fused from. */
+    public ItemStack ringStack(int index) {
+        return ringStacks.get(index);
     }
 
     public ItemStack resultStack() {
@@ -224,7 +225,7 @@ public final class SkinFusionAnimation {
         Phase phase = phaseOf(t);
         float p = localProgress(t, phase);
         Vec3 lifted = basis.anchor().add(0.0, rise(phase, p), 0.0);
-        double angle = TWO_PI * index / ringSize + spin(t);
+        double angle = TWO_PI * index / ringStacks.size() + spin(t);
         Vec3 slot = ringPoint(lifted, basis, angle, radius(phase, p), t);
 
         if (phase != Phase.LAUNCH) {

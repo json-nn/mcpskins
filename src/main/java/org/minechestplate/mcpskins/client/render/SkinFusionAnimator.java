@@ -64,6 +64,9 @@ public final class SkinFusionAnimator {
     private static boolean renderFailed = false;
     private static boolean warnedOnce = false;
 
+    private static int lastCueEntityId = -1;
+    private static long lastCueGameTime = Long.MIN_VALUE;
+
     private SkinFusionAnimator() {
     }
 
@@ -93,28 +96,47 @@ public final class SkinFusionAnimator {
         }
 
         long gameTime = mc.level.getGameTime();
-        boolean animate = MCPSkinsClientConfig.fusionAnimEnabled();
-        if (animate && !claimSlot(payload.playerId(), gameTime)) {
+        List<String> fusedSkinIds = payload.consumedSkinIds();
+        boolean animate = !fusedSkinIds.isEmpty()
+                && MCPSkinsClientConfig.fusionAnimEnabled()
+                && claimSlot(payload.playerId(), gameTime);
+        boolean cue = MCPSkinsClientConfig.fusionAnimSound() && allowCue(payload.playerId(), gameTime);
+
+        if (!animate) {
+            // Nothing is going to reach the reveal, so the payoff it would have played fires
+            // now instead of being lost.
+            if (cue) {
+                playAt(mc, player.position(), SoundEvents.PLAYER_LEVELUP, 0.5f, 1.6f);
+            }
             return;
         }
 
-        // Outside the animation toggle so turning the visuals off still leaves the audible
-        // confirmation the fuse used to give.
-        if (MCPSkinsClientConfig.fusionAnimSound()) {
+        if (cue) {
             playAt(mc, player.position(), SoundEvents.AMETHYST_BLOCK_CHIME, 0.6f, 1.0f);
         }
-        if (!animate) {
-            return;
+
+        List<ItemStack> ringStacks = new ArrayList<>(fusedSkinIds.size());
+        for (String skinId : fusedSkinIds) {
+            ringStacks.add(unlockStack(skinId));
         }
 
-        int ringSize = Mth.clamp(payload.ringSize(),
-                SkinFusionPayload.MIN_RING_ITEMS, SkinFusionPayload.MAX_RING_ITEMS);
-        double durationTicks = MCPSkinsClientConfig.fusionAnimDurationMs() / 50.0;
+        ACTIVE.add(new SkinFusionAnimation(payload.playerId(), payload.mainHand(),
+                ringStacks, unlockStack(payload.resultSkinId()),
+                accentOf(fusedSkinIds.get(0)), accentOf(payload.resultSkinId()),
+                gameTime, MCPSkinsClientConfig.fusionAnimDurationMs() / 50.0));
+    }
 
-        ACTIVE.add(new SkinFusionAnimation(payload.playerId(), payload.mainHand(), ringSize,
-                unlockStack(payload.fromSkinId()), unlockStack(payload.toSkinId()),
-                accentOf(payload.fromSkinId()), accentOf(payload.toSkinId()),
-                gameTime, durationTicks));
+    /**
+     * Keeps a packet flood from turning into a chime machine. Separate from {@link #claimSlot}
+     * because the audio cue also fires when the animation itself is switched off.
+     */
+    private static boolean allowCue(int entityId, long gameTime) {
+        if (entityId == lastCueEntityId && gameTime - lastCueGameTime < REPLACE_COOLDOWN_TICKS) {
+            return false;
+        }
+        lastCueEntityId = entityId;
+        lastCueGameTime = gameTime;
+        return true;
     }
 
     /** Replaces an existing animation for the same player, or refuses when the list is full. */
@@ -322,7 +344,7 @@ public final class SkinFusionAnimator {
             Vec3 hand = animation.handOrigin(player, partialTick, firstPerson, basis, index);
             Vec3 at = animation.itemPosition(basis, hand, index, t);
             float roll = Mth.RAD_TO_DEG * SkinFusionAnimation.spin(t) * 2f + index * 37f;
-            drawItem(mc, animation.ringStack(), at, camera, pose, buffers, light, scale, roll);
+            drawItem(mc, animation.ringStack(index), at, camera, pose, buffers, light, scale, roll);
         }
     }
 
@@ -375,5 +397,7 @@ public final class SkinFusionAnimator {
         ACTIVE.clear();
         renderFailed = false;
         warnedOnce = false;
+        lastCueEntityId = -1;
+        lastCueGameTime = Long.MIN_VALUE;
     }
 }
