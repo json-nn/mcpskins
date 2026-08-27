@@ -8,7 +8,6 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.Mth;
@@ -28,49 +27,95 @@ import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
 
 /**
- * Full-screen standalone skin catalog/inspector, independent of what's currently in the
+ * Full-screen standalone skin catalog and inspector, independent of what is currently in the
  * player's hand (unlike {@link org.minechestplate.mcpskins.client.TACZRefitSkinOverlay}).
  * Opened via hotkey ({@link org.minechestplate.mcpskins.client.ArmoryKeybinds}) or the
  * {@code /mcpskins armory} command.
  * <p>
- * Layout has four zones plus a top filter bar:
+ * Three columns under one header: browse on the left, look in the middle, decide on the
+ * right.
  * <pre>
- * [ search ....................... ] [All][Owned][Locked] [Has model] [Sort]
- * ┌───────────┬──────────────────────────────┬──────────────────┐
- * │  Weapons   │        3D PODIUM              │  Skins <weapon>  │
- * │ (left      │  (Item3DPodiumWidget -        │  (grid, not      │
- * │  column)   │   drag=rotate, wheel=zoom)    │   carousel)       │
- * └───────────┴──────────────────────────────┴──────────────────┘
- * [ skin name · rarity · collection · [Custom model]        [Equip] ]
+ * ┌ search ──────────────────┐ [All][Owned][Locked][Custom] [Sort]
+ * ├───────────┬──────────────────────────┬──────────────────┐
+ * │ Arsenal   │        3D stage          │  skin tiles      │
+ * │  gun      │                          ├──────────────────┤
+ * │   skin    │  name, rarity, lore      │  set / unlock    │
+ * │   skin    │                          │  [ Equip ]       │
+ * └───────────┴──────────────────────────┴──────────────────┘
  * </pre>
- * <p>
- * Laid out proportionally (see {@link #computeLayout()}), unlike
- * {@code TACZRefitSkinOverlay}, which has to match a fixed-pixel third-party background.
+ * The panel is centred and capped, and picks one of three tiers from its own width, so a
+ * high GUI scale drops a tier rather than crushing the columns. Every surface comes from
+ * {@link ArmoryTheme}'s sprites, so a resource pack can reskin the screen without touching
+ * this file.
  */
 public class SkinArmoryScreen extends Screen {
 
-    private enum FocusPane { WEAPONS, SKINS }
+    /**
+     * Column widths and type sizes per panel width. Anything that has to shrink lives here
+     * rather than being recomputed from ratios at each use site.
+     */
+    private enum Tier {
+        WIDE(132, 128, 2.0f, 17, true),
+        MID(112, 112, 1.5f, 17, false),
+        COMPACT(88, 88, 1.25f, 16, false);
+
+        final int railWidth;
+        final int detailWidth;
+        final float nameScale;
+        final int gunRowHeight;
+        final boolean lore;
+
+        Tier(int railWidth, int detailWidth, float nameScale, int gunRowHeight, boolean lore) {
+            this.railWidth = railWidth;
+            this.detailWidth = detailWidth;
+            this.nameScale = nameScale;
+            this.gunRowHeight = gunRowHeight;
+            this.lore = lore;
+        }
+    }
+
+    private enum FocusPane { RAIL, TILES }
 
     private enum StatusFilter { ALL, OWNED, LOCKED }
 
     private enum SortMode { RARITY, ALPHABETICAL, NEWEST }
 
-    private static final int WEAPON_ROW_HEIGHT = 24;
-    // Pill widths come from their actual text (see pillWidthFor), not a fixed number
-    private static final int PILL_HEIGHT = 20;
-    private static final int PILL_GAP = 6;
-    private static final int PILL_TEXT_PADDING = 22;
+    private static final int PANEL_MIN_W = 320;
+    private static final int PANEL_MAX_W = 640;
+    private static final int PANEL_MIN_H = 240;
+    private static final int PANEL_MAX_H = 360;
+    private static final int PANEL_MARGIN = 8;
 
-    // Header layout is fully independent of the three columns below it
-    private static final int HEADER_MARGIN = 8;
-    private static final int HEADER_GROUP_GAP = 14;
-    private static final int HEADER_MIN_SEARCH_WIDTH = 90;
-    private static final int PILL_ROW_GAP = 6;
-    // Lower than the shared minimum - short labels like "All"/"Owned" need less padding than "Locked"
-    private static final int STATUS_PILL_MIN_WIDTH = 30;
+    private static final int TIER_WIDE_MIN = 560;
+    private static final int TIER_MID_MIN = 440;
+
+    private static final int PAD = 6;
+    private static final int GAP = 6;
+    private static final int GAP_TIGHT = 4;
+    private static final int CONTROL_H = 15;
+    private static final int SECTION_H = 11;
+    private static final int SKIN_ROW_H = 12;
+    private static final int SKIN_ROW_INDENT = 10;
+    private static final int TILE_H = 40;
+    private static final int INFO_ROW_H = 9;
+    private static final int EQUIP_H = 17;
+    private static final int ICON = 8;
+    /** Stage sprite's visible frame: 1px outline plus a 1px bevel, over a radius-4 corner. */
+    private static final int STAGE_INSET = 3;
+    private static final int CHIP_PAD = 8;
+    private static final int SEARCH_MIN_W = 46;
+
+    /** Cache-key joiner. A pipe cannot occur in a gun or skin id, so keys never collide. */
+    private static final char SEPARATOR = '|';
 
     private record Rect(int x0, int y0, int x1, int y1) {
         boolean contains(double mouseX, double mouseY) {
@@ -86,38 +131,43 @@ public class SkinArmoryScreen extends Screen {
         }
     }
 
-    /** All geometric zones for this frame - a single source of truth for both render and click handling. */
-    private record Layout(int topBarHeight,
-                          int leftX, int leftY, int leftWidth, int leftHeight,
-                          int podiumX, int podiumY, int podiumWidth, int podiumHeight,
-                          int rightX, int rightY, int rightWidth, int rightHeight,
-                          int bottomY, int bottomHeight,
-                          int gridColumns, int gridCellSize, int gridSpacing,
-                          int gridPaddingX, int gridPaddingY) {
+    /** Every zone for this frame, so render and hit-testing read the same numbers. */
+    private record Layout(Tier tier, Rect panel, Rect search, Rect[] filters, Rect custom, Rect sort,
+                          Rect rail, Rect railList, Rect stage, Rect tiles, Rect info, Rect equip) {
     }
 
-    private final List<String> weaponKeys = new ArrayList<>();
-    private final Map<String, String> weaponNameCache = new HashMap<>();
+    /** One line in the rail. A null {@code skinId} means the gun row itself. */
+    private record RailRow(String gunId, String skinId, int top, int height) {
+    }
+
+    private record GunGroup(SkinDataModels.WeaponSkins weapon, List<SkinDataModels.SkinEntry> skins) {
+    }
+
     /** Badge results, tagged with the asset generation they were computed at. */
     private record CustomModelResult(int generation, boolean hasModel) {
     }
 
+    private final Map<String, String> weaponNameCache = new HashMap<>();
+    /** Preview stacks, built once per gun/skin pair instead of per frame. */
+    private final Map<String, ItemStack> stackCache = new HashMap<>();
     private final Map<String, CustomModelResult> customModelCache = new HashMap<>();
     private final Item3DPodiumWidget podium = new Item3DPodiumWidget();
 
-    private String selectedWeapon;
-    private List<SkinDataModels.SkinLookupResult> visibleEntries = new ArrayList<>();
-    private int selectedSkinIndex = 0;
+    private final List<GunGroup> groups = new ArrayList<>();
+    private final List<RailRow> railRows = new ArrayList<>();
+
+    private String selectedGun;
+    private String selectedSkinId;
     private EditBox searchBox;
     private StatusFilter statusFilter = StatusFilter.ALL;
     private boolean customModelOnly = false;
     private SortMode sortMode = SortMode.RARITY;
-    private FocusPane focusPane = FocusPane.SKINS;
-    private int weaponScrollPixels = 0;
-    private int gridScrollPixels = 0;
+    private FocusPane focusPane = FocusPane.TILES;
+    private int railScroll = 0;
+    private int tileScroll = 0;
     private String statusMessage;
 
-    /** Skin id to select+scroll to on open (see {@link #init}), or null for the default. */
+    /** Skin id to select and scroll to on open, or null for the normal default. */
     private final String focusSkinId;
 
     public SkinArmoryScreen() {
@@ -125,9 +175,9 @@ public class SkinArmoryScreen extends Screen {
     }
 
     /**
-     * Opens with {@code focusSkinId}'s weapon selected and that skin scrolled into view
-     * and highlighted, instead of the usual "currently held weapon" default - used by the
-     * clickable skin name in the unlock/fuse chat messages (see {@code SkinUnlockItem}).
+     * Opens with {@code focusSkinId}'s weapon selected and that skin highlighted, instead of
+     * the usual "currently held weapon" default - used by the clickable skin name in the
+     * unlock and fuse chat messages (see {@code SkinUnlockItem}).
      *
      * @param focusSkinId a skin id to jump to, or null for the normal default selection
      */
@@ -143,151 +193,237 @@ public class SkinArmoryScreen extends Screen {
     @Override
     protected void init() {
         podium.resetView();
+        podium.setChrome(false);
 
-        // Search gets its own full-width row, so the filter buttons can't overlap it.
-        HeaderLayout header = computeHeaderLayout();
-        this.searchBox = new EditBox(this.font, header.searchX(), header.searchY(),
-                header.searchWidth(), header.searchHeight(),
+        Layout layout = computeLayout();
+        String previous = searchBox != null ? searchBox.getValue() : "";
+
+        int textX = layout.search().x0() + PAD + ICON + GAP_TIGHT;
+        this.searchBox = new EditBox(this.font, textX,
+                layout.search().y0() + (CONTROL_H - ICON) / 2,
+                Math.max(8, layout.search().x1() - PAD - textX), ICON,
                 Component.translatable("gui.mcpskins.armory.search"));
+        this.searchBox.setBordered(false);
+        this.searchBox.setTextColor(ArmoryTheme.TEXT);
+        this.searchBox.setMaxLength(64);
+        this.searchBox.setValue(previous);
         this.searchBox.setHint(Component.translatable("gui.mcpskins.armory.search_hint"));
-        this.searchBox.setResponder(s -> refreshVisibleEntries());
+        this.searchBox.setResponder(value -> {
+            railScroll = 0;
+            tileScroll = 0;
+            rebuild();
+        });
         this.addRenderableWidget(searchBox);
 
-        rebuildWeaponList();
-        SkinDataModels.SkinLookupResult focusLookup = focusSkinId != null ? SkinManager.INSTANCE.findSkin(focusSkinId) : null;
-        if (focusLookup != null) {
-            selectedWeapon = focusLookup.weapon().baseGun();
-        } else if (selectedWeapon == null || !weaponKeys.contains(selectedWeapon)) {
-            selectedWeapon = defaultWeaponSelection();
+        SkinDataModels.SkinLookupResult focus = focusSkinId != null
+                ? SkinManager.INSTANCE.findSkin(focusSkinId) : null;
+        if (focus != null) {
+            selectedGun = focus.weapon().baseGun();
+            selectedSkinId = focus.skin().id();
+        } else if (selectedGun == null) {
+            selectedGun = defaultWeaponSelection();
         }
-        refreshVisibleEntries();
 
-        if (focusLookup != null) {
-            for (int i = 0; i < visibleEntries.size(); i++) {
-                if (visibleEntries.get(i).skin().id().equals(focusSkinId)) {
-                    selectedSkinIndex = i;
-                    updatePodiumStack();
-                    break;
+        rebuild();
+        scrollRailToSelection(computeLayout());
+    }
+
+    /** Recomputed every frame - cheaper than caching and risking staleness after a resize. */
+    private Layout computeLayout() {
+        int panelW = Mth.clamp(this.width - PANEL_MARGIN * 2, PANEL_MIN_W, PANEL_MAX_W);
+        int panelH = Mth.clamp(this.height - PANEL_MARGIN * 2, PANEL_MIN_H, PANEL_MAX_H);
+        int px = (this.width - panelW) / 2;
+        int py = (this.height - panelH) / 2;
+        Rect panel = new Rect(px, py, px + panelW, py + panelH);
+
+        Tier tier = panelW >= TIER_WIDE_MIN ? Tier.WIDE : panelW >= TIER_MID_MIN ? Tier.MID : Tier.COMPACT;
+
+        int innerX0 = panel.x0() + PAD;
+        int innerX1 = panel.x1() - PAD;
+        int headerY = panel.y0() + PAD;
+
+        // Chips are laid out from the right edge inward, so the search field absorbs the
+        // slack instead of the buttons drifting.
+        int sortW = chipWidth(sortModeLabel(sortMode, tier));
+        int filterW = 0;
+        for (StatusFilter f : StatusFilter.values()) {
+            filterW = Math.max(filterW, chipWidth(statusFilterLabel(f, tier)));
+        }
+        int customW = chipWidth(customLabel(tier));
+
+        int chipsW = filterW * StatusFilter.values().length
+                + GAP_TIGHT * (StatusFilter.values().length - 1)
+                + GAP_TIGHT + customW + GAP + sortW;
+        int chipsX = Math.max(innerX0 + SEARCH_MIN_W + GAP, innerX1 - chipsW);
+
+        Rect[] filters = new Rect[StatusFilter.values().length];
+        int cursor = chipsX;
+        for (StatusFilter f : StatusFilter.values()) {
+            filters[f.ordinal()] = new Rect(cursor, headerY, cursor + filterW, headerY + CONTROL_H);
+            cursor += filterW + GAP_TIGHT;
+        }
+        Rect custom = new Rect(cursor, headerY, cursor + customW, headerY + CONTROL_H);
+        cursor += customW + GAP;
+        Rect sort = new Rect(cursor, headerY, cursor + sortW, headerY + CONTROL_H);
+        Rect search = new Rect(innerX0, headerY, Math.max(innerX0 + SEARCH_MIN_W, chipsX - GAP), headerY + CONTROL_H);
+
+        int contentY0 = headerY + CONTROL_H + GAP;
+        int contentY1 = panel.y1() - PAD;
+
+        Rect rail = new Rect(innerX0, contentY0, innerX0 + tier.railWidth, contentY1);
+        Rect railList = new Rect(rail.x0(), rail.y0() + SECTION_H, rail.x1(), rail.y1());
+        Rect detail = new Rect(innerX1 - tier.detailWidth, contentY0, innerX1, contentY1);
+        Rect stage = new Rect(rail.x1() + GAP, contentY0, detail.x0() - GAP, contentY1);
+
+        // The detail column stacks bottom-up: Equip is pinned to the floor, the info rows sit
+        // on top of it, and the tile grid takes whatever height is left.
+        Rect equip = new Rect(detail.x0(), detail.y1() - EQUIP_H, detail.x1(), detail.y1());
+        int infoRows = 2;
+        Rect info = new Rect(detail.x0(), equip.y0() - GAP_TIGHT - infoRows * INFO_ROW_H,
+                detail.x1(), equip.y0() - GAP_TIGHT);
+        Rect tiles = new Rect(detail.x0(), detail.y0() + SECTION_H,
+                detail.x1(), Math.max(detail.y0() + SECTION_H + TILE_H, info.y0() - GAP_TIGHT));
+
+        return new Layout(tier, panel, search, filters, custom, sort, rail, railList, stage, tiles, info, equip);
+    }
+
+    private int chipWidth(Component label) {
+        return this.font.width(label) + CHIP_PAD * 2;
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Data
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * Rebuilds {@link #groups} and {@link #railRows} from the current search, filters and
+     * sort. A non-empty search is global across every weapon, so the rail expands each
+     * matching gun rather than only the selected one; that keeps every hit reachable in one
+     * view the way the old flat grid did.
+     */
+    private void rebuild() {
+        groups.clear();
+        railRows.clear();
+
+        Player player = Minecraft.getInstance().player;
+        String query = searchBox != null ? searchBox.getValue().trim().toLowerCase(Locale.ROOT) : "";
+        boolean searching = !query.isEmpty();
+
+        List<SkinDataModels.WeaponSkins> weapons = new ArrayList<>(SkinManager.INSTANCE.getRegistry().values());
+        weapons.sort(Comparator.comparing(w -> weaponDisplayName(w.baseGun()), String.CASE_INSENSITIVE_ORDER));
+
+        for (SkinDataModels.WeaponSkins weapon : weapons) {
+            boolean weaponMatches = !searching
+                    || weaponDisplayName(weapon.baseGun()).toLowerCase(Locale.ROOT).contains(query);
+            List<SkinDataModels.SkinEntry> matched = new ArrayList<>();
+            for (SkinDataModels.SkinEntry entry : weapon.skins()) {
+                boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
+                if (statusFilter == StatusFilter.OWNED && !unlocked) continue;
+                if (statusFilter == StatusFilter.LOCKED && unlocked) continue;
+                if (customModelOnly && !hasCustomModel(weapon, entry)) continue;
+                if (searching && !weaponMatches
+                        && !entry.name().toLowerCase(Locale.ROOT).contains(query)) {
+                    continue;
+                }
+                matched.add(entry);
+            }
+            if (!matched.isEmpty()) {
+                matched.sort(skinComparator(weapon));
+                groups.add(new GunGroup(weapon, matched));
+            }
+        }
+
+        if (groups.isEmpty()) {
+            selectedSkinId = null;
+            podium.setStack(ItemStack.EMPTY);
+            return;
+        }
+
+        if (findGroup(selectedGun) == null) {
+            selectedGun = groups.get(0).weapon().baseGun();
+            selectedSkinId = null;
+        }
+        GunGroup selected = findGroup(selectedGun);
+        if (selectedSkinId == null || indexOfSkin(selected, selectedSkinId) < 0) {
+            selectedSkinId = selected.skins().get(0).id();
+        }
+
+        int top = 0;
+        for (GunGroup group : groups) {
+            boolean expanded = searching || group.weapon().baseGun().equals(selectedGun);
+            railRows.add(new RailRow(group.weapon().baseGun(), null, top, layoutTier().gunRowHeight));
+            top += layoutTier().gunRowHeight;
+            if (expanded) {
+                for (SkinDataModels.SkinEntry entry : group.skins()) {
+                    railRows.add(new RailRow(group.weapon().baseGun(), entry.id(), top, SKIN_ROW_H));
+                    top += SKIN_ROW_H;
                 }
             }
-            Layout layout = computeLayout();
-            scrollWeaponListToSelection(layout);
-            scrollGridToSelection(layout);
         }
+
+        statusMessage = null;
+        updatePodiumStack();
     }
 
     /**
-     * Recomputed every frame - cheaper than caching and risking staleness after a resize.
+     * The weapon's default (stock, no custom model) skin always sorts first regardless of
+     * sort mode - a primary key that dominates the rest.
      */
-    private Layout computeLayout() {
-        int margin = 6;
-        // topBarHeight is the header's actual height (see computeHeaderLayout()), so
-        // everything below it shifts down to match
-        int topBarHeight = computeHeaderLayout().totalHeight();
-        int bottomBarHeight = 46;
-
-        int leftWidth = Mth.clamp(this.width / 6, 140, 230);
-        // rightWidth is derived from gridCellSize (fixed for a compact 2-column grid),
-        // not the other way around; podiumWidth gets whatever's left between the columns
-        int gridPaddingX = 6, gridPaddingY = 6, gridSpacing = 6, gridCellSize = 56;
-        int gridColumnsTarget = 2;
-        int rightWidth = gridPaddingX * 2 + gridCellSize * gridColumnsTarget + gridSpacing * (gridColumnsTarget - 1);
-
-        int contentTop = topBarHeight + margin;
-        int contentBottom = Math.max(contentTop + 20, this.height - bottomBarHeight - margin);
-        int contentHeight = contentBottom - contentTop;
-
-        int leftX = margin;
-        int rightX = this.width - margin - rightWidth;
-        int podiumX = leftX + leftWidth + margin;
-        int podiumWidth = Math.max(40, rightX - margin - podiumX);
-
-        // Falls back below gridColumnsTarget only if the screen is too narrow to fit it
-        int usableGridWidth = Math.max(gridCellSize, rightWidth - gridPaddingX * 2);
-        int gridColumns = Mth.clamp((usableGridWidth + gridSpacing) / (gridCellSize + gridSpacing), 1, gridColumnsTarget);
-
-        return new Layout(topBarHeight,
-                leftX, contentTop, leftWidth, contentHeight,
-                podiumX, contentTop, podiumWidth, contentHeight,
-                rightX, contentTop, rightWidth, contentHeight,
-                this.height - bottomBarHeight, bottomBarHeight,
-                gridColumns, gridCellSize, gridSpacing, gridPaddingX, gridPaddingY);
+    private Comparator<SkinDataModels.SkinEntry> skinComparator(SkinDataModels.WeaponSkins weapon) {
+        Comparator<SkinDataModels.SkinEntry> byName =
+                Comparator.comparing(SkinDataModels.SkinEntry::name, String.CASE_INSENSITIVE_ORDER);
+        Comparator<SkinDataModels.SkinEntry> mode = switch (sortMode) {
+            case ALPHABETICAL -> byName;
+            case NEWEST -> Comparator.<SkinDataModels.SkinEntry>comparingInt(e -> e.isNew() ? 0 : 1).thenComparing(byName);
+            case RARITY -> Comparator.<SkinDataModels.SkinEntry>comparingInt(
+                    e -> RarityManager.INSTANCE.get(e.rarityId()).order()).reversed().thenComparing(byName);
+        };
+        return Comparator.<SkinDataModels.SkinEntry>comparingInt(
+                e -> isDefaultSkin(weapon, e) ? 0 : 1).thenComparing(mode);
     }
 
-    /** Button width sized to its actual (localized) text plus padding, with a minimum floor. */
-    private int pillWidthFor(Component label, int minWidth) {
-        return Math.max(minWidth, this.font.width(label) + PILL_TEXT_PADDING);
+    private Tier layoutTier() {
+        int panelW = Mth.clamp(this.width - PANEL_MARGIN * 2, PANEL_MIN_W, PANEL_MAX_W);
+        return panelW >= TIER_WIDE_MIN ? Tier.WIDE : panelW >= TIER_MID_MIN ? Tier.MID : Tier.COMPACT;
     }
 
-    /**
-     * Header layout: a full-width search row, then filter/sort buttons that flow
-     * left-to-right and wrap to a new row instead of running off-screen (see
-     * {@link #advancePillCursor}). {@code totalHeight()} feeds {@link Layout#topBarHeight}.
-     */
-    private record HeaderLayout(int searchX, int searchY, int searchWidth, int searchHeight,
-                                Rect[] statusRects, Rect customRect, Rect sortRect, int totalHeight) {
-    }
-
-    private HeaderLayout computeHeaderLayout() {
-        int searchHeight = PILL_HEIGHT;
-        int searchY = 4;
-        int[] cursorX = {HEADER_MARGIN};
-        int[] cursorY = {searchY + searchHeight + PILL_ROW_GAP};
-
-        Rect[] statusRects = new Rect[StatusFilter.values().length];
-        boolean first = true;
-        for (StatusFilter f : StatusFilter.values()) {
-            int width = pillWidthFor(statusFilterLabel(f), STATUS_PILL_MIN_WIDTH);
-            statusRects[f.ordinal()] = advancePillCursor(cursorX, cursorY, width, first ? 0 : PILL_GAP);
-            first = false;
+    private GunGroup findGroup(String gunId) {
+        if (gunId == null) return null;
+        for (GunGroup group : groups) {
+            if (group.weapon().baseGun().equals(gunId)) return group;
         }
-        int customWidth = pillWidthFor(Component.translatable("gui.mcpskins.armory.filter_custom_model"), 90);
-        Rect customRect = advancePillCursor(cursorX, cursorY, customWidth, HEADER_GROUP_GAP);
-
-        int sortWidth = pillWidthFor(sortModeLabel(sortMode), 134);
-        Rect sortRect = advancePillCursor(cursorX, cursorY, sortWidth, HEADER_GROUP_GAP);
-
-        int totalHeight = cursorY[0] + PILL_HEIGHT + PILL_ROW_GAP;
-        int searchWidth = Math.max(HEADER_MIN_SEARCH_WIDTH, this.width - HEADER_MARGIN * 2);
-        return new HeaderLayout(HEADER_MARGIN, searchY, searchWidth, searchHeight,
-                statusRects, customRect, sortRect, totalHeight);
+        return null;
     }
 
-    /**
-     * Advances the button flow cursor by one button: wraps to a new row instead of
-     * running past the right edge if {@code width} (plus {@code gapBefore}) doesn't fit.
-     * {@code cursorX}/{@code cursorY} are single-element arrays acting as out-parameters.
-     */
-    private Rect advancePillCursor(int[] cursorX, int[] cursorY, int width, int gapBefore) {
-        int rowRight = this.width - HEADER_MARGIN;
-        boolean atRowStart = cursorX[0] == HEADER_MARGIN;
-        int x0 = atRowStart ? cursorX[0] : cursorX[0] + gapBefore;
-        if (!atRowStart && x0 + width > rowRight) {
-            cursorY[0] += PILL_HEIGHT + PILL_ROW_GAP;
-            x0 = HEADER_MARGIN;
+    private int indexOfSkin(GunGroup group, String skinId) {
+        if (group == null || skinId == null) return -1;
+        for (int i = 0; i < group.skins().size(); i++) {
+            if (group.skins().get(i).id().equals(skinId)) return i;
         }
-        Rect rect = new Rect(x0, cursorY[0], x0 + width, cursorY[0] + PILL_HEIGHT);
-        cursorX[0] = rect.x1();
-        return rect;
+        return -1;
     }
 
-    private Rect statusPillRect(Layout layout, StatusFilter filter) {
-        return computeHeaderLayout().statusRects()[filter.ordinal()];
+    private SkinDataModels.SkinEntry selectedSkin() {
+        GunGroup group = findGroup(selectedGun);
+        int index = indexOfSkin(group, selectedSkinId);
+        return index < 0 ? null : group.skins().get(index);
     }
 
-    private Rect customModelToggleRect(Layout layout) {
-        return computeHeaderLayout().customRect();
+    private void updatePodiumStack() {
+        SkinDataModels.SkinEntry entry = selectedSkin();
+        podium.setStack(entry == null ? ItemStack.EMPTY : previewStack(selectedGun, entry.id()));
     }
 
-    private Rect sortButtonRect(Layout layout) {
-        return computeHeaderLayout().sortRect();
-    }
-
-    private Rect equipButtonRect(Layout layout) {
-        int width = 150, height = 26;
-        int x1 = this.width - 12;
-        int y0 = layout.bottomY() + (layout.bottomHeight() - height) / 2;
-        return new Rect(x1 - width, y0, x1, y0 + height);
+    private String defaultWeaponSelection() {
+        Player player = Minecraft.getInstance().player;
+        Map<String, SkinDataModels.WeaponSkins> registry = SkinManager.INSTANCE.getRegistry();
+        if (player != null) {
+            String heldMain = TACZSkinHelper.getGunId(player.getMainHandItem());
+            if (heldMain != null && registry.containsKey(heldMain)) return heldMain;
+            String heldOff = TACZSkinHelper.getGunId(player.getOffhandItem());
+            if (heldOff != null && registry.containsKey(heldOff)) return heldOff;
+        }
+        return registry.isEmpty() ? null : registry.keySet().iterator().next();
     }
 
     // -----------------------------------------------------------------------------------
@@ -296,26 +432,28 @@ public class SkinArmoryScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        // Our own dark background - no vanilla "Menu Background Blurriness" needed
-        guiGraphics.fillGradient(0, 0, this.width, this.height, 0xD8101010, 0xF2060606);
+        guiGraphics.fillGradient(0, 0, this.width, this.height, 0xC00A0A0C, 0xE0050506);
 
         Layout layout = computeLayout();
+        Rect panel = layout.panel();
 
-        renderTopBar(guiGraphics, layout, mouseX, mouseY);
-        renderWeaponList(guiGraphics, layout, mouseX, mouseY);
+        // A plain fill rather than a sprite: blitSprite is immediate mode, so a nine-slice
+        // behind an opaque panel costs about 35 draw calls to show a few pixels of edge.
+        guiGraphics.fill(panel.x0() - 3, panel.y0() - 3, panel.x1() + 3, panel.y1() + 3, 0x66000000);
+        ArmoryTheme.sprite(guiGraphics, ArmoryTheme.PANEL, panel.x0(), panel.y0(), panel.width(), panel.height());
 
-        podium.setBounds(layout.podiumX(), layout.podiumY(), layout.podiumWidth(), layout.podiumHeight());
-        podium.render(guiGraphics, partialTick, currentAccentColor());
+        renderHeader(guiGraphics, layout, mouseX, mouseY);
+        renderRail(guiGraphics, layout, mouseX, mouseY);
+        renderStage(guiGraphics, layout);
+        renderTiles(guiGraphics, layout, mouseX, mouseY);
+        renderInfo(guiGraphics, layout);
+        renderEquip(guiGraphics, layout, mouseX, mouseY);
 
-        renderSkinGrid(guiGraphics, layout, mouseX, mouseY);
-        renderBottomBar(guiGraphics, layout, mouseX, mouseY);
-
-        // Draws real widgets (the search box) over the hand-drawn top bar. Calls
-        // renderBackground() internally, which is why that's a no-op below.
+        // Draws the search box over the hand-drawn chrome. Calls renderBackground()
+        // internally, which is why that is a no-op below.
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
-        renderHoverTooltip(guiGraphics, layout, mouseX, mouseY);
-        renderWeaponHoverTooltip(guiGraphics, layout, mouseX, mouseY);
+        renderTooltips(guiGraphics, layout, mouseX, mouseY);
     }
 
     /** No-op - avoids vanilla's background blur, which {@code Screen#render(...)} always triggers. */
@@ -323,226 +461,369 @@ public class SkinArmoryScreen extends Screen {
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
     }
 
-    private void renderTopBar(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
-        guiGraphics.fill(0, 0, this.width, layout.topBarHeight(), 0xE8181818);
-        guiGraphics.fill(0, layout.topBarHeight() - 1, this.width, layout.topBarHeight(), 0x405FD3FF);
+    private void renderHeader(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
+        Rect search = layout.search();
+        boolean focused = searchBox != null && searchBox.isFocused();
+        ArmoryTheme.sprite(guiGraphics, focused ? ArmoryTheme.INSET_FOCUS : ArmoryTheme.INSET,
+                search.x0(), search.y0(), search.width(), search.height());
+        ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_SEARCH, search.x0() + PAD,
+                search.y0() + (CONTROL_H - ICON) / 2, ICON, ICON,
+                focused ? ArmoryTheme.ACCENT : ArmoryTheme.TEXT_35);
 
         for (StatusFilter filter : StatusFilter.values()) {
-            Rect rect = statusPillRect(layout, filter);
-            boolean active = statusFilter == filter;
-            boolean hovered = rect.contains(mouseX, mouseY);
-            int bg = active ? 0xE02A4A5A : hovered ? 0xE02A2A2A : 0xC0151515;
-            int border = active ? 0x5FD3FF : hovered ? 0xAAAAAA : 0x3A3A3A;
-            guiGraphics.fill(rect.x0(), rect.y0(), rect.x1(), rect.y1(), bg);
-            guiGraphics.renderOutline(rect.x0(), rect.y0(), rect.width(), rect.height(), 0xFF000000 | border);
-            int textY = rect.y0() + (rect.height() - this.font.lineHeight) / 2;
-            guiGraphics.drawCenteredString(this.font, statusFilterLabel(filter), (rect.x0() + rect.x1()) / 2, textY, 0xFFFFFFFF);
+            renderChip(guiGraphics, layout.filters()[filter.ordinal()],
+                    statusFilterLabel(filter, layout.tier()), statusFilter == filter, mouseX, mouseY);
         }
-
-        Rect customRect = customModelToggleRect(layout);
-        boolean customHovered = customRect.contains(mouseX, mouseY);
-        int customBg = customModelOnly ? 0xE0553A1A : customHovered ? 0xE02A2A2A : 0xC0151515;
-        int customBorder = customModelOnly ? 0xFFB347 : customHovered ? 0xAAAAAA : 0x3A3A3A;
-        guiGraphics.fill(customRect.x0(), customRect.y0(), customRect.x1(), customRect.y1(), customBg);
-        guiGraphics.renderOutline(customRect.x0(), customRect.y0(), customRect.width(), customRect.height(), 0xFF000000 | customBorder);
-        guiGraphics.drawCenteredString(this.font, Component.translatable("gui.mcpskins.armory.filter_custom_model"),
-                (customRect.x0() + customRect.x1()) / 2, customRect.y0() + (customRect.height() - this.font.lineHeight) / 2, 0xFFFFFFFF);
-
-        Rect sortRect = sortButtonRect(layout);
-        boolean sortHovered = sortRect.contains(mouseX, mouseY);
-        guiGraphics.fill(sortRect.x0(), sortRect.y0(), sortRect.x1(), sortRect.y1(), sortHovered ? 0xE02A2A2A : 0xC0151515);
-        guiGraphics.renderOutline(sortRect.x0(), sortRect.y0(), sortRect.width(), sortRect.height(), 0xFF000000 | (sortHovered ? 0xAAAAAA : 0x3A3A3A));
-        guiGraphics.drawCenteredString(this.font, sortModeLabel(sortMode),
-                (sortRect.x0() + sortRect.x1()) / 2, sortRect.y0() + (sortRect.height() - this.font.lineHeight) / 2, 0xFFFFFFFF);
+        renderChip(guiGraphics, layout.custom(), customLabel(layout.tier()), customModelOnly, mouseX, mouseY);
+        renderChip(guiGraphics, layout.sort(), sortModeLabel(sortMode, layout.tier()), false, mouseX, mouseY);
     }
 
-    private void renderWeaponList(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
-        int panelX0 = layout.leftX() - 4, panelY0 = layout.leftY() - 2;
-        int panelX1 = layout.leftX() + layout.leftWidth() + 2, panelY1 = layout.leftY() + layout.leftHeight() + 2;
-        guiGraphics.fill(panelX0, panelY0, panelX1, panelY1, 0xB0101010);
-
-        guiGraphics.enableScissor(panelX0, panelY0, panelX1, panelY1);
-        try {
-            int rowY = layout.leftY() - weaponScrollPixels;
-            for (String baseGun : weaponKeys) {
-                if (rowY + WEAPON_ROW_HEIGHT >= layout.leftY() && rowY <= layout.leftY() + layout.leftHeight()) {
-                    boolean selected = baseGun.equals(selectedWeapon);
-                    boolean hovered = mouseX >= layout.leftX() && mouseX < layout.leftX() + layout.leftWidth()
-                            && mouseY >= rowY && mouseY < rowY + WEAPON_ROW_HEIGHT;
-                    boolean heldNow = isWeaponCurrentlyHeld(baseGun);
-
-                    if (selected) {
-                        guiGraphics.fill(layout.leftX(), rowY, layout.leftX() + layout.leftWidth(), rowY + WEAPON_ROW_HEIGHT, 0xE02A3A4A);
-                        guiGraphics.fill(layout.leftX(), rowY, layout.leftX() + 2, rowY + WEAPON_ROW_HEIGHT, 0xFF5FD3FF);
-                    } else if (hovered) {
-                        guiGraphics.fill(layout.leftX(), rowY, layout.leftX() + layout.leftWidth(), rowY + WEAPON_ROW_HEIGHT, 0xE0242424);
-                    }
-
-                    ItemStack icon = TACZSkinHelper.createGunStack(baseGun);
-                    guiGraphics.renderItem(icon, layout.leftX() + 4, rowY + (WEAPON_ROW_HEIGHT - 16) / 2);
-
-                    // Truncated with "..." to fit the panel; the full name is still
-                    // available via tooltip (see renderWeaponHoverTooltip)
-                    String fullName = weaponDisplayName(baseGun);
-                    int nameTextX = layout.leftX() + 26;
-                    int availableNameWidth = layout.leftX() + layout.leftWidth() - nameTextX - 4;
-                    String displayName = truncateToWidth(fullName, availableNameWidth);
-                    Component name = Component.literal(displayName);
-                    int textColor = heldNow ? 0x5FD3FF : 0xFFFFFF;
-                    guiGraphics.drawString(this.font, name, nameTextX,
-                            rowY + (WEAPON_ROW_HEIGHT - this.font.lineHeight) / 2, textColor, false);
-                }
-                rowY += WEAPON_ROW_HEIGHT;
-            }
-        } finally {
-            guiGraphics.disableScissor();
+    private void renderChip(GuiGraphics guiGraphics, Rect rect, Component label, boolean on, int mouseX, int mouseY) {
+        ArmoryTheme.sprite(guiGraphics, on ? ArmoryTheme.CHIP_ON : ArmoryTheme.CHIP,
+                rect.x0(), rect.y0(), rect.width(), rect.height());
+        if (!on && rect.contains(mouseX, mouseY)) {
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW,
+                    rect.x0(), rect.y0(), rect.width(), rect.height(), ArmoryTheme.ROW_HOVER);
         }
+        guiGraphics.drawCenteredString(this.font, label, (rect.x0() + rect.x1()) / 2,
+                rect.y0() + (rect.height() - this.font.lineHeight) / 2 + 1,
+                on ? ArmoryTheme.TEXT : ArmoryTheme.TEXT_72);
     }
 
-    private void renderSkinGrid(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
-        int panelX0 = layout.rightX() - 4, panelY0 = layout.rightY() - 2;
-        int panelX1 = layout.rightX() + layout.rightWidth() + 2, panelY1 = layout.rightY() + layout.rightHeight() + 2;
-        guiGraphics.fill(panelX0, panelY0, panelX1, panelY1, 0xB0101010);
+    private void renderRail(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
+        Rect rail = layout.rail();
+        ArmoryTheme.text(guiGraphics, this.font,
+                Component.translatable("gui.mcpskins.armory.arsenal").getString(),
+                rail.x0(), rail.y0() + 2, ArmoryTheme.SMALL, ArmoryTheme.TEXT_35);
+        ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.RULE_FADE, rail.x0(), rail.y0() + SECTION_H - 3,
+                rail.width(), 1, ArmoryTheme.RULE);
 
-        guiGraphics.enableScissor(panelX0, panelY0, panelX1, panelY1);
-        try {
-            Player player = Minecraft.getInstance().player;
-            int cell = layout.gridCellSize();
-            int spacing = layout.gridSpacing();
-            int columns = layout.gridColumns();
-            int startX = layout.rightX() + layout.gridPaddingX();
-            int startY = layout.rightY() + layout.gridPaddingY() - gridScrollPixels;
-
-            for (int i = 0; i < visibleEntries.size(); i++) {
-                int col = i % columns;
-                int row = i / columns;
-                int cellX = startX + col * (cell + spacing);
-                int cellY = startY + row * (cell + spacing);
-                if (cellY + cell < layout.rightY() || cellY > layout.rightY() + layout.rightHeight()) continue;
-
-                SkinDataModels.SkinLookupResult lookup = visibleEntries.get(i);
-                SkinDataModels.SkinEntry entry = lookup.skin();
-                boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
-                boolean selected = i == selectedSkinIndex;
-                boolean equippedNow = isSkinCurrentlyEquipped(lookup);
-                boolean hovered = mouseX >= cellX && mouseX < cellX + cell && mouseY >= cellY && mouseY < cellY + cell;
-
-                guiGraphics.fill(cellX, cellY, cellX + cell, cellY + cell, selected ? 0xF02A2A2A : 0xF01B1B1B);
-                int borderRgb = equippedNow ? 0x5FD3FF : selected ? 0xFFFFFF : hovered ? 0xAAAAAA : (entry.labelColor() & 0xFFFFFF);
-                guiGraphics.renderOutline(cellX, cellY, cell, cell, 0xFF000000 | borderRgb);
-                guiGraphics.fill(cellX, cellY, cellX + cell, cellY + 2, 0xFF000000 | (entry.labelColor() & 0xFFFFFF));
-
-                ItemStack thumb = TACZSkinHelper.createGunStack(lookup.weapon().baseGun(), entry.id());
-                guiGraphics.renderItem(thumb, cellX + cell / 2 - 8, cellY + cell / 2 - 8);
-
-                if (!unlocked) {
-                    guiGraphics.fill(cellX, cellY, cellX + cell, cellY + cell, 0x80000000);
-                    int lockSize = 8;
-                    int lx = cellX + cell - lockSize - 3, ly = cellY + cell - lockSize - 3;
-                    guiGraphics.renderOutline(lx + 1, ly, lockSize - 2, 4, 0xFFE8E8E8);
-                    guiGraphics.fill(lx, ly + 3, lx + lockSize, ly + lockSize, 0xFFE8E8E8);
-                }
-                if (entry.isNew()) {
-                    guiGraphics.fill(cellX, cellY, cellX + 20, cellY + 9, 0xFF3A8F3A);
-                    guiGraphics.drawString(this.font, Component.translatable("gui.mcpskins.armory.badge_new"),
-                            cellX + 2, cellY + 1, 0xFFFFFFFF, false);
-                }
-                if (hasCustomModel(lookup.weapon(), entry)) {
-                    guiGraphics.fill(cellX + cell - 20, cellY, cellX + cell, cellY + 9, 0xFF3A5A8F);
-                    guiGraphics.drawString(this.font, Component.translatable("gui.mcpskins.armory.badge_model"),
-                            cellX + cell - 18, cellY + 1, 0xFFFFFFFF, false);
-                }
-            }
-        } finally {
-            guiGraphics.disableScissor();
-        }
-    }
-
-    private void renderBottomBar(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
-        guiGraphics.fill(0, layout.bottomY(), this.width, this.height, 0xE8181818);
-        guiGraphics.fill(0, layout.bottomY(), this.width, layout.bottomY() + 1, 0x405FD3FF);
-
-        if (!visibleEntries.isEmpty()) {
-            SkinDataModels.SkinLookupResult lookup = visibleEntries.get(Math.min(selectedSkinIndex, visibleEntries.size() - 1));
-            SkinDataModels.SkinEntry entry = lookup.skin();
-
-            Component nameLine = Component.literal(entry.name()).withStyle(s -> s.withColor(entry.labelColor()).withBold(true));
-            guiGraphics.drawString(this.font, nameLine, 10, layout.bottomY() + 5, 0xFFFFFFFF, false);
-
-            // Rarity's own accent color, not static gray, so it reads visually distinct
-            MutableComponent detail = RarityManager.INSTANCE.get(entry.rarityId()).label();
-            if (entry.hasCollection()) {
-                detail = detail.copy().append(Component.literal("  \u2022  " + entry.collection()).withStyle(ChatFormatting.GRAY));
-            }
-            if (hasCustomModel(lookup.weapon(), entry)) {
-                detail = detail.copy().append(Component.literal("  \u2022  ")
-                        .append(Component.translatable("gui.mcpskins.armory.badge_model_full")).withStyle(ChatFormatting.AQUA));
-            }
-            guiGraphics.drawString(this.font, detail, 10, layout.bottomY() + 5 + this.font.lineHeight + 2, 0xA0FFFFFF, false);
-
-            String thirdLine = statusMessage != null ? statusMessage : entry.hasDescription() ? entry.description() : null;
-            if (thirdLine != null) {
-                int color = statusMessage != null ? 0xFFFF8080 : 0x80FFFFFF;
-                guiGraphics.drawString(this.font, thirdLine, 10, layout.bottomY() + 5 + (this.font.lineHeight + 2) * 2, color, false);
-            }
-        }
-
-        Rect equipRect = equipButtonRect(layout);
-        boolean hovered = equipRect.contains(mouseX, mouseY);
-        boolean enabled = canEquipSelected();
-        int bg = !enabled ? 0x80303030 : hovered ? 0xE02A5A2A : 0xE01B3A1B;
-        guiGraphics.fill(equipRect.x0(), equipRect.y0(), equipRect.x1(), equipRect.y1(), bg);
-        guiGraphics.renderOutline(equipRect.x0(), equipRect.y0(), equipRect.width(), equipRect.height(), enabled ? 0xFF5FD3FF : 0xFF555555);
-        guiGraphics.drawCenteredString(this.font, equipButtonLabel(),
-                (equipRect.x0() + equipRect.x1()) / 2, equipRect.y0() + (equipRect.height() - this.font.lineHeight) / 2, 0xFFFFFFFF);
-    }
-
-    /**
-     * Shows the full weapon name on hover, but only when the panel actually truncated it
-     * (see {@link #truncateToWidth}) - otherwise this would just duplicate visible text.
-     */
-    private void renderWeaponHoverTooltip(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
-        if (mouseX < layout.leftX() || mouseX >= layout.leftX() + layout.leftWidth()
-                || mouseY < layout.leftY() || mouseY >= layout.leftY() + layout.leftHeight()) {
+        Rect list = layout.railList();
+        if (groups.isEmpty()) {
+            ArmoryTheme.text(guiGraphics, this.font,
+                    Component.translatable("gui.mcpskins.armory.no_matches").getString(),
+                    list.x0(), list.y0() + 4, ArmoryTheme.SMALL, ArmoryTheme.TEXT_50);
             return;
         }
-        int relativeY = (int) (mouseY - layout.leftY() + weaponScrollPixels);
-        int index = relativeY / WEAPON_ROW_HEIGHT;
-        if (index < 0 || index >= weaponKeys.size()) return;
 
-        String fullName = weaponDisplayName(weaponKeys.get(index));
-        int nameTextX = layout.leftX() + 26;
-        int availableNameWidth = layout.leftX() + layout.leftWidth() - nameTextX - 4;
-        if (this.font.width(fullName) <= availableNameWidth) return;
-
-        guiGraphics.renderTooltip(this.font, Component.literal(fullName), mouseX, mouseY);
+        guiGraphics.enableScissor(list.x0(), list.y0(), list.x1(), list.y1());
+        try {
+            for (RailRow row : railRows) {
+                int y = list.y0() + row.top() - railScroll;
+                if (y + row.height() < list.y0() || y > list.y1()) continue;
+                boolean hovered = mouseX >= list.x0() && mouseX < list.x1()
+                        && mouseY >= y && mouseY < y + row.height();
+                if (row.skinId() == null) {
+                    renderGunRow(guiGraphics, list, row, y, hovered);
+                } else {
+                    renderSkinRow(guiGraphics, list, row, y, hovered);
+                }
+            }
+        } finally {
+            guiGraphics.disableScissor();
+        }
     }
 
-    /** Truncates {@code text} to {@code maxWidth} pixels, adding "..." if truncated. */
-    private String truncateToWidth(String text, int maxWidth) {
-        if (maxWidth <= 0) return "";
-        if (this.font.width(text) <= maxWidth) return text;
-        String ellipsis = "...";
-        int ellipsisWidth = this.font.width(ellipsis);
-        int fitWidth = Math.max(0, maxWidth - ellipsisWidth);
-        return this.font.plainSubstrByWidth(text, fitWidth) + ellipsis;
+    private void renderGunRow(GuiGraphics guiGraphics, Rect list, RailRow row, int y, boolean hovered) {
+        boolean selected = row.gunId().equals(selectedGun);
+        if (selected) {
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW, list.x0(), y,
+                    list.width(), row.height(), ArmoryTheme.ROW_SELECTED);
+        } else if (hovered) {
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW, list.x0(), y,
+                    list.width(), row.height(), ArmoryTheme.ROW_HOVER);
+        }
+
+        ItemStack icon = previewStack(row.gunId(), null);
+        guiGraphics.renderItem(icon, list.x0() + 2, y + (row.height() - 16) / 2);
+
+        GunGroup group = findGroup(row.gunId());
+        String count = group == null ? "" : String.valueOf(group.skins().size());
+        int countW = ArmoryTheme.scaledWidth(this.font, count, ArmoryTheme.SMALL);
+        int nameX = list.x0() + 20;
+        int nameRoom = list.x1() - nameX - countW - GAP_TIGHT;
+
+        boolean held = isWeaponCurrentlyHeld(row.gunId());
+        String name = ArmoryTheme.truncate(this.font, weaponDisplayName(row.gunId()), nameRoom, ArmoryTheme.BASE);
+        guiGraphics.drawString(this.font, name, nameX, y + (row.height() - this.font.lineHeight) / 2,
+                held ? ArmoryTheme.ACCENT_LIFT : selected ? ArmoryTheme.TEXT : ArmoryTheme.TEXT_72, false);
+        ArmoryTheme.textRight(guiGraphics, this.font, count, list.x1(), y + (row.height() - 6) / 2,
+                ArmoryTheme.SMALL, ArmoryTheme.TEXT_35);
     }
 
-    private void renderHoverTooltip(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
-        int index = gridIndexAt(layout, mouseX, mouseY);
-        if (index < 0) return;
-        SkinDataModels.SkinLookupResult lookup = visibleEntries.get(index);
-        SkinDataModels.SkinEntry entry = lookup.skin();
+    private void renderSkinRow(GuiGraphics guiGraphics, Rect list, RailRow row, int y, boolean hovered) {
+        SkinDataModels.SkinEntry entry = skinById(row.gunId(), row.skinId());
+        if (entry == null) return;
+        boolean selected = row.skinId().equals(selectedSkinId) && row.gunId().equals(selectedGun);
+        int x0 = list.x0() + SKIN_ROW_INDENT;
+
+        if (selected) {
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW, x0, y,
+                    list.x1() - x0, row.height(), ArmoryTheme.ROW_SELECTED);
+        } else if (hovered) {
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW, x0, y,
+                    list.x1() - x0, row.height(), ArmoryTheme.ROW_HOVER);
+        }
+
+        // Rarity reads as a 2px spine rather than colouring the label, so a dim datapack
+        // colour never costs legibility.
+        guiGraphics.fill(x0, y + 1, x0 + 2, y + row.height() - 1, ArmoryTheme.readable(entry.labelColor()));
+
+        Player player = Minecraft.getInstance().player;
+        boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
+        int lockRoom = unlocked ? 0 : ICON + GAP_TIGHT;
+        int nameX = x0 + 6;
+        String name = ArmoryTheme.truncate(this.font, entry.name(),
+                list.x1() - nameX - lockRoom - 2, ArmoryTheme.SMALL);
+        ArmoryTheme.text(guiGraphics, this.font, name, nameX, y + 3, ArmoryTheme.SMALL,
+                selected ? ArmoryTheme.TEXT : unlocked ? ArmoryTheme.TEXT_72 : ArmoryTheme.TEXT_50);
+        if (!unlocked) {
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_LOCK,
+                    list.x1() - ICON - 1, y + 2, ICON, ICON, ArmoryTheme.TEXT_35);
+        }
+    }
+
+    private void renderStage(GuiGraphics guiGraphics, Layout layout) {
+        Rect stage = layout.stage();
+        ArmoryTheme.sprite(guiGraphics, ArmoryTheme.STAGE, stage.x0(), stage.y0(), stage.width(), stage.height());
+        // The stage sprite tiles its inner region, so the vertical falloff has to be a fill.
+        guiGraphics.fillGradient(stage.x0() + 1, stage.y0() + 1, stage.x1() - 1, stage.y1() - 1,
+                0x00000000, ArmoryTheme.STAGE_FLOOR);
+
+        SkinDataModels.SkinEntry entry = selectedSkin();
+        if (entry == null) {
+            ArmoryTheme.text(guiGraphics, this.font,
+                    Component.translatable("gui.mcpskins.armory.no_matches").getString(),
+                    stage.x0() + PAD, stage.y0() + PAD, ArmoryTheme.BASE, ArmoryTheme.TEXT_50);
+            ArmoryTheme.text(guiGraphics, this.font,
+                    Component.translatable("gui.mcpskins.armory.no_matches_hint").getString(),
+                    stage.x0() + PAD, stage.y0() + PAD + 12, ArmoryTheme.SMALL, ArmoryTheme.TEXT_35);
+            return;
+        }
+
+        int accent = ArmoryTheme.readable(entry.labelColor());
+        int textBlockH = Math.round(8f * layout.tier().nameScale) + 12 + (layout.tier().lore ? 20 : 0);
+        int podiumH = Math.max(40, stage.height() - textBlockH - PAD * 2);
+
+        // Floor pool under the weapon, tinted by rarity, so the model does not float.
+        int glowW = Math.min(stage.width() - 2, 160);
+        ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.GLOW,
+                stage.x0() + (stage.width() - glowW) / 2, stage.y0() + podiumH - 18, glowW, 24,
+                ArmoryTheme.withAlpha(accent, 0.22f));
+
+        // Inset past the frame, not just inside it. The podium scissors to these bounds, so
+        // anything less lets a zoomed-in model paint over the stage border.
+        podium.setBounds(stage.x0() + STAGE_INSET, stage.y0() + STAGE_INSET,
+                stage.width() - STAGE_INSET * 2, podiumH - STAGE_INSET);
+        podium.render(guiGraphics, 0f, accent);
+
+        int textY = stage.y0() + podiumH + GAP_TIGHT;
+        String collection = entry.hasCollection() ? entry.collection().toUpperCase(Locale.ROOT) : "";
+        if (!collection.isEmpty()) {
+            ArmoryTheme.text(guiGraphics, this.font, collection, stage.x0() + PAD, textY,
+                    ArmoryTheme.SMALL, ArmoryTheme.TEXT_35);
+        }
+        int nameY = textY + (collection.isEmpty() ? 0 : 8);
+        ArmoryTheme.text(guiGraphics, this.font,
+                ArmoryTheme.truncate(this.font, entry.name(), stage.width() - PAD * 2, layout.tier().nameScale),
+                stage.x0() + PAD, nameY, layout.tier().nameScale, ArmoryTheme.TEXT);
+
+        int rarityY = nameY + Math.round(8f * layout.tier().nameScale) + 3;
+        String rarity = RarityManager.INSTANCE.get(entry.rarityId()).label().getString();
+        guiGraphics.fill(stage.x0() + PAD, rarityY + 2, stage.x0() + PAD + 3, rarityY + 5, accent);
+        ArmoryTheme.text(guiGraphics, this.font, rarity, stage.x0() + PAD + 6, rarityY,
+                ArmoryTheme.SMALL, accent);
+
+        if (layout.tier().lore && entry.hasDescription()) {
+            ArmoryTheme.text(guiGraphics, this.font,
+                    ArmoryTheme.truncate(this.font, entry.description(), stage.width() - PAD * 2, ArmoryTheme.SMALL),
+                    stage.x0() + PAD, rarityY + 10, ArmoryTheme.SMALL, ArmoryTheme.TEXT_50);
+        }
+
+        if (statusMessage != null) {
+            ArmoryTheme.text(guiGraphics, this.font,
+                    ArmoryTheme.truncate(this.font, statusMessage, stage.width() - PAD * 2, ArmoryTheme.SMALL),
+                    stage.x0() + PAD, stage.y1() - 10, ArmoryTheme.SMALL, 0xFFFF8080);
+        } else if (layout.tier().lore) {
+            // Nothing else advertises that the preview is draggable.
+            ArmoryTheme.textRight(guiGraphics, this.font,
+                    Component.translatable("gui.mcpskins.armory.stage_hint").getString(),
+                    stage.x1() - PAD, stage.y1() - 9, ArmoryTheme.SMALL, ArmoryTheme.TEXT_28);
+        }
+    }
+
+    private void renderTiles(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
+        Rect detail = new Rect(layout.tiles().x0(), layout.tiles().y0() - SECTION_H,
+                layout.tiles().x1(), layout.tiles().y1());
+        ArmoryTheme.text(guiGraphics, this.font,
+                Component.translatable("gui.mcpskins.armory.skins").getString(),
+                detail.x0(), detail.y0() + 2, ArmoryTheme.SMALL, ArmoryTheme.TEXT_35);
+        ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.RULE_FADE, detail.x0(), detail.y0() + SECTION_H - 3,
+                detail.width(), 1, ArmoryTheme.RULE);
+
+        GunGroup group = findGroup(selectedGun);
+        if (group == null) return;
+
+        Rect tiles = layout.tiles();
+        int tileW = (tiles.width() - GAP_TIGHT) / 2;
+        Player player = Minecraft.getInstance().player;
+
+        guiGraphics.enableScissor(tiles.x0(), tiles.y0(), tiles.x1(), tiles.y1());
+        try {
+            List<SkinDataModels.SkinEntry> skins = group.skins();
+            for (int i = 0; i < skins.size(); i++) {
+                int col = i % 2;
+                int rowIndex = i / 2;
+                int x = tiles.x0() + col * (tileW + GAP_TIGHT);
+                int y = tiles.y0() + rowIndex * (TILE_H + GAP_TIGHT) - tileScroll;
+                if (y + TILE_H < tiles.y0() || y > tiles.y1()) continue;
+
+                SkinDataModels.SkinEntry entry = skins.get(i);
+                boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
+                boolean selected = entry.id().equals(selectedSkinId);
+                boolean equipped = isSkinCurrentlyEquipped(group.weapon(), entry);
+                boolean hovered = mouseX >= x && mouseX < x + tileW && mouseY >= y && mouseY < y + TILE_H;
+
+                ArmoryTheme.sprite(guiGraphics, ArmoryTheme.TILE, x, y, tileW, TILE_H);
+                ItemStack thumb = previewStack(group.weapon().baseGun(), entry.id());
+                guiGraphics.renderItem(thumb, x + tileW / 2 - 8, y + TILE_H / 2 - 8);
+
+                if (!unlocked) {
+                    guiGraphics.fill(x + 1, y + 1, x + tileW - 1, y + TILE_H - 1, 0x8C0A0A0C);
+                    ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_LOCK,
+                            x + tileW - ICON - 3, y + TILE_H - ICON - 3, ICON, ICON, ArmoryTheme.TEXT_50);
+                }
+
+                int ring = selected ? ArmoryTheme.TEXT
+                        : equipped ? ArmoryTheme.ACCENT
+                        : hovered ? ArmoryTheme.TEXT_50
+                        : ArmoryTheme.withAlpha(ArmoryTheme.readable(entry.labelColor()), 0.45f);
+                ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE_RING, x, y, tileW, TILE_H, ring);
+                guiGraphics.fill(x + 2, y + 1, x + tileW - 2, y + 2, ArmoryTheme.readable(entry.labelColor()));
+
+                if (equipped) {
+                    ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_CHECK,
+                            x + 3, y + TILE_H - ICON - 3, ICON, ICON, ArmoryTheme.ACCENT);
+                }
+                if (entry.isNew()) {
+                    ArmoryTheme.text(guiGraphics, this.font,
+                            Component.translatable("gui.mcpskins.armory.badge_new").getString(),
+                            x + 3, y + 4, ArmoryTheme.SMALL, ArmoryTheme.ACCENT_LIFT);
+                }
+                if (hasCustomModel(group.weapon(), entry)) {
+                    ArmoryTheme.textRight(guiGraphics, this.font,
+                            Component.translatable("gui.mcpskins.armory.badge_model").getString(),
+                            x + tileW - 3, y + 4, ArmoryTheme.SMALL, ArmoryTheme.TEXT_35);
+                }
+            }
+        } finally {
+            guiGraphics.disableScissor();
+        }
+    }
+
+    private void renderInfo(GuiGraphics guiGraphics, Layout layout) {
+        SkinDataModels.SkinEntry entry = selectedSkin();
+        if (entry == null) return;
+        Rect info = layout.info();
+        ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.RULE_FADE, info.x0(), info.y0() - 3,
+                info.width(), 1, ArmoryTheme.RULE);
+
         Player player = Minecraft.getInstance().player;
         boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
 
-        List<Component> lines = new ArrayList<>();
-        lines.add(Component.literal(entry.name()).withStyle(s -> s.withColor(entry.labelColor())));
-        lines.add(Component.literal(weaponDisplayName(lookup.weapon().baseGun())).withStyle(ChatFormatting.GRAY));
-        // Same rarity-accent-color fix as renderBottomBar()
-        lines.add(RarityManager.INSTANCE.get(entry.rarityId()).label());
+        // Built rather than fixed, so a skin with no collection doesn't leave a placeholder
+        // row behind. Two slots, best-first.
+        List<String[]> rows = new ArrayList<>();
+        if (!unlocked && entry.hasUnlock()) {
+            rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_unlock").getString(),
+                    entry.unlock()});
+        }
+        if (entry.hasCollection()) {
+            rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_set").getString(),
+                    entry.collection()});
+        }
+        rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_rarity").getString(),
+                RarityManager.INSTANCE.get(entry.rarityId()).label().getString()});
+
+        for (int i = 0; i < Math.min(2, rows.size()); i++) {
+            infoRow(guiGraphics, info, i, rows.get(i)[0], rows.get(i)[1]);
+        }
+    }
+
+    private void infoRow(GuiGraphics guiGraphics, Rect info, int index, String label, String value) {
+        int y = info.y0() + index * INFO_ROW_H;
+        int labelW = Math.min(34, info.width() / 3);
+        ArmoryTheme.text(guiGraphics, this.font, label.toUpperCase(Locale.ROOT),
+                info.x0(), y, ArmoryTheme.SMALL, ArmoryTheme.TEXT_28);
+        ArmoryTheme.text(guiGraphics, this.font,
+                ArmoryTheme.truncate(this.font, value, info.width() - labelW, ArmoryTheme.SMALL),
+                info.x0() + labelW, y, ArmoryTheme.SMALL, ArmoryTheme.TEXT_72);
+    }
+
+    private void renderEquip(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
+        Rect equip = layout.equip();
+        SkinDataModels.SkinEntry entry = selectedSkin();
+        Player player = Minecraft.getInstance().player;
+        boolean unlocked = entry != null && player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
+        boolean equipped = entry != null && isSkinCurrentlyEquipped(findGroup(selectedGun).weapon(), entry);
+        boolean enabled = canEquipSelected();
+        boolean hovered = equip.contains(mouseX, mouseY);
+
+        ArmoryTheme.sprite(guiGraphics, enabled || equipped ? ArmoryTheme.CHIP_ON : ArmoryTheme.CHIP,
+                equip.x0(), equip.y0(), equip.width(), equip.height());
+        if (enabled && hovered) {
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW,
+                    equip.x0(), equip.y0(), equip.width(), equip.height(), ArmoryTheme.ROW_HOVER);
+        }
+
+        Component label = !unlocked ? Component.translatable("gui.mcpskins.armory.locked")
+                : equipped ? Component.translatable("gui.mcpskins.armory.equipped")
+                : Component.translatable("gui.mcpskins.armory.equip");
+        int color = !unlocked ? ArmoryTheme.TEXT_35 : enabled || equipped ? ArmoryTheme.TEXT : ArmoryTheme.TEXT_50;
+
+        int labelW = this.font.width(label);
+        int iconRoom = !unlocked || equipped ? ICON + GAP_TIGHT : 0;
+        int startX = (equip.x0() + equip.x1() - labelW - iconRoom) / 2;
         if (!unlocked) {
-            lines.add(Component.translatable("gui.mcpskins.armory.status_locked").withStyle(ChatFormatting.RED));
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_LOCK, startX,
+                    equip.y0() + (equip.height() - ICON) / 2, ICON, ICON, color);
+        } else if (equipped) {
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_CHECK, startX,
+                    equip.y0() + (equip.height() - ICON) / 2, ICON, ICON, ArmoryTheme.ACCENT);
+        }
+        guiGraphics.drawString(this.font, label, startX + iconRoom,
+                equip.y0() + (equip.height() - this.font.lineHeight) / 2 + 1, color, false);
+    }
+
+    private void renderTooltips(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
+        RailRow row = railRowAt(layout, mouseX, mouseY);
+        if (row != null && row.skinId() == null) {
+            // Every gun row, not only the ones whose name got cut. Showing it conditionally
+            // tracks truncation exactly, but from the outside it just looks arbitrary, and
+            // the count means the tooltip still says something when the name already fits.
+            GunGroup group = findGroup(row.gunId());
+            List<Component> lines = new ArrayList<>();
+            lines.add(Component.literal(weaponDisplayName(row.gunId())));
+            if (group != null) {
+                lines.add(Component.translatable("gui.mcpskins.armory.skin_count",
+                        group.skins().size()).withStyle(ChatFormatting.GRAY));
+            }
+            guiGraphics.renderTooltip(this.font, lines, Optional.empty(), mouseX, mouseY);
+            return;
+        }
+
+        SkinDataModels.SkinEntry hovered = tileAt(layout, mouseX, mouseY);
+        if (hovered == null) return;
+        Player player = Minecraft.getInstance().player;
+        boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, hovered.id());
+
+        List<Component> lines = new ArrayList<>();
+        lines.add(Component.literal(hovered.name()).withStyle(s -> s.withColor(hovered.labelColor())));
+        lines.add(RarityManager.INSTANCE.get(hovered.rarityId()).label());
+        if (!unlocked) {
+            lines.add(hovered.hasUnlock()
+                    ? Component.literal(hovered.unlock()).withStyle(ChatFormatting.GRAY)
+                    : Component.translatable("gui.mcpskins.armory.status_locked").withStyle(ChatFormatting.RED));
         }
         guiGraphics.renderTooltip(this.font, lines, Optional.empty(), mouseX, mouseY);
     }
@@ -561,35 +842,44 @@ public class SkinArmoryScreen extends Screen {
         Layout layout = computeLayout();
 
         for (StatusFilter filter : StatusFilter.values()) {
-            if (statusPillRect(layout, filter).contains(mouseX, mouseY)) {
+            if (layout.filters()[filter.ordinal()].contains(mouseX, mouseY)) {
                 statusFilter = filter;
+                railScroll = 0;
+                tileScroll = 0;
                 playClick();
-                refreshVisibleEntries();
+                rebuild();
                 return true;
             }
         }
-        if (customModelToggleRect(layout).contains(mouseX, mouseY)) {
+        if (layout.custom().contains(mouseX, mouseY)) {
             customModelOnly = !customModelOnly;
+            railScroll = 0;
+            tileScroll = 0;
             playClick();
-            refreshVisibleEntries();
+            rebuild();
             return true;
         }
-        if (sortButtonRect(layout).contains(mouseX, mouseY)) {
-            sortMode = nextSortMode(sortMode);
+        if (layout.sort().contains(mouseX, mouseY)) {
+            SortMode[] values = SortMode.values();
+            sortMode = values[(sortMode.ordinal() + 1) % values.length];
             playClick();
-            refreshVisibleEntries();
+            rebuild();
             return true;
         }
 
-        if (mouseX >= layout.leftX() && mouseX < layout.leftX() + layout.leftWidth()
-                && mouseY >= layout.leftY() && mouseY < layout.leftY() + layout.leftHeight()) {
-            int relativeY = (int) (mouseY - layout.leftY() + weaponScrollPixels);
-            int index = relativeY / WEAPON_ROW_HEIGHT;
-            if (index >= 0 && index < weaponKeys.size()) {
-                focusPane = FocusPane.WEAPONS;
-                selectWeapon(weaponKeys.get(index));
-                playClick();
+        RailRow row = railRowAt(layout, mouseX, mouseY);
+        if (row != null) {
+            focusPane = FocusPane.RAIL;
+            if (row.skinId() == null) {
+                selectGun(row.gunId());
+            } else {
+                selectedGun = row.gunId();
+                selectedSkinId = row.skinId();
+                statusMessage = null;
+                updatePodiumStack();
+                rebuild();
             }
+            playClick();
             return true;
         }
 
@@ -598,23 +888,21 @@ public class SkinArmoryScreen extends Screen {
             return true;
         }
 
-        if (mouseX >= layout.rightX() && mouseX < layout.rightX() + layout.rightWidth()
-                && mouseY >= layout.rightY() && mouseY < layout.rightY() + layout.rightHeight()) {
-            int index = gridIndexAt(layout, mouseX, mouseY);
-            if (index >= 0) {
-                selectedSkinIndex = index;
-                focusPane = FocusPane.SKINS;
-                updatePodiumStack();
-                playClick();
-            }
+        SkinDataModels.SkinEntry tile = tileAt(layout, mouseX, mouseY);
+        if (tile != null) {
+            focusPane = FocusPane.TILES;
+            selectedSkinId = tile.id();
+            statusMessage = null;
+            updatePodiumStack();
+            rebuild();
+            playClick();
             return true;
         }
 
-        if (equipButtonRect(layout).contains(mouseX, mouseY)) {
+        if (layout.equip().contains(mouseX, mouseY)) {
             equipSelected();
             return true;
         }
-
         return false;
     }
 
@@ -638,23 +926,100 @@ public class SkinArmoryScreen extends Screen {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         Layout layout = computeLayout();
-
         if (podium.isInBounds(mouseX, mouseY)) {
             podium.onMouseScrolled(scrollY);
             return true;
         }
-        if (mouseX >= layout.rightX() && mouseX < layout.rightX() + layout.rightWidth()
-                && mouseY >= layout.rightY() && mouseY < layout.rightY() + layout.rightHeight()) {
-            gridScrollPixels = Mth.clamp(gridScrollPixels - (int) (scrollY * 24), 0, maxGridScroll(layout));
+        if (layout.railList().contains(mouseX, mouseY)) {
+            railScroll = Mth.clamp(railScroll - (int) (scrollY * 18), 0, maxRailScroll(layout));
             return true;
         }
-        if (mouseX >= layout.leftX() && mouseX < layout.leftX() + layout.leftWidth()
-                && mouseY >= layout.leftY() && mouseY < layout.leftY() + layout.leftHeight()) {
-            int maxScroll = Math.max(0, weaponKeys.size() * WEAPON_ROW_HEIGHT - layout.leftHeight());
-            weaponScrollPixels = Mth.clamp(weaponScrollPixels - (int) (scrollY * 24), 0, maxScroll);
+        if (layout.tiles().contains(mouseX, mouseY)) {
+            tileScroll = Mth.clamp(tileScroll - (int) (scrollY * 18), 0, maxTileScroll(layout));
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+    }
+
+    private RailRow railRowAt(Layout layout, double mouseX, double mouseY) {
+        Rect list = layout.railList();
+        if (!list.contains(mouseX, mouseY)) return null;
+        int relative = (int) (mouseY - list.y0() + railScroll);
+        for (RailRow row : railRows) {
+            if (relative >= row.top() && relative < row.top() + row.height()) return row;
+        }
+        return null;
+    }
+
+    private SkinDataModels.SkinEntry tileAt(Layout layout, double mouseX, double mouseY) {
+        Rect tiles = layout.tiles();
+        if (!tiles.contains(mouseX, mouseY)) return null;
+        GunGroup group = findGroup(selectedGun);
+        if (group == null) return null;
+
+        int tileW = (tiles.width() - GAP_TIGHT) / 2;
+        int relX = (int) (mouseX - tiles.x0());
+        int relY = (int) (mouseY - tiles.y0() + tileScroll);
+        int col = relX / (tileW + GAP_TIGHT);
+        int row = relY / (TILE_H + GAP_TIGHT);
+        if (col < 0 || col > 1 || row < 0) return null;
+        if (relX - col * (tileW + GAP_TIGHT) > tileW) return null;
+        if (relY - row * (TILE_H + GAP_TIGHT) > TILE_H) return null;
+
+        int index = row * 2 + col;
+        return index < group.skins().size() ? group.skins().get(index) : null;
+    }
+
+    private int maxRailScroll(Layout layout) {
+        if (railRows.isEmpty()) return 0;
+        RailRow last = railRows.get(railRows.size() - 1);
+        return Math.max(0, last.top() + last.height() - layout.railList().height());
+    }
+
+    private int maxTileScroll(Layout layout) {
+        GunGroup group = findGroup(selectedGun);
+        if (group == null) return 0;
+        int rows = (group.skins().size() + 1) / 2;
+        return Math.max(0, rows * (TILE_H + GAP_TIGHT) - GAP_TIGHT - layout.tiles().height());
+    }
+
+    private void selectGun(String gunId) {
+        this.selectedGun = gunId;
+        this.selectedSkinId = null;
+        this.tileScroll = 0;
+        this.statusMessage = null;
+        rebuild();
+    }
+
+    private void scrollRailToSelection(Layout layout) {
+        for (RailRow row : railRows) {
+            boolean match = row.skinId() == null
+                    ? row.gunId().equals(selectedGun)
+                    : row.skinId().equals(selectedSkinId);
+            if (!match) continue;
+            int viewHeight = layout.railList().height();
+            if (row.top() < railScroll) {
+                railScroll = row.top();
+            } else if (row.top() + row.height() > railScroll + viewHeight) {
+                railScroll = row.top() + row.height() - viewHeight;
+            }
+            railScroll = Mth.clamp(railScroll, 0, maxRailScroll(layout));
+            if (row.skinId() != null) return;
+        }
+    }
+
+    private void scrollTilesToSelection(Layout layout) {
+        GunGroup group = findGroup(selectedGun);
+        int index = indexOfSkin(group, selectedSkinId);
+        if (index < 0) return;
+        int top = (index / 2) * (TILE_H + GAP_TIGHT);
+        int viewHeight = layout.tiles().height();
+        if (top < tileScroll) {
+            tileScroll = top;
+        } else if (top + TILE_H > tileScroll + viewHeight) {
+            tileScroll = top + TILE_H - viewHeight;
+        }
+        tileScroll = Mth.clamp(tileScroll, 0, maxTileScroll(layout));
     }
 
     // -----------------------------------------------------------------------------------
@@ -666,9 +1031,8 @@ public class SkinArmoryScreen extends Screen {
         if (searchBox != null && searchBox.isFocused() && keyCode != GLFW.GLFW_KEY_ESCAPE) {
             return super.keyPressed(keyCode, scanCode, modifiers);
         }
-
         if (keyCode == GLFW.GLFW_KEY_TAB) {
-            focusPane = focusPane == FocusPane.WEAPONS ? FocusPane.SKINS : FocusPane.WEAPONS;
+            focusPane = focusPane == FocusPane.RAIL ? FocusPane.TILES : FocusPane.RAIL;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN
@@ -677,10 +1041,10 @@ public class SkinArmoryScreen extends Screen {
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
-            if (focusPane == FocusPane.SKINS) {
+            if (focusPane == FocusPane.TILES) {
                 equipSelected();
             } else {
-                focusPane = FocusPane.SKINS;
+                focusPane = FocusPane.TILES;
             }
             return true;
         }
@@ -688,25 +1052,36 @@ public class SkinArmoryScreen extends Screen {
     }
 
     private void handleNavigation(int keyCode) {
-        if (focusPane == FocusPane.WEAPONS) {
-            if (weaponKeys.isEmpty()) return;
-            int index = Math.max(0, weaponKeys.indexOf(selectedWeapon));
+        Layout layout = computeLayout();
+        if (focusPane == FocusPane.RAIL) {
+            if (groups.isEmpty()) return;
+            int index = 0;
+            for (int i = 0; i < groups.size(); i++) {
+                if (groups.get(i).weapon().baseGun().equals(selectedGun)) {
+                    index = i;
+                    break;
+                }
+            }
             if (keyCode == GLFW.GLFW_KEY_UP) index = Math.max(0, index - 1);
-            else if (keyCode == GLFW.GLFW_KEY_DOWN) index = Math.min(weaponKeys.size() - 1, index + 1);
-            selectWeapon(weaponKeys.get(index));
-        } else {
-            if (visibleEntries.isEmpty()) return;
-            Layout layout = computeLayout();
-            int columns = layout.gridColumns();
-            int index = selectedSkinIndex;
-            if (keyCode == GLFW.GLFW_KEY_LEFT) index -= 1;
-            else if (keyCode == GLFW.GLFW_KEY_RIGHT) index += 1;
-            else if (keyCode == GLFW.GLFW_KEY_UP) index -= columns;
-            else if (keyCode == GLFW.GLFW_KEY_DOWN) index += columns;
-            selectedSkinIndex = Mth.clamp(index, 0, visibleEntries.size() - 1);
-            updatePodiumStack();
-            scrollGridToSelection(layout);
+            else if (keyCode == GLFW.GLFW_KEY_DOWN) index = Math.min(groups.size() - 1, index + 1);
+            selectGun(groups.get(index).weapon().baseGun());
+            scrollRailToSelection(computeLayout());
+            return;
         }
+
+        GunGroup group = findGroup(selectedGun);
+        if (group == null || group.skins().isEmpty()) return;
+        int index = Math.max(0, indexOfSkin(group, selectedSkinId));
+        if (keyCode == GLFW.GLFW_KEY_LEFT) index -= 1;
+        else if (keyCode == GLFW.GLFW_KEY_RIGHT) index += 1;
+        else if (keyCode == GLFW.GLFW_KEY_UP) index -= 2;
+        else if (keyCode == GLFW.GLFW_KEY_DOWN) index += 2;
+        index = Mth.clamp(index, 0, group.skins().size() - 1);
+        selectedSkinId = group.skins().get(index).id();
+        statusMessage = null;
+        updatePodiumStack();
+        rebuild();
+        scrollTilesToSelection(layout);
     }
 
     @Override
@@ -715,234 +1090,59 @@ public class SkinArmoryScreen extends Screen {
     }
 
     // -----------------------------------------------------------------------------------
-    // State / data
-    // -----------------------------------------------------------------------------------
-
-    private void rebuildWeaponList() {
-        weaponKeys.clear();
-        weaponKeys.addAll(SkinManager.INSTANCE.getRegistry().keySet());
-        weaponKeys.sort(Comparator.comparing(this::weaponDisplayName, String.CASE_INSENSITIVE_ORDER));
-    }
-
-    private String defaultWeaponSelection() {
-        Player player = Minecraft.getInstance().player;
-        if (player != null) {
-            String heldMain = TACZSkinHelper.getGunId(player.getMainHandItem());
-            if (heldMain != null && weaponKeys.contains(heldMain)) return heldMain;
-            String heldOff = TACZSkinHelper.getGunId(player.getOffhandItem());
-            if (heldOff != null && weaponKeys.contains(heldOff)) return heldOff;
-        }
-        return weaponKeys.isEmpty() ? null : weaponKeys.get(0);
-    }
-
-    private void selectWeapon(String baseGun) {
-        this.selectedWeapon = baseGun;
-        this.selectedSkinIndex = 0;
-        this.gridScrollPixels = 0;
-        refreshVisibleEntries();
-    }
-
-    /** Left-column analogue of {@link #scrollGridToSelection} - scrolls {@link #selectedWeapon}'s row into view. */
-    private void scrollWeaponListToSelection(Layout layout) {
-        if (selectedWeapon == null) return;
-        int index = weaponKeys.indexOf(selectedWeapon);
-        if (index < 0) return;
-
-        int rowTop = index * WEAPON_ROW_HEIGHT;
-        int rowBottom = rowTop + WEAPON_ROW_HEIGHT;
-        int viewHeight = layout.leftHeight();
-
-        if (rowTop < weaponScrollPixels) {
-            weaponScrollPixels = rowTop;
-        } else if (rowBottom > weaponScrollPixels + viewHeight) {
-            weaponScrollPixels = rowBottom - viewHeight;
-        }
-        int maxScroll = Math.max(0, weaponKeys.size() * WEAPON_ROW_HEIGHT - viewHeight);
-        weaponScrollPixels = Mth.clamp(weaponScrollPixels, 0, maxScroll);
-    }
-
-    /**
-     * Rebuilds {@link #visibleEntries} from the current search/filters/sort. Search, when
-     * non-empty, is intentionally global across all weapons rather than just the selected
-     * one; an empty search returns the grid to "skins of the selected weapon" mode.
-     */
-    private void refreshVisibleEntries() {
-        List<SkinDataModels.SkinLookupResult> result = new ArrayList<>();
-        Player player = Minecraft.getInstance().player;
-        String query = searchBox != null ? searchBox.getValue().trim().toLowerCase(Locale.ROOT) : "";
-        boolean globalSearch = !query.isEmpty();
-
-        Collection<SkinDataModels.WeaponSkins> weaponsToScan;
-        if (globalSearch) {
-            weaponsToScan = SkinManager.INSTANCE.getRegistry().values();
-        } else if (selectedWeapon != null && SkinManager.INSTANCE.getRegistry().containsKey(selectedWeapon)) {
-            weaponsToScan = List.of(SkinManager.INSTANCE.getRegistry().get(selectedWeapon));
-        } else {
-            weaponsToScan = List.of();
-        }
-
-        for (SkinDataModels.WeaponSkins weapon : weaponsToScan) {
-            for (SkinDataModels.SkinEntry entry : weapon.skins()) {
-                boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
-                if (statusFilter == StatusFilter.OWNED && !unlocked) continue;
-                if (statusFilter == StatusFilter.LOCKED && unlocked) continue;
-
-                if (globalSearch) {
-                    boolean nameMatch = entry.name().toLowerCase(Locale.ROOT).contains(query);
-                    boolean weaponMatch = weaponDisplayName(weapon.baseGun()).toLowerCase(Locale.ROOT).contains(query);
-                    if (!nameMatch && !weaponMatch) continue;
-                }
-                if (customModelOnly && !hasCustomModel(weapon, entry)) continue;
-
-                result.add(new SkinDataModels.SkinLookupResult(weapon, entry));
-            }
-        }
-
-        Comparator<SkinDataModels.SkinLookupResult> byName =
-                Comparator.comparing(r -> r.skin().name(), String.CASE_INSENSITIVE_ORDER);
-        Comparator<SkinDataModels.SkinLookupResult> sortModeComparator = switch (sortMode) {
-            case ALPHABETICAL -> byName;
-            case NEWEST -> Comparator.<SkinDataModels.SkinLookupResult>comparingInt(r -> r.skin().isNew() ? 0 : 1).thenComparing(byName);
-            case RARITY -> Comparator.<SkinDataModels.SkinLookupResult>comparingInt(
-                    r -> RarityManager.INSTANCE.get(r.skin().rarityId()).order()).reversed().thenComparing(byName);
-        };
-        // The weapon's default (stock, no custom model) skin always sorts first in the
-        // right panel, regardless of sort mode - a primary sort key that dominates the rest
-        Comparator<SkinDataModels.SkinLookupResult> comparator =
-                Comparator.<SkinDataModels.SkinLookupResult>comparingInt(r -> isDefaultSkin(r) ? 0 : 1)
-                        .thenComparing(sortModeComparator);
-        result.sort(comparator);
-
-        this.visibleEntries = result;
-        this.selectedSkinIndex = visibleEntries.isEmpty() ? 0 : Mth.clamp(selectedSkinIndex, 0, visibleEntries.size() - 1);
-        this.statusMessage = null;
-        updatePodiumStack();
-    }
-
-    private void updatePodiumStack() {
-        if (visibleEntries.isEmpty()) {
-            podium.setStack(ItemStack.EMPTY);
-            return;
-        }
-        SkinDataModels.SkinLookupResult lookup = visibleEntries.get(Math.min(selectedSkinIndex, visibleEntries.size() - 1));
-        podium.setStack(TACZSkinHelper.createGunStack(lookup.weapon().baseGun(), lookup.skin().id()));
-        // A global search may select a skin belonging to a different weapon than the one
-        // highlighted in the left column - keep them in sync with what's actually shown
-        this.selectedWeapon = lookup.weapon().baseGun();
-    }
-
-    private void scrollGridToSelection(Layout layout) {
-        if (visibleEntries.isEmpty()) return;
-        int columns = layout.gridColumns();
-        int cell = layout.gridCellSize();
-        int spacing = layout.gridSpacing();
-        int row = selectedSkinIndex / columns;
-        int cellTop = row * (cell + spacing);
-        int cellBottom = cellTop + cell;
-        int viewHeight = layout.rightHeight() - layout.gridPaddingY() * 2;
-
-        if (cellTop < gridScrollPixels) {
-            gridScrollPixels = cellTop;
-        } else if (cellBottom > gridScrollPixels + viewHeight) {
-            gridScrollPixels = cellBottom - viewHeight;
-        }
-        gridScrollPixels = Mth.clamp(gridScrollPixels, 0, maxGridScroll(layout));
-    }
-
-    private int maxGridScroll(Layout layout) {
-        int columns = layout.gridColumns();
-        int rows = (int) Math.ceil(visibleEntries.size() / (double) columns);
-        int contentHeight = rows * (layout.gridCellSize() + layout.gridSpacing());
-        int viewHeight = layout.rightHeight() - layout.gridPaddingY() * 2;
-        return Math.max(0, contentHeight - viewHeight);
-    }
-
-    private int gridIndexAt(Layout layout, double mouseX, double mouseY) {
-        if (mouseX < layout.rightX() || mouseX >= layout.rightX() + layout.rightWidth()) return -1;
-        if (mouseY < layout.rightY() || mouseY >= layout.rightY() + layout.rightHeight()) return -1;
-
-        int cell = layout.gridCellSize();
-        int spacing = layout.gridSpacing();
-        int columns = layout.gridColumns();
-        int startX = layout.rightX() + layout.gridPaddingX();
-        int startY = layout.rightY() + layout.gridPaddingY() - gridScrollPixels;
-
-        int relX = (int) (mouseX - startX);
-        int relY = (int) (mouseY - startY);
-        if (relX < 0 || relY < 0) return -1;
-
-        int col = relX / (cell + spacing);
-        int row = relY / (cell + spacing);
-        if (col >= columns) return -1;
-        if (relX - col * (cell + spacing) > cell) return -1;
-        if (relY - row * (cell + spacing) > cell) return -1;
-
-        int index = row * columns + col;
-        return index >= 0 && index < visibleEntries.size() ? index : -1;
-    }
-
-    // -----------------------------------------------------------------------------------
     // Equipping
     // -----------------------------------------------------------------------------------
 
     /**
-     * Unlike {@code TACZRefitSkinOverlay}, browsing here doesn't require holding the
-     * weapon - the podium shows a synthetic preview, not the real item. Holding it is
-     * only required to actually equip, since the server applies the skin to whichever
-     * hand holds it; if it isn't in hand, the status line explains why.
+     * Unlike {@code TACZRefitSkinOverlay}, browsing here doesn't require holding the weapon -
+     * the stage shows a synthetic preview, not the real item. Holding it is only required to
+     * actually equip, since the server applies the skin to whichever hand holds it; if it
+     * isn't in hand, the status line explains why.
      */
     private void equipSelected() {
-        if (visibleEntries.isEmpty()) return;
-        SkinDataModels.SkinLookupResult lookup = visibleEntries.get(Math.min(selectedSkinIndex, visibleEntries.size() - 1));
+        SkinDataModels.SkinEntry entry = selectedSkin();
+        GunGroup group = findGroup(selectedGun);
         Player player = Minecraft.getInstance().player;
-        if (player == null) return;
+        if (entry == null || group == null || player == null) return;
 
-        if (!SkinAttachment.isOwnedOrDefault(player, lookup.skin().id())) {
-            statusMessage = Component.translatable("gui.mcpskins.armory.status_locked").getString();
+        if (!SkinAttachment.isOwnedOrDefault(player, entry.id())) {
+            statusMessage = entry.hasUnlock()
+                    ? entry.unlock()
+                    : Component.translatable("gui.mcpskins.armory.status_locked").getString();
             playFail();
             return;
         }
 
-        InteractionHand hand = resolveHand(player, lookup.weapon().baseGun());
+        InteractionHand hand = resolveHand(player, group.weapon().baseGun());
         if (hand == null) {
             statusMessage = Component.translatable("gui.mcpskins.armory.status_need_hand",
-                    weaponDisplayName(lookup.weapon().baseGun())).getString();
+                    weaponDisplayName(group.weapon().baseGun())).getString();
             playFail();
             return;
         }
 
-        // Same optimistic client-side update as TACZRefitSkinOverlay - set the skin
-        // component locally right away rather than waiting for the server response, which
-        // arrives shortly after with the authoritative value anyway
+        // Same optimistic client-side update as TACZRefitSkinOverlay - set the skin component
+        // locally right away rather than waiting for the server response, which arrives
+        // shortly after with the authoritative value anyway.
         ItemStack held = player.getItemInHand(hand);
-        ItemStack optimistic = TACZSkinHelper.applySkin(held, lookup.skin().id());
+        ItemStack optimistic = TACZSkinHelper.applySkin(held, entry.id());
         if (!optimistic.isEmpty()) {
             player.setItemInHand(hand, optimistic);
         }
-        PacketDistributor.sendToServer(isDefaultSkin(lookup)
+        PacketDistributor.sendToServer(isDefaultSkin(group.weapon(), entry)
                 ? ApplySkinPayload.removeSkin()
-                : ApplySkinPayload.equip(lookup.skin().id()));
+                : ApplySkinPayload.equip(entry.id()));
         statusMessage = null;
         player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.6f, 1.4f);
     }
 
     private boolean canEquipSelected() {
-        if (visibleEntries.isEmpty()) return false;
-        SkinDataModels.SkinLookupResult lookup = visibleEntries.get(Math.min(selectedSkinIndex, visibleEntries.size() - 1));
+        SkinDataModels.SkinEntry entry = selectedSkin();
+        GunGroup group = findGroup(selectedGun);
         Player player = Minecraft.getInstance().player;
-        if (player == null) return false;
-        if (!SkinAttachment.isOwnedOrDefault(player, lookup.skin().id())) return false;
-        return resolveHand(player, lookup.weapon().baseGun()) != null;
-    }
-
-    private Component equipButtonLabel() {
-        if (!visibleEntries.isEmpty()) {
-            SkinDataModels.SkinLookupResult lookup = visibleEntries.get(Math.min(selectedSkinIndex, visibleEntries.size() - 1));
-            if (isSkinCurrentlyEquipped(lookup)) {
-                return Component.translatable("gui.mcpskins.armory.equipped");
-            }
-        }
-        return Component.translatable("gui.mcpskins.armory.equip");
+        if (entry == null || group == null || player == null) return false;
+        if (!SkinAttachment.isOwnedOrDefault(player, entry.id())) return false;
+        return resolveHand(player, group.weapon().baseGun()) != null;
     }
 
     private InteractionHand resolveHand(Player player, String baseGun) {
@@ -956,93 +1156,108 @@ public class SkinArmoryScreen extends Screen {
         return player != null && resolveHand(player, baseGun) != null;
     }
 
-    private boolean isSkinCurrentlyEquipped(SkinDataModels.SkinLookupResult lookup) {
+    private boolean isSkinCurrentlyEquipped(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
         Player player = Minecraft.getInstance().player;
         if (player == null) return false;
-        InteractionHand hand = resolveHand(player, lookup.weapon().baseGun());
+        InteractionHand hand = resolveHand(player, weapon.baseGun());
         if (hand == null) return false;
-        ItemStack held = player.getItemInHand(hand);
-        String equippedSkinId = TACZSkinHelper.getSkinId(held);
-        String normalizedEquipped = equippedSkinId == null ? lookup.weapon().baseGun() : equippedSkinId;
-        return normalizedEquipped.equals(TACZSkinHelper.bareSkinId(lookup.skin().id()));
+        String equippedSkinId = TACZSkinHelper.getSkinId(player.getItemInHand(hand));
+        String normalized = equippedSkinId == null ? weapon.baseGun() : equippedSkinId;
+        return normalized.equals(TACZSkinHelper.bareSkinId(entry.id()));
     }
 
     // -----------------------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------------------
 
+    private SkinDataModels.SkinEntry skinById(String gunId, String skinId) {
+        GunGroup group = findGroup(gunId);
+        int index = indexOfSkin(group, skinId);
+        return index < 0 ? null : group.skins().get(index);
+    }
+
+    /**
+     * A preview stack for a gun, optionally wearing a skin. Cached for the life of the screen:
+     * the stack depends only on the two ids, not on whether the skin's assets have streamed in
+     * yet, so nothing here goes stale as {@link ClientSkinAssetCache} advances.
+     */
+    private ItemStack previewStack(String baseGun, String skinId) {
+        String key = baseGun + SEPARATOR + (skinId == null ? "" : skinId);
+        return stackCache.computeIfAbsent(key, ignored -> skinId == null
+                ? TACZSkinHelper.createGunStack(baseGun)
+                : TACZSkinHelper.createGunStack(baseGun, skinId));
+    }
+
     private String weaponDisplayName(String baseGun) {
         return weaponNameCache.computeIfAbsent(baseGun, key -> {
-            ItemStack stack = TACZSkinHelper.createGunStack(key);
+            ItemStack stack = previewStack(key, null);
             return stack.isEmpty() ? key : stack.getHoverName().getString();
         });
     }
 
-    /**
-     * The weapon's default skin - {@code bareSkinId(id)} equals the weapon's own
-     * {@code baseGun}. Forced to the front of the right panel (see {@link #refreshVisibleEntries}).
-     */
-    private boolean isDefaultSkin(SkinDataModels.SkinLookupResult lookup) {
-        return TACZSkinHelper.bareSkinId(lookup.skin().id()).equals(lookup.weapon().baseGun());
+    /** The weapon's default skin - {@code bareSkinId(id)} equals the weapon's own baseGun. */
+    private boolean isDefaultSkin(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
+        return TACZSkinHelper.bareSkinId(entry.id()).equals(weapon.baseGun());
     }
 
     /**
      * "Custom model" badge, resolved through the real render path so it can't disagree with
-     * it. Cached because {@code getGunDisplay} is too expensive per cell per frame, but keyed
+     * it. Cached because {@code getGunDisplay} is too expensive per tile per frame, but keyed
      * on {@link ClientSkinAssetCache#generation()} - the first check usually runs while the
      * geo-model is still in flight, and pinning that {@code false} left the badge and the
-     * "has model" filter wrong for as long as the screen stayed open.
+     * filter wrong for as long as the screen stayed open.
      */
     private boolean hasCustomModel(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
         String bare = TACZSkinHelper.bareSkinId(entry.id());
         if (bare.equals(weapon.baseGun())) return false;
 
         int generation = ClientSkinAssetCache.generation();
-
-        String cacheKey = weapon.baseGun() + '\u0000' + bare;
+        String cacheKey = weapon.baseGun() + SEPARATOR + bare;
         CustomModelResult cached = customModelCache.get(cacheKey);
         if (cached != null && cached.generation() == generation) return cached.hasModel();
 
         boolean result = false;
         try {
-            ItemStack bareStack = TACZSkinHelper.createGunStack(weapon.baseGun());
+            ItemStack bareStack = previewStack(weapon.baseGun(), null);
             Optional<GunDisplayInstance> base = TimelessAPI.getGunDisplay(bareStack);
             if (base.isPresent()) {
                 ResourceLocation baseModelLocation = GunModelPatcher.getBaseModelLocation(base.get());
                 result = baseModelLocation != null && SkinAssetResolver.resolveModel(baseModelLocation, bare) != null;
             }
         } catch (RuntimeException e) {
-            // Badge just doesn't show. Debug level - this runs per visible cell.
+            // Badge just doesn't show. Debug level - this runs per visible tile.
             MCPSkins.LOGGER.debug("[MCPSkins] Custom-model badge check failed for '{}'.", cacheKey, e);
         }
         customModelCache.put(cacheKey, new CustomModelResult(generation, result));
         return result;
     }
 
-    private int currentAccentColor() {
-        if (visibleEntries.isEmpty()) return 0x5FD3FF;
-        return visibleEntries.get(Math.min(selectedSkinIndex, visibleEntries.size() - 1)).skin().labelColor();
-    }
-
-    private Component statusFilterLabel(StatusFilter filter) {
+    private Component statusFilterLabel(StatusFilter filter, Tier tier) {
+        boolean shortLabel = tier == Tier.COMPACT;
         return switch (filter) {
-            case ALL -> Component.translatable("gui.mcpskins.armory.filter_all");
-            case OWNED -> Component.translatable("gui.mcpskins.armory.filter_owned");
-            case LOCKED -> Component.translatable("gui.mcpskins.armory.filter_locked");
+            case ALL -> Component.translatable(shortLabel
+                    ? "gui.mcpskins.armory.filter_all_short" : "gui.mcpskins.armory.filter_all");
+            case OWNED -> Component.translatable(shortLabel
+                    ? "gui.mcpskins.armory.filter_owned_short" : "gui.mcpskins.armory.filter_owned");
+            case LOCKED -> Component.translatable(shortLabel
+                    ? "gui.mcpskins.armory.filter_locked_short" : "gui.mcpskins.armory.filter_locked");
         };
     }
 
-    private Component sortModeLabel(SortMode mode) {
-        return switch (mode) {
+    private Component customLabel(Tier tier) {
+        return Component.translatable(tier == Tier.COMPACT
+                ? "gui.mcpskins.armory.filter_custom_model_short"
+                : "gui.mcpskins.armory.filter_custom_model");
+    }
+
+    private Component sortModeLabel(SortMode mode, Tier tier) {
+        Component value = switch (mode) {
             case RARITY -> Component.translatable("gui.mcpskins.armory.sort_rarity");
             case ALPHABETICAL -> Component.translatable("gui.mcpskins.armory.sort_alphabetical");
             case NEWEST -> Component.translatable("gui.mcpskins.armory.sort_newest");
         };
-    }
-
-    private SortMode nextSortMode(SortMode mode) {
-        SortMode[] values = SortMode.values();
-        return values[(mode.ordinal() + 1) % values.length];
+        return tier == Tier.COMPACT ? value
+                : Component.translatable("gui.mcpskins.armory.sort", value);
     }
 
     private void playClick() {

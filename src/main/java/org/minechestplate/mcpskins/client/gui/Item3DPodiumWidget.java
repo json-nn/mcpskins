@@ -5,6 +5,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import com.tacz.guns.util.RenderDistance;
+import org.lwjgl.opengl.GL11;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -12,6 +13,8 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import org.minechestplate.mcpskins.MCPSkins;
+
+import java.lang.reflect.Field;
 
 /**
  * A mouse-controlled 3D preview of an {@link ItemStack} inside a GUI screen (used by
@@ -40,6 +43,9 @@ public final class Item3DPodiumWidget {
     private ItemStack stack = ItemStack.EMPTY;
     private int x, y, width, height;
 
+    /** False when the caller already frames the podium, so it stops drawing its own. */
+    private boolean chrome = true;
+
     private float yaw = 25f;
     private float pitch = -12f;
     private float zoom = 1f;
@@ -50,6 +56,10 @@ public final class Item3DPodiumWidget {
     // If rendering throws once, fall back to a flat icon instead of retrying every frame
     private boolean renderFailed = false;
     private boolean warnedOnce = false;
+
+    public void setChrome(boolean chrome) {
+        this.chrome = chrome;
+    }
 
     public void setStack(ItemStack newStack) {
         this.stack = newStack == null ? ItemStack.EMPTY : newStack;
@@ -104,11 +114,15 @@ public final class Item3DPodiumWidget {
     public void render(GuiGraphics guiGraphics, float partialTick, int accentColor) {
         if (width <= 0 || height <= 0) return;
 
-        renderBackdropFill(guiGraphics);
+        if (chrome) {
+            renderBackdropFill(guiGraphics);
+        }
 
         if (stack.isEmpty()) {
             lastFrameNanos = -1L;
-            renderFrame(guiGraphics, accentColor);
+            if (chrome) {
+                renderFrame(guiGraphics, accentColor);
+            }
             return;
         }
 
@@ -127,6 +141,15 @@ public final class Item3DPodiumWidget {
 
         guiGraphics.enableScissor(x, y, x + width, y + height);
         try {
+            // The panel and stage behind this sit at GUI z=0, which is the middle of the
+            // depth buffer. A long gun scaled up and turned edge-on reaches past z=0 and its
+            // far end fails the depth test, so it vanishes into the background. Clearing
+            // depth here removes the thing that was occluding it. glClear honours the scissor
+            // box, so only the podium is touched, and the model keeps the full depth range
+            // for its own self-occlusion. Tooltips draw later and nearer, so they still win.
+            RenderSystem.depthMask(true);
+            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+
             if (!renderFailed) {
                 try {
                     renderItem3D(guiGraphics, centerX, centerY, baseScale);
@@ -149,7 +172,9 @@ public final class Item3DPodiumWidget {
             renderFlatFallback(guiGraphics, centerX, centerY);
         }
 
-        renderFrame(guiGraphics, accentColor);
+        if (chrome) {
+            renderFrame(guiGraphics, accentColor);
+        }
     }
 
     private void renderItem3D(GuiGraphics guiGraphics, int centerX, int centerY, float baseScale) {
@@ -184,11 +209,49 @@ public final class Item3DPodiumWidget {
                 );
                 guiGraphics.flush(); // avoids buffered draw calls surfacing over the next frame
             } finally {
+                closeHighPolyHint();
                 RenderSystem.enableCull();
                 Lighting.setupForFlatItems();
             }
         } finally {
             pose.popPose();
+        }
+    }
+
+    /**
+     * Closes the window {@link RenderDistance#markGuiRenderTimestamp()} opens.
+     * <p>
+     * TACZ picks gun model LOD from a 100ms "a GUI is rendering" flag, and the podium has to
+     * set it to get the full-detail model. Left set it also covers every other gun on screen -
+     * the rail icons, the skin tiles, the weapon held behind the panel - all of which draw at
+     * 16px and gain nothing from the extra geometry. Closing it right after the preview keeps
+     * the detail where it can actually be seen.
+     * <p>
+     * The field is private, so this is reflective and optional. If TACZ moves it the hint just
+     * stays open, which is exactly the behaviour this replaces.
+     */
+    private static final Field GUI_RENDER_TIMESTAMP = resolveTimestampField();
+
+    private static Field resolveTimestampField() {
+        try {
+            Field field = RenderDistance.class.getDeclaredField("GUI_RENDER_TIMESTAMP");
+            field.setAccessible(true);
+            return field;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            MCPSkins.LOGGER.info("[MCPSkins] TACZ RenderDistance.GUI_RENDER_TIMESTAMP not found; "
+                    + "GUI gun icons keep rendering at full detail.");
+            return null;
+        }
+    }
+
+    private static void closeHighPolyHint() {
+        if (GUI_RENDER_TIMESTAMP == null) {
+            return;
+        }
+        try {
+            GUI_RENDER_TIMESTAMP.setLong(null, -1L);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            // Best effort - worst case the hint stays open for its 100ms.
         }
     }
 

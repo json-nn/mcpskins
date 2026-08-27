@@ -57,13 +57,16 @@ public class SkinDataModels {
      * @param isNew       shows a "NEW" badge in the Armory grid, defaults to {@code false}
      * @param weight      relative likelihood of being rolled by a fuse against its tier-mates;
      *                    higher is more common, defaults to 1
+     * @param unlock      how the skin is earned, shown in the Armory while it is locked. Free
+     *                    text, empty means none. Descriptive only: ownership still comes from
+     *                    {@link SkinAttachment}, nothing here grants a skin
      */
     public record SkinEntry(String id, String name, int labelColor, String rarityId, String collection,
-                            String description, boolean isNew, int weight) {
+                            String description, boolean isNew, int weight, String unlock) {
 
         /** Legacy constructor for callers predating the Armory fields; fills safe defaults. */
         public SkinEntry(String id, String name, int labelColor) {
-            this(id, name, labelColor, DEFAULT_RARITY_ID, "", "", false, 1);
+            this(id, name, labelColor, DEFAULT_RARITY_ID, "", "", false, 1, "");
         }
 
         /** Whether this skin has a non-blank description. */
@@ -74,6 +77,11 @@ public class SkinDataModels {
         /** Whether this skin belongs to a named collection. */
         public boolean hasCollection() {
             return collection != null && !collection.isBlank();
+        }
+
+        /** Whether this skin states how it is earned. */
+        public boolean hasUnlock() {
+            return unlock != null && !unlock.isBlank();
         }
     }
 

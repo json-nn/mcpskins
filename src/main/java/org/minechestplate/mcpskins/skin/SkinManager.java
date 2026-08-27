@@ -24,8 +24,9 @@ import java.util.Map;
  * therefore be globally unique, not just unique per weapon - the recommended scheme is
  * {@code <base_gun>_<skin_name>} (e.g. {@code "m4a1_cobra"}).
  * <p>
- * The {@code rarity}, {@code collection}, {@code description}, and {@code is_new} fields
- * are optional; datapacks that predate them still load cleanly with sane defaults.
+ * The {@code rarity}, {@code collection}, {@code description}, {@code is_new} and
+ * {@code unlock} fields are optional; datapacks that predate them still load cleanly with
+ * sane defaults.
  */
 public class SkinManager extends SimpleJsonResourceReloadListener {
     public static final SkinManager INSTANCE = new SkinManager();
@@ -69,7 +70,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
 
                 skins.add(new SkinDataModels.SkinEntry(
                         "default:" + baseGun, "Default", 0xFFFFFF,
-                        SkinDataModels.DEFAULT_RARITY_ID, "", "", false, 1));
+                        SkinDataModels.DEFAULT_RARITY_ID, "", "", false, 1, ""));
 
                 json.getAsJsonArray("skins").forEach(skinElement -> {
                     JsonObject skinObj = skinElement.getAsJsonObject();
@@ -85,8 +86,10 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                     String description = skinObj.has("description") ? skinObj.get("description").getAsString() : "";
                     boolean isNew = skinObj.has("is_new") && skinObj.get("is_new").getAsBoolean();
                     int weight = skinObj.has("weight") ? Math.max(1, skinObj.get("weight").getAsInt()) : 1;
+                    String unlock = skinObj.has("unlock") ? skinObj.get("unlock").getAsString() : "";
 
-                    skins.add(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection, description, isNew, weight));
+                    skins.add(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection,
+                            description, isNew, weight, unlock));
                 });
 
                 registry.put(baseGun, new SkinDataModels.WeaponSkins(baseGun, skins));

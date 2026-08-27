@@ -44,6 +44,7 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
     private static final int MAX_NAME_LENGTH = 256;
     private static final int MAX_RARITY_LENGTH = 64;
     private static final int MAX_DESCRIPTION_LENGTH = 512;
+    private static final int MAX_UNLOCK_LENGTH = 256;
 
     /**
      * NeoForge caps clientbound payloads at ~1 MiB. There's no chunking fallback here - past
@@ -116,7 +117,9 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
                 String description = buffer.readUtf(MAX_DESCRIPTION_LENGTH);
                 boolean isNew = buffer.readBoolean();
                 int weight = buffer.readVarInt();
-                skins.add(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection, description, isNew, weight));
+                String unlock = buffer.readUtf(MAX_UNLOCK_LENGTH);
+                skins.add(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection,
+                        description, isNew, weight, unlock));
             }
             map.put(key, new SkinDataModels.WeaponSkins(baseGun, skins));
         }
@@ -149,6 +152,7 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
                 buffer.writeUtf(skin.description());
                 buffer.writeBoolean(skin.isNew());
                 buffer.writeVarInt(skin.weight());
+                buffer.writeUtf(skin.unlock());
             }
         }
 

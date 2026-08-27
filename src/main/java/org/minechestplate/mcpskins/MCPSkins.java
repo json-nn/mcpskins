@@ -125,10 +125,9 @@ public class MCPSkins {
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // 1.6.0: SkinFusionPayload now carries one skin id per consumed item instead of a
-        // count. Breaks the wire format; the registrar isn't optional, so mismatched versions
-        // can't connect.
-        PayloadRegistrar registrar = event.registrar("1.6.0");
+        // 1.7.0: SyncRegistryPayload gained a per-skin unlock string. Breaks the wire format;
+        // the registrar isn't optional, so mismatched versions can't connect.
+        PayloadRegistrar registrar = event.registrar("1.7.0");
 
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);
