@@ -47,9 +47,24 @@ public class TACZRefitSkinOverlay {
     private static final String GUN_REFIT_SCREEN_CLASS = "com.tacz.guns.client.gui.GunRefitScreen";
 
     private static final int PANEL_BOTTOM_MARGIN = 14;
-    private static final int PANEL_FADE_HEIGHT = 24;
+    /** Extra grab room above the tray, so a click just over it still counts. */
+    private static final int TRAY_CLICK_MARGIN = 24;
     private static final int TRAY_MARGIN = 8;
+    private static final int TRAY_PAD = 12;
     private static final float SLOT_MAX_SCALE = 1.35f;
+
+    /**
+     * How far out the tray reaches, in slots. Shorter than the cull in {@link #computeSlots}
+     * because slot alpha hits zero at 3, so the outermost ones contribute nothing to sit
+     * inside; what little shows of them is clipped to the frame.
+     */
+    private static final float SLOT_TRAY_REACH = 2.5f;
+
+    /**
+     * Darkens and softens the shared panel sprite. The Armory is a modal window where an
+     * opaque plate belongs; here it sits over a live screen, so it has to recede.
+     */
+    private static final int TRAY_TINT = 0xCC555555;
 
     /** Amber for a previewed but unowned skin, the one colour outside the theme. */
     private static final int PREVIEW_ACCENT = 0xFFB347;
@@ -263,103 +278,116 @@ public class TACZRefitSkinOverlay {
         int centerY = panelTop + carouselHeight / 2;
         int centerX = width / 2;
 
-        guiGraphics.fillGradient(0, panelTop - PANEL_FADE_HEIGHT, width, panelTop, 0x00000000, 0x9A000000);
-        // Whichever is larger, so an oversized slot cannot hang outside the frame.
-        int trayHeight = Math.max(carouselHeight,
-                Math.round(MCPSkinsClientConfig.carouselSlotSize() * SLOT_MAX_SCALE) + 24);
-        int trayTop = centerY - trayHeight / 2;
-        ArmoryTheme.sprite(guiGraphics, ArmoryTheme.PANEL, TRAY_MARGIN, trayTop,
-                width - TRAY_MARGIN * 2, trayHeight);
-
         animatedSkinIndex += (focusedSkinIndex - animatedSkinIndex) * 0.35f;
         if (Math.abs(focusedSkinIndex - animatedSkinIndex) < 0.01f) animatedSkinIndex = focusedSkinIndex;
 
         List<CarouselSlot> slots = computeSlots(weapon, centerX, centerY);
         Minecraft mc = Minecraft.getInstance();
 
+        // Width comes from the skin count, not from where the slots currently sit, so the tray
+        // stays put while the carousel scrolls under it. Height takes the larger of the
+        // configured height and the biggest slot, so nothing hangs outside the frame.
+        int slotSize = MCPSkinsClientConfig.carouselSlotSize();
+        int centreSlotHalf = Math.round(slotSize * SLOT_MAX_SCALE) / 2;
+        int halfSpan = Math.round(Math.min(SLOT_TRAY_REACH, weapon.skins().size() - 1)
+                * MCPSkinsClientConfig.carouselSlotSpacing()) + centreSlotHalf;
+        int trayHeight = Math.max(carouselHeight, centreSlotHalf * 2 + 24);
+        int trayTop = centerY - trayHeight / 2;
+        int trayX0 = Math.max(TRAY_MARGIN, centerX - halfSpan - TRAY_PAD);
+        int trayX1 = Math.min(width - TRAY_MARGIN, centerX + halfSpan + TRAY_PAD);
+
+        guiGraphics.fill(trayX0 - 3, trayTop - 3, trayX1 + 3, trayTop + trayHeight + 3, 0x4C000000);
+        ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.PANEL, trayX0, trayTop,
+                trayX1 - trayX0, trayHeight, TRAY_TINT);
+
         // Gentle pulse for the equipped/previewed skin's border in the center slot
         float pulse = 0.5f + 0.5f * Mth.sin((System.currentTimeMillis() % 1200L) / 1200f * ((float) Math.PI * 2f));
 
-        for (CarouselSlot slot : slots) {
-            SkinDataModels.SkinEntry entry = weapon.skins().get(slot.skinIndex());
-            boolean isCurrentlyEquipped = bareId(entry.id()).equals(equippedSkinId);
-            boolean unlocked = mc.player != null && SkinAttachment.isOwnedOrDefault(mc.player, entry.id());
-            boolean isPreviewed = previewedSkinId != null && bareId(entry.id()).equals(previewedSkinId);
-            boolean isCenter = slot.distance() < 0.05f;
+        guiGraphics.enableScissor(trayX0 + 2, trayTop + 1, trayX1 - 2, trayTop + trayHeight - 1);
+        try {
+            for (CarouselSlot slot : slots) {
+                SkinDataModels.SkinEntry entry = weapon.skins().get(slot.skinIndex());
+                boolean isCurrentlyEquipped = bareId(entry.id()).equals(equippedSkinId);
+                boolean unlocked = mc.player != null && SkinAttachment.isOwnedOrDefault(mc.player, entry.id());
+                boolean isPreviewed = previewedSkinId != null && bareId(entry.id()).equals(previewedSkinId);
+                boolean isCenter = slot.distance() < 0.05f;
 
-            int half = slot.size() / 2;
-            int x0 = slot.centerX() - half, y0 = slot.centerY() - half;
-            boolean hovered = mouseX >= x0 && mouseX <= x0 + slot.size() && mouseY >= y0 && mouseY <= y0 + slot.size();
-            int alphaByte = Math.round(slot.alpha() * 255) << 24;
+                int half = slot.size() / 2;
+                int x0 = slot.centerX() - half, y0 = slot.centerY() - half;
+                boolean hovered = mouseX >= x0 && mouseX <= x0 + slot.size() && mouseY >= y0 && mouseY <= y0 + slot.size();
+                int alphaByte = Math.round(slot.alpha() * 255) << 24;
 
-            int rarity = ArmoryTheme.readable(entry.labelColor());
-            int ringRgb = isCurrentlyEquipped ? ArmoryTheme.ACCENT
-                    : isPreviewed ? PREVIEW_ACCENT
-                    : hovered && !isCenter ? ArmoryTheme.TEXT_50
-                    : rarity;
+                int rarity = ArmoryTheme.readable(entry.labelColor());
+                int ringRgb = isCurrentlyEquipped ? ArmoryTheme.ACCENT
+                        : isPreviewed ? PREVIEW_ACCENT
+                        : hovered && !isCenter ? ArmoryTheme.TEXT_50
+                        : rarity;
 
-            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE, x0, y0, slot.size(), slot.size(),
-                    alphaByte | 0xFFFFFF);
-            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE_RING, x0, y0, slot.size(), slot.size(),
-                    (Math.round(slot.alpha() * (isCenter ? 255 : 115)) << 24) | (ringRgb & 0xFFFFFF));
-            guiGraphics.fill(x0 + 2, y0 + 1, x0 + slot.size() - 2, y0 + 2, (rarity & 0xFFFFFF) | alphaByte);
+                ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE, x0, y0, slot.size(), slot.size(),
+                        alphaByte | 0xFFFFFF);
+                ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE_RING, x0, y0, slot.size(), slot.size(),
+                        (Math.round(slot.alpha() * (isCenter ? 255 : 115)) << 24) | (ringRgb & 0xFFFFFF));
+                guiGraphics.fill(x0 + 2, y0 + 1, x0 + slot.size() - 2, y0 + 2, (rarity & 0xFFFFFF) | alphaByte);
 
-            if (isCenter && (isCurrentlyEquipped || isPreviewed)) {
-                int glowRgb = isCurrentlyEquipped ? ArmoryTheme.ACCENT : PREVIEW_ACCENT;
-                int glowAlpha = Math.round(slot.alpha() * (0x40 + Math.round(pulse * 0x60))) << 24;
-                ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE_RING, x0 - 2, y0 - 2,
-                        slot.size() + 4, slot.size() + 4, glowAlpha | (glowRgb & 0xFFFFFF));
-            }
-
-            // Same path as the held weapon, so an optional "<skinId>_icon.png" is used.
-            ItemStack thumb = TACZSkinHelper.createGunStack(weapon.baseGun(), entry.id());
-            int iconOffset = (slot.size() - 16) / 2;
-            guiGraphics.renderItem(thumb, x0 + iconOffset, y0 + iconOffset);
-
-            if (!unlocked && !isPreviewed) {
-                guiGraphics.fill(x0 + 1, y0 + 1, x0 + slot.size() - 1, y0 + slot.size() - 1,
-                        (Math.round(slot.alpha() * 0x8C) << 24) | 0x0A0A0C);
-                ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_LOCK,
-                        x0 + slot.size() - 11, y0 + slot.size() - 11, 8, 8,
-                        (Math.round(slot.alpha() * 255) << 24) | (ArmoryTheme.TEXT_50 & 0xFFFFFF));
-            } else if (!unlocked) {
-                // Previewed but not owned - amber tint instead of a dark overlay
-                guiGraphics.fill(x0, y0, x0 + slot.size(), y0 + slot.size(), (Math.round(slot.alpha() * 0x30) << 24) | 0xFFB347);
-            }
-
-            if (isCenter) {
-                Component name = Component.literal(entry.name());
-                guiGraphics.drawCenteredString(mc.font, name, centerX, trayTop + 5, rarity);
-
-                Component status;
-                int statusColor;
-                if (isCurrentlyEquipped) {
-                    status = Component.translatable("gui.mcpskins.status_equipped");
-                    statusColor = ArmoryTheme.ACCENT;
-                } else if (isPreviewed) {
-                    status = Component.translatable("gui.mcpskins.status_preview_locked");
-                    statusColor = PREVIEW_ACCENT;
-                } else if (unlocked) {
-                    status = Component.translatable("gui.mcpskins.status_click_to_equip");
-                    statusColor = ArmoryTheme.TEXT_50;
-                } else {
-                    status = Component.translatable("gui.mcpskins.status_click_to_preview");
-                    statusColor = 0xFF8080;
+                if (isCenter && (isCurrentlyEquipped || isPreviewed)) {
+                    int glowRgb = isCurrentlyEquipped ? ArmoryTheme.ACCENT : PREVIEW_ACCENT;
+                    int glowAlpha = Math.round(slot.alpha() * (0x40 + Math.round(pulse * 0x60))) << 24;
+                    ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE_RING, x0 - 2, y0 - 2,
+                            slot.size() + 4, slot.size() + 4, glowAlpha | (glowRgb & 0xFFFFFF));
                 }
-                guiGraphics.drawCenteredString(mc.font, status, centerX, trayTop + trayHeight - 13, statusColor);
 
-                String counter = (slot.skinIndex() + 1) + " / " + weapon.skins().size();
-                guiGraphics.drawString(mc.font, counter, width - TRAY_MARGIN - 6 - mc.font.width(counter),
-                        trayTop + 5, ArmoryTheme.TEXT_35, false);
+                // Same path as the held weapon, so an optional "<skinId>_icon.png" is used.
+                ItemStack thumb = TACZSkinHelper.createGunStack(weapon.baseGun(), entry.id());
+                int iconOffset = (slot.size() - 16) / 2;
+                guiGraphics.renderItem(thumb, x0 + iconOffset, y0 + iconOffset);
+
+                if (!unlocked && !isPreviewed) {
+                    guiGraphics.fill(x0 + 1, y0 + 1, x0 + slot.size() - 1, y0 + slot.size() - 1,
+                            (Math.round(slot.alpha() * 0x8C) << 24) | 0x0A0A0C);
+                    ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_LOCK,
+                            x0 + slot.size() - 11, y0 + slot.size() - 11, 8, 8,
+                            (Math.round(slot.alpha() * 255) << 24) | (ArmoryTheme.TEXT_50 & 0xFFFFFF));
+                } else if (!unlocked) {
+                    // Previewed but not owned - amber tint instead of a dark overlay
+                    guiGraphics.fill(x0, y0, x0 + slot.size(), y0 + slot.size(), (Math.round(slot.alpha() * 0x30) << 24) | 0xFFB347);
+                }
+
+                if (isCenter) {
+                    Component name = Component.literal(entry.name());
+                    guiGraphics.drawCenteredString(mc.font, name, centerX, trayTop + 5, rarity);
+
+                    Component status;
+                    int statusColor;
+                    if (isCurrentlyEquipped) {
+                        status = Component.translatable("gui.mcpskins.status_equipped");
+                        statusColor = ArmoryTheme.ACCENT;
+                    } else if (isPreviewed) {
+                        status = Component.translatable("gui.mcpskins.status_preview_locked");
+                        statusColor = PREVIEW_ACCENT;
+                    } else if (unlocked) {
+                        status = Component.translatable("gui.mcpskins.status_click_to_equip");
+                        statusColor = ArmoryTheme.TEXT_50;
+                    } else {
+                        status = Component.translatable("gui.mcpskins.status_click_to_preview");
+                        statusColor = 0xFF8080;
+                    }
+                    guiGraphics.drawCenteredString(mc.font, status, centerX, trayTop + trayHeight - 13, statusColor);
+
+                    String counter = (slot.skinIndex() + 1) + " / " + weapon.skins().size();
+                    guiGraphics.drawString(mc.font, counter, trayX1 - 6 - mc.font.width(counter),
+                            trayTop + 5, ArmoryTheme.TEXT_35, false);
+                }
             }
+        } finally {
+            guiGraphics.disableScissor();
         }
 
         if (focusedSkinIndex > 0) {
-            guiGraphics.drawCenteredString(mc.font, Component.literal("‹"), TRAY_MARGIN + 8,
+            guiGraphics.drawCenteredString(mc.font, Component.literal("‹"), trayX0 + 7,
                     centerY - 4, ArmoryTheme.TEXT_50);
         }
         if (focusedSkinIndex < weapon.skins().size() - 1) {
-            guiGraphics.drawCenteredString(mc.font, Component.literal("›"), width - TRAY_MARGIN - 8,
+            guiGraphics.drawCenteredString(mc.font, Component.literal("›"), trayX1 - 7,
                     centerY - 4, ArmoryTheme.TEXT_50);
         }
     }
@@ -404,7 +432,7 @@ public class TACZRefitSkinOverlay {
 
         int carouselHeight = MCPSkinsClientConfig.carouselHeight();
         int panelTop = screen.height - carouselHeight - PANEL_BOTTOM_MARGIN;
-        if (mouseY < panelTop - PANEL_FADE_HEIGHT) return;
+        if (mouseY < panelTop - TRAY_CLICK_MARGIN) return;
 
         int centerX = screen.width / 2;
         int centerY = panelTop + carouselHeight / 2;
@@ -638,10 +666,12 @@ public class TACZRefitSkinOverlay {
         for (int i = 0; i < skins.size(); i++) {
             float offset = i - animatedSkinIndex;
             float dist = Math.abs(offset);
-            if (dist > 3.2f) continue;
+            float alpha = Mth.clamp(1.2f - dist * 0.4f, 0f, 1f);
+            // Cull on alpha, not distance: renderItem ignores it, so a fully faded slot would
+            // still draw its icon with no tile behind it.
+            if (alpha <= 0.02f) continue;
 
             float scale = Mth.clamp(SLOT_MAX_SCALE - dist * 0.3f, 0.4f, SLOT_MAX_SCALE);
-            float alpha = Mth.clamp(1.2f - dist * 0.4f, 0f, 1f);
             int size = Math.round(slotBase * scale);
             int cx = centerX + Math.round(offset * spacing);
 
