@@ -27,6 +27,7 @@ import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
 import org.minechestplate.mcpskins.skin.RarityManager;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
+import org.minechestplate.mcpskins.skin.SkinTranslations;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
@@ -133,7 +134,7 @@ public class SkinUnlockItem extends Item {
             SkinAttachment.unlockSkin(player, skinId);
             PacketDistributor.sendToPlayer((ServerPlayer) player, new SyncUnlocksPayload(new ArrayList<>(player.getData(SkinAttachment.UNLOCKED_SKINS))));
 
-            player.sendSystemMessage(buildUnlockChatMessage(skinId));
+            player.sendSystemMessage(buildUnlockChatMessage(localeOf(player), skinId));
         } else {
             // Played client-side for instant feedback, no round-trip to the server needed
             level.playSound(player, player.blockPosition(), SoundEvents.PLAYER_LEVELUP, SoundSource.PLAYERS, 0.5f, 1.5f);
@@ -150,7 +151,7 @@ public class SkinUnlockItem extends Item {
      * Builds the chat message shown on a successful unlock, with the skin name colored
      * by its label color and the weapon name showing a hover preview with the skin applied.
      */
-    private static Component buildUnlockChatMessage(String skinId) {
+    private static Component buildUnlockChatMessage(String locale, String skinId) {
         SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(skinId);
 
         if (lookup == null) {
@@ -159,7 +160,7 @@ public class SkinUnlockItem extends Item {
         }
 
         ItemStack previewGun = TACZSkinHelper.createGunStack(lookup.weapon().baseGun(), lookup.skin().id());
-        Component skinName = skinNameComponent(lookup.skin());
+        Component skinName = skinNameComponent(locale, lookup.skin());
 
         if (!previewGun.isEmpty()) {
             Component gunName = TACZSkinHelper.gunDisplayName(lookup.weapon().baseGun()).copy().withStyle(style -> style
@@ -177,8 +178,15 @@ public class SkinUnlockItem extends Item {
      * rarity and clickable, so the player can jump straight to that skin in the Armory
      * (see {@code ArmoryClientCommand}'s "skin" argument) instead of hunting for it.
      */
-    private static Component skinNameComponent(SkinDataModels.SkinEntry skin) {
-        return Component.literal(skin.name())
+    /** The player's own language, so server-sent text matches what their Armory shows. */
+    private static String localeOf(net.minecraft.world.entity.player.Player player) {
+        return player instanceof net.minecraft.server.level.ServerPlayer server
+                ? server.clientInformation().language()
+                : SkinTranslations.DEFAULT_LOCALE;
+    }
+
+    private static Component skinNameComponent(String locale, SkinDataModels.SkinEntry skin) {
+        return Component.literal(SkinTranslations.text(locale, SkinTranslations.skinKey(skin.id(), "name"), skin.name()))
                 .withStyle(style -> style
                         .withColor(skin.labelColor())
                         .withBold(true)
@@ -209,7 +217,7 @@ public class SkinUnlockItem extends Item {
         SkinDataModels.Rarity rarity = RarityManager.INSTANCE.get(heldLookup.skin().rarityId());
         if (!rarity.fusable()) {
             if (!level.isClientSide()) {
-                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_unfusable", rarity.label()).withStyle(ChatFormatting.RED));
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_unfusable", rarity.label(localeOf(player))).withStyle(ChatFormatting.RED));
             }
             return InteractionResultHolder.fail(stack);
         }
@@ -230,7 +238,7 @@ public class SkinUnlockItem extends Item {
         if (viable.isEmpty()) {
             if (!level.isClientSide()) {
                 SkinDataModels.Rarity named = RarityManager.INSTANCE.get(targets.get(0).rarityId());
-                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_no_higher_rarity", named.label()).withStyle(ChatFormatting.YELLOW));
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_no_higher_rarity", named.label(localeOf(player))).withStyle(ChatFormatting.YELLOW));
             }
             return InteractionResultHolder.fail(stack);
         }
@@ -244,7 +252,7 @@ public class SkinUnlockItem extends Item {
         int availableCount = countItems(player, matchingSlots);
         if (consumesItems && availableCount < fuseCost) {
             if (!level.isClientSide()) {
-                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_not_enough", fuseCost, rarity.label(), availableCount).withStyle(ChatFormatting.RED));
+                player.sendSystemMessage(Component.translatable("message.mcpskins.fuse_not_enough", fuseCost, rarity.label(localeOf(player)), availableCount).withStyle(ChatFormatting.RED));
             }
             return InteractionResultHolder.fail(stack);
         }
@@ -273,7 +281,7 @@ public class SkinUnlockItem extends Item {
             consumeSlots(player, matchingSlots, fuseCost);
         }
         grantUnlockItem(player, hand, stack, rolled.skin().id());
-        player.sendSystemMessage(buildFuseChatMessage(rarity, rolled));
+        player.sendSystemMessage(buildFuseChatMessage(localeOf(player), rarity, rolled));
         PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
                 SkinFusionPayload.create(player, hand, fusedSkinIds, rolled.skin().id()));
 
@@ -413,18 +421,18 @@ public class SkinUnlockItem extends Item {
         player.containerMenu.broadcastChanges();
     }
 
-    private static Component buildFuseChatMessage(SkinDataModels.Rarity fromRarity, SkinDataModels.SkinLookupResult rolled) {
+    private static Component buildFuseChatMessage(String locale, SkinDataModels.Rarity fromRarity, SkinDataModels.SkinLookupResult rolled) {
         ItemStack previewGun = TACZSkinHelper.createGunStack(rolled.weapon().baseGun(), rolled.skin().id());
-        Component skinName = skinNameComponent(rolled.skin());
+        Component skinName = skinNameComponent(locale, rolled.skin());
 
         if (!previewGun.isEmpty()) {
             Component gunName = TACZSkinHelper.gunDisplayName(rolled.weapon().baseGun()).copy().withStyle(style -> style
                     .withColor(ChatFormatting.YELLOW)
                     .withUnderlined(true)
                     .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(previewGun))));
-            return Component.translatable("message.mcpskins.fuse_success_for", fromRarity.label(), skinName, gunName).withStyle(ChatFormatting.GREEN);
+            return Component.translatable("message.mcpskins.fuse_success_for", fromRarity.label(locale), skinName, gunName).withStyle(ChatFormatting.GREEN);
         }
-        return Component.translatable("message.mcpskins.fuse_success", fromRarity.label(), skinName).withStyle(ChatFormatting.GREEN);
+        return Component.translatable("message.mcpskins.fuse_success", fromRarity.label(locale), skinName).withStyle(ChatFormatting.GREEN);
     }
 
 }

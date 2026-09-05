@@ -17,6 +17,7 @@ import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
 import org.minechestplate.mcpskins.MCPSkins;
+import org.minechestplate.mcpskins.client.render.ClientAttachmentIndexPatcher;
 import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 import org.minechestplate.mcpskins.client.render.GunModelPatcher;
 import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
@@ -25,6 +26,7 @@ import org.minechestplate.mcpskins.skin.RarityManager;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
+import org.minechestplate.mcpskins.skin.SkinTranslations;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
 import java.util.ArrayList;
@@ -103,6 +105,8 @@ public class SkinArmoryScreen extends Screen {
     private static final int STAGE_INSET = 3;
     private static final int CHIP_PAD = 8;
     private static final int SEARCH_MIN_W = 46;
+    /** Enough for an ellipsis plus a glyph, so a squeezed chip still reads as a button. */
+    private static final int MIN_CHIP_W = 18;
 
     /** A pipe cannot occur in a gun or skin id, so composite keys never collide. */
     private static final char SEPARATOR = '|';
@@ -122,7 +126,17 @@ public class SkinArmoryScreen extends Screen {
     }
 
     /** Every zone for this frame, so render and hit-testing read the same numbers. */
-    private record Layout(Tier tier, Rect panel, Rect search, Rect[] filters, Rect custom, Rect sort,
+    /** The chip captions as measured, so what is drawn is exactly what was laid out. */
+    private record HeaderLabels(String[] filters, String custom, String sort,
+                                int filterW, int customW, int sortW) {
+
+        int totalWidth() {
+            int count = StatusFilter.values().length;
+            return filterW * count + GAP_TIGHT * count + customW + GAP + sortW;
+        }
+    }
+
+    private record Layout(Tier tier, HeaderLabels labels, Rect panel, Rect search, Rect[] filters, Rect custom, Rect sort,
                           Rect rail, Rect railList, Rect stage, Rect tiles, Rect info, Rect equip) {
     }
 
@@ -229,29 +243,31 @@ public class SkinArmoryScreen extends Screen {
         int innerX1 = panel.x1() - PAD;
         int headerY = panel.y0() + PAD;
 
-        // Laid out from the right edge inward, so the search field absorbs the slack.
-        int sortW = chipWidth(sortModeLabel(sortMode, tier));
-        int filterW = 0;
-        for (StatusFilter f : StatusFilter.values()) {
-            filterW = Math.max(filterW, chipWidth(statusFilterLabel(f, tier)));
+        // Laid out from the right edge inward, so the search field absorbs the slack. Chip
+        // widths are measured rather than assumed, because a translated caption can be far
+        // wider than the English one and used to run over the search field.
+        int headerW = innerX1 - innerX0;
+        HeaderLabels labels = headerLabels(tier);
+        if (tier != Tier.COMPACT && labels.totalWidth() + SEARCH_MIN_W + GAP > headerW) {
+            labels = headerLabels(Tier.COMPACT); // the short captions, before squeezing anything
         }
-        int customW = chipWidth(customLabel(tier));
+        int chipRoom = headerW - SEARCH_MIN_W - GAP;
+        if (labels.totalWidth() > chipRoom) {
+            labels = squeeze(labels, chipRoom);
+        }
 
-        int chipsW = filterW * StatusFilter.values().length
-                + GAP_TIGHT * (StatusFilter.values().length - 1)
-                + GAP_TIGHT + customW + GAP + sortW;
-        int chipsX = Math.max(innerX0 + SEARCH_MIN_W + GAP, innerX1 - chipsW);
+        int chipsX = Math.max(innerX0 + SEARCH_MIN_W + GAP, innerX1 - labels.totalWidth());
 
         Rect[] filters = new Rect[StatusFilter.values().length];
         int cursor = chipsX;
         for (StatusFilter f : StatusFilter.values()) {
-            filters[f.ordinal()] = new Rect(cursor, headerY, cursor + filterW, headerY + CONTROL_H);
-            cursor += filterW + GAP_TIGHT;
+            filters[f.ordinal()] = new Rect(cursor, headerY, cursor + labels.filterW(), headerY + CONTROL_H);
+            cursor += labels.filterW() + GAP_TIGHT;
         }
-        Rect custom = new Rect(cursor, headerY, cursor + customW, headerY + CONTROL_H);
-        cursor += customW + GAP;
-        Rect sort = new Rect(cursor, headerY, cursor + sortW, headerY + CONTROL_H);
-        Rect search = new Rect(innerX0, headerY, Math.max(innerX0 + SEARCH_MIN_W, chipsX - GAP), headerY + CONTROL_H);
+        Rect custom = new Rect(cursor, headerY, cursor + labels.customW(), headerY + CONTROL_H);
+        cursor += labels.customW() + GAP;
+        Rect sort = new Rect(cursor, headerY, cursor + labels.sortW(), headerY + CONTROL_H);
+        Rect search = new Rect(innerX0, headerY, chipsX - GAP, headerY + CONTROL_H);
 
         int contentY0 = headerY + CONTROL_H + GAP;
         int contentY1 = panel.y1() - PAD;
@@ -269,11 +285,49 @@ public class SkinArmoryScreen extends Screen {
         Rect tiles = new Rect(detail.x0(), detail.y0() + SECTION_H,
                 detail.x1(), Math.max(detail.y0() + SECTION_H + TILE_H, info.y0() - GAP_TIGHT));
 
-        return new Layout(tier, panel, search, filters, custom, sort, rail, railList, stage, tiles, info, equip);
+        return new Layout(tier, labels, panel, search, filters, custom, sort, rail, railList, stage, tiles, info, equip);
     }
 
-    private int chipWidth(Component label) {
+    private int chipWidth(String label) {
         return this.font.width(label) + CHIP_PAD * 2;
+    }
+
+    private HeaderLabels headerLabels(Tier tier) {
+        String[] filters = new String[StatusFilter.values().length];
+        int filterW = 0;
+        for (StatusFilter f : StatusFilter.values()) {
+            filters[f.ordinal()] = statusFilterLabel(f, tier).getString();
+            filterW = Math.max(filterW, chipWidth(filters[f.ordinal()]));
+        }
+        String custom = customLabel(tier).getString();
+        String sort = sortModeLabel(sortMode, tier).getString();
+        return new HeaderLabels(filters, custom, sort, filterW, chipWidth(custom), chipWidth(sort));
+    }
+
+    /**
+     * Last resort when even the short captions overrun the header: shrink every chip by the
+     * same factor and cut its caption to match, so the row stays inside the panel instead of
+     * overlapping the search field.
+     */
+    private HeaderLabels squeeze(HeaderLabels labels, int available) {
+        int count = StatusFilter.values().length;
+        int gaps = GAP_TIGHT * count + GAP;
+        int textRoom = Math.max(0, available - gaps);
+        int current = Math.max(1, labels.totalWidth() - gaps);
+        double factor = Math.min(1.0, textRoom / (double) current);
+
+        int filterW = Math.max(MIN_CHIP_W, (int) (labels.filterW() * factor));
+        int customW = Math.max(MIN_CHIP_W, (int) (labels.customW() * factor));
+        int sortW = Math.max(MIN_CHIP_W, (int) (labels.sortW() * factor));
+
+        String[] filters = new String[count];
+        for (int i = 0; i < count; i++) {
+            filters[i] = ArmoryTheme.truncate(this.font, labels.filters()[i], filterW - CHIP_PAD, ArmoryTheme.BASE);
+        }
+        return new HeaderLabels(filters,
+                ArmoryTheme.truncate(this.font, labels.custom(), customW - CHIP_PAD, ArmoryTheme.BASE),
+                ArmoryTheme.truncate(this.font, labels.sort(), sortW - CHIP_PAD, ArmoryTheme.BASE),
+                filterW, customW, sortW);
     }
 
     // -----------------------------------------------------------------------------------
@@ -292,8 +346,11 @@ public class SkinArmoryScreen extends Screen {
         String query = searchBox != null ? searchBox.getValue().trim().toLowerCase(Locale.ROOT) : "";
         boolean searching = !query.isEmpty();
 
+        // Guns first, then attachments, so attachments read as their own section instead of
+        // scattering through the weapon list by name.
         List<SkinDataModels.WeaponSkins> weapons = new ArrayList<>(SkinManager.INSTANCE.getRegistry().values());
-        weapons.sort(Comparator.comparing(w -> weaponDisplayName(w.baseGun()), String.CASE_INSENSITIVE_ORDER));
+        weapons.sort(Comparator.comparing(SkinDataModels.WeaponSkins::isAttachment)
+                .thenComparing(w -> weaponDisplayName(w.baseGun()), String.CASE_INSENSITIVE_ORDER));
 
         for (SkinDataModels.WeaponSkins weapon : weapons) {
             boolean weaponMatches = !searching
@@ -305,7 +362,7 @@ public class SkinArmoryScreen extends Screen {
                 if (statusFilter == StatusFilter.LOCKED && unlocked) continue;
                 if (customModelOnly && !hasCustomModel(weapon, entry)) continue;
                 if (searching && !weaponMatches
-                        && !entry.name().toLowerCase(Locale.ROOT).contains(query)) {
+                        && !SkinTranslations.name(entry).toLowerCase(Locale.ROOT).contains(query)) {
                     continue;
                 }
                 matched.add(entry);
@@ -398,9 +455,9 @@ public class SkinArmoryScreen extends Screen {
         Player player = Minecraft.getInstance().player;
         Map<String, SkinDataModels.WeaponSkins> registry = SkinManager.INSTANCE.getRegistry();
         if (player != null) {
-            String heldMain = TACZSkinHelper.getGunId(player.getMainHandItem());
+            String heldMain = TACZSkinHelper.getTaczId(player.getMainHandItem());
             if (heldMain != null && registry.containsKey(heldMain)) return heldMain;
-            String heldOff = TACZSkinHelper.getGunId(player.getOffhandItem());
+            String heldOff = TACZSkinHelper.getTaczId(player.getOffhandItem());
             if (heldOff != null && registry.containsKey(heldOff)) return heldOff;
         }
         return registry.isEmpty() ? null : registry.keySet().iterator().next();
@@ -417,9 +474,6 @@ public class SkinArmoryScreen extends Screen {
         Layout layout = computeLayout();
         Rect panel = layout.panel();
 
-        // A fill, not a sprite: blitSprite is immediate mode, so a nine-slice hidden behind
-        // an opaque panel would cost ~35 draw calls for a few pixels of edge.
-        guiGraphics.fill(panel.x0() - 3, panel.y0() - 3, panel.x1() + 3, panel.y1() + 3, 0x66000000);
         ArmoryTheme.sprite(guiGraphics, ArmoryTheme.PANEL, panel.x0(), panel.y0(), panel.width(), panel.height());
 
         renderHeader(guiGraphics, layout, mouseX, mouseY);
@@ -451,13 +505,13 @@ public class SkinArmoryScreen extends Screen {
 
         for (StatusFilter filter : StatusFilter.values()) {
             renderChip(guiGraphics, layout.filters()[filter.ordinal()],
-                    statusFilterLabel(filter, layout.tier()), statusFilter == filter, mouseX, mouseY);
+                    layout.labels().filters()[filter.ordinal()], statusFilter == filter, mouseX, mouseY);
         }
-        renderChip(guiGraphics, layout.custom(), customLabel(layout.tier()), customModelOnly, mouseX, mouseY);
-        renderChip(guiGraphics, layout.sort(), sortModeLabel(sortMode, layout.tier()), false, mouseX, mouseY);
+        renderChip(guiGraphics, layout.custom(), layout.labels().custom(), customModelOnly, mouseX, mouseY);
+        renderChip(guiGraphics, layout.sort(), layout.labels().sort(), false, mouseX, mouseY);
     }
 
-    private void renderChip(GuiGraphics guiGraphics, Rect rect, Component label, boolean on, int mouseX, int mouseY) {
+    private void renderChip(GuiGraphics guiGraphics, Rect rect, String label, boolean on, int mouseX, int mouseY) {
         ArmoryTheme.sprite(guiGraphics, on ? ArmoryTheme.CHIP_ON : ArmoryTheme.CHIP,
                 rect.x0(), rect.y0(), rect.width(), rect.height());
         if (!on && rect.contains(mouseX, mouseY)) {
@@ -551,7 +605,7 @@ public class SkinArmoryScreen extends Screen {
         boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
         int lockRoom = unlocked ? 0 : ICON + GAP_TIGHT;
         int nameX = x0 + 6;
-        String name = ArmoryTheme.truncate(this.font, entry.name(),
+        String name = ArmoryTheme.truncate(this.font, SkinTranslations.name(entry),
                 list.x1() - nameX - lockRoom - 2, ArmoryTheme.SMALL);
         ArmoryTheme.text(guiGraphics, this.font, name, nameX, y + 3, ArmoryTheme.SMALL,
                 selected ? ArmoryTheme.TEXT : unlocked ? ArmoryTheme.TEXT_72 : ArmoryTheme.TEXT_50);
@@ -564,9 +618,6 @@ public class SkinArmoryScreen extends Screen {
     private void renderStage(GuiGraphics guiGraphics, Layout layout) {
         Rect stage = layout.stage();
         ArmoryTheme.sprite(guiGraphics, ArmoryTheme.STAGE, stage.x0(), stage.y0(), stage.width(), stage.height());
-        // The stage sprite tiles its interior, so the falloff has to be a fill.
-        guiGraphics.fillGradient(stage.x0() + 1, stage.y0() + 1, stage.x1() - 1, stage.y1() - 1,
-                0x00000000, ArmoryTheme.STAGE_FLOOR);
 
         SkinDataModels.SkinEntry entry = selectedSkin();
         if (entry == null) {
@@ -595,14 +646,14 @@ public class SkinArmoryScreen extends Screen {
         podium.render(guiGraphics, 0f, accent);
 
         int textY = stage.y0() + podiumH + GAP_TIGHT;
-        String collection = entry.hasCollection() ? entry.collection().toUpperCase(Locale.ROOT) : "";
+        String collection = entry.hasCollection() ? SkinTranslations.collection(entry).toUpperCase(Locale.ROOT) : "";
         if (!collection.isEmpty()) {
             ArmoryTheme.text(guiGraphics, this.font, collection, stage.x0() + PAD, textY,
                     ArmoryTheme.SMALL, ArmoryTheme.TEXT_35);
         }
         int nameY = textY + (collection.isEmpty() ? 0 : 8);
         ArmoryTheme.text(guiGraphics, this.font,
-                ArmoryTheme.truncate(this.font, entry.name(), stage.width() - PAD * 2, layout.tier().nameScale),
+                ArmoryTheme.truncate(this.font, SkinTranslations.name(entry), stage.width() - PAD * 2, layout.tier().nameScale),
                 stage.x0() + PAD, nameY, layout.tier().nameScale, ArmoryTheme.TEXT);
 
         int rarityY = nameY + Math.round(8f * layout.tier().nameScale) + 3;
@@ -613,7 +664,7 @@ public class SkinArmoryScreen extends Screen {
 
         if (layout.tier().lore && entry.hasDescription()) {
             ArmoryTheme.text(guiGraphics, this.font,
-                    ArmoryTheme.truncate(this.font, entry.description(), stage.width() - PAD * 2, ArmoryTheme.SMALL),
+                    ArmoryTheme.truncate(this.font, SkinTranslations.description(entry), stage.width() - PAD * 2, ArmoryTheme.SMALL),
                     stage.x0() + PAD, rarityY + 10, ArmoryTheme.SMALL, ArmoryTheme.TEXT_50);
         }
 
@@ -665,7 +716,8 @@ public class SkinArmoryScreen extends Screen {
                 guiGraphics.renderItem(thumb, x + tileW / 2 - 8, y + TILE_H / 2 - 8);
 
                 if (!unlocked) {
-                    guiGraphics.fill(x + 1, y + 1, x + tileW - 1, y + TILE_H - 1, 0x8C0A0A0C);
+                    ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW, x + 1, y + 1,
+                            tileW - 2, TILE_H - 2, ArmoryTheme.LOCKED_DIM);
                     ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_LOCK,
                             x + tileW - ICON - 3, y + TILE_H - ICON - 3, ICON, ICON, ArmoryTheme.TEXT_50);
                 }
@@ -675,7 +727,6 @@ public class SkinArmoryScreen extends Screen {
                         : hovered ? ArmoryTheme.TEXT_50
                         : ArmoryTheme.withAlpha(ArmoryTheme.readable(entry.labelColor()), 0.45f);
                 ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE_RING, x, y, tileW, TILE_H, ring);
-                guiGraphics.fill(x + 2, y + 1, x + tileW - 2, y + 2, ArmoryTheme.readable(entry.labelColor()));
 
                 if (equipped) {
                     ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_CHECK,
@@ -709,26 +760,37 @@ public class SkinArmoryScreen extends Screen {
 
         // Built, not fixed, so a skin with no collection leaves no placeholder row.
         List<String[]> rows = new ArrayList<>();
-        if (!unlocked && entry.hasUnlock()) {
+        if (!unlocked && entry.hasLockedText()) {
             rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_unlock").getString(),
-                    entry.unlock()});
+                    SkinTranslations.lockedText(entry)});
         }
         if (entry.hasCollection()) {
             rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_set").getString(),
-                    entry.collection()});
+                    SkinTranslations.collection(entry)});
         }
         rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_rarity").getString(),
                 RarityManager.INSTANCE.get(entry.rarityId()).label().getString()});
 
-        for (int i = 0; i < Math.min(2, rows.size()); i++) {
-            infoRow(guiGraphics, info, i, rows.get(i)[0], rows.get(i)[1]);
+        // One column for every caption on show, so the values line up instead of stepping.
+        int shown = Math.min(2, rows.size());
+        int labelW = 0;
+        for (int i = 0; i < shown; i++) {
+            labelW = Math.max(labelW, ArmoryTheme.scaledWidth(this.font,
+                    rows.get(i)[0].toUpperCase(Locale.ROOT), ArmoryTheme.SMALL));
+        }
+        labelW = Math.min(labelW + GAP_TIGHT, info.width() / 2);
+
+        for (int i = 0; i < shown; i++) {
+            infoRow(guiGraphics, info, i, labelW, rows.get(i)[0], rows.get(i)[1]);
         }
     }
 
-    private void infoRow(GuiGraphics guiGraphics, Rect info, int index, String label, String value) {
+    /** {@code labelW} is measured across the whole block, so a longer caption in one language
+     *  widens the column rather than running into its own value. */
+    private void infoRow(GuiGraphics guiGraphics, Rect info, int index, int labelW, String label, String value) {
         int y = info.y0() + index * INFO_ROW_H;
-        int labelW = Math.min(34, info.width() / 3);
-        ArmoryTheme.text(guiGraphics, this.font, label.toUpperCase(Locale.ROOT),
+        ArmoryTheme.text(guiGraphics, this.font,
+                ArmoryTheme.truncate(this.font, label.toUpperCase(Locale.ROOT), labelW - GAP_TIGHT, ArmoryTheme.SMALL),
                 info.x0(), y, ArmoryTheme.SMALL, ArmoryTheme.TEXT_28);
         ArmoryTheme.text(guiGraphics, this.font,
                 ArmoryTheme.truncate(this.font, value, info.width() - labelW, ArmoryTheme.SMALL),
@@ -792,11 +854,11 @@ public class SkinArmoryScreen extends Screen {
         boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, hovered.id());
 
         List<Component> lines = new ArrayList<>();
-        lines.add(Component.literal(hovered.name()).withStyle(s -> s.withColor(hovered.labelColor())));
+        lines.add(Component.literal(SkinTranslations.name(hovered)).withStyle(s -> s.withColor(hovered.labelColor())));
         lines.add(RarityManager.INSTANCE.get(hovered.rarityId()).label());
         if (!unlocked) {
-            lines.add(hovered.hasUnlock()
-                    ? Component.literal(hovered.unlock()).withStyle(ChatFormatting.GRAY)
+            lines.add(hovered.hasLockedText()
+                    ? Component.literal(SkinTranslations.lockedText(hovered)).withStyle(ChatFormatting.GRAY)
                     : Component.translatable("gui.mcpskins.armory.status_locked").withStyle(ChatFormatting.RED));
         }
         guiGraphics.renderTooltip(this.font, lines, Optional.empty(), mouseX, mouseY);
@@ -1078,8 +1140,8 @@ public class SkinArmoryScreen extends Screen {
         if (entry == null || group == null || player == null) return;
 
         if (!SkinAttachment.isOwnedOrDefault(player, entry.id())) {
-            statusMessage = entry.hasUnlock()
-                    ? entry.unlock()
+            statusMessage = entry.hasLockedText()
+                    ? SkinTranslations.lockedText(entry)
                     : Component.translatable("gui.mcpskins.armory.status_locked").getString();
             playFail();
             return;
@@ -1116,8 +1178,8 @@ public class SkinArmoryScreen extends Screen {
     }
 
     private InteractionHand resolveHand(Player player, String baseGun) {
-        if (baseGun.equals(TACZSkinHelper.getGunId(player.getMainHandItem()))) return InteractionHand.MAIN_HAND;
-        if (baseGun.equals(TACZSkinHelper.getGunId(player.getOffhandItem()))) return InteractionHand.OFF_HAND;
+        if (baseGun.equals(TACZSkinHelper.getTaczId(player.getMainHandItem()))) return InteractionHand.MAIN_HAND;
+        if (baseGun.equals(TACZSkinHelper.getTaczId(player.getOffhandItem()))) return InteractionHand.OFF_HAND;
         return null;
     }
 
@@ -1152,9 +1214,8 @@ public class SkinArmoryScreen extends Screen {
      */
     private ItemStack previewStack(String baseGun, String skinId) {
         String key = baseGun + SEPARATOR + (skinId == null ? "" : skinId);
-        return stackCache.computeIfAbsent(key, ignored -> skinId == null
-                ? TACZSkinHelper.createGunStack(baseGun)
-                : TACZSkinHelper.createGunStack(baseGun, skinId));
+        return stackCache.computeIfAbsent(key, ignored ->
+                TACZSkinHelper.createStack(baseGun, skinId, SkinManager.INSTANCE.targetOf(baseGun)));
     }
 
     private String weaponDisplayName(String baseGun) {
@@ -1185,18 +1246,25 @@ public class SkinArmoryScreen extends Screen {
 
         boolean result = false;
         try {
-            ItemStack bareStack = previewStack(weapon.baseGun(), null);
-            Optional<GunDisplayInstance> base = TimelessAPI.getGunDisplay(bareStack);
-            if (base.isPresent()) {
-                ResourceLocation baseModelLocation = GunModelPatcher.getBaseModelLocation(base.get());
-                result = baseModelLocation != null && SkinAssetResolver.resolveModel(baseModelLocation, bare) != null;
-            }
+            ResourceLocation baseModelLocation = baseModelLocation(weapon);
+            result = baseModelLocation != null && SkinAssetResolver.resolveModel(baseModelLocation, bare) != null;
         } catch (RuntimeException e) {
             // Badge just doesn't show. Debug level - this runs per visible tile.
             MCPSkins.LOGGER.debug("[MCPSkins] Custom-model badge check failed for '{}'.", cacheKey, e);
         }
         customModelCache.put(cacheKey, new CustomModelResult(generation, result));
         return result;
+    }
+
+    /** Where a skin's replacement geometry would have to sit, for either kind of base item. */
+    private ResourceLocation baseModelLocation(SkinDataModels.WeaponSkins weapon) {
+        if (weapon.isAttachment()) {
+            ResourceLocation id = ResourceLocation.tryParse(weapon.baseGun());
+            return id == null ? null : TimelessAPI.getClientAttachmentIndex(id)
+                    .map(ClientAttachmentIndexPatcher::getBaseModelLocation).orElse(null);
+        }
+        return TimelessAPI.getGunDisplay(previewStack(weapon.baseGun(), null))
+                .map(GunModelPatcher::getBaseModelLocation).orElse(null);
     }
 
     private Component statusFilterLabel(StatusFilter filter, Tier tier) {

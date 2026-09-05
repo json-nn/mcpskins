@@ -32,11 +32,29 @@ public class SkinDataModels {
             fuseTargets = fuseTargets == null ? List.of() : List.copyOf(fuseTargets);
         }
 
-        /** Localized where a translation key was given, literal otherwise, always accent-colored. */
+        /**
+         * Always accent-coloured. Resolution order: a skin pack's own {@code skin_lang} entry,
+         * then a {@code translation_key} pointing into a real resource pack, then the literal
+         * {@code display_name}.
+         */
         public MutableComponent label() {
-            MutableComponent text = translationKey == null || translationKey.isBlank()
-                    ? Component.literal(displayName)
-                    : Component.translatable(translationKey);
+            return styled(SkinTranslations.rarityName(this));
+        }
+
+        /** Server side, where the text is addressed to one player. */
+        public MutableComponent label(String locale) {
+            return styled(SkinTranslations.rarityName(locale, this));
+        }
+
+        private MutableComponent styled(String translated) {
+            MutableComponent text;
+            if (!translated.equals(displayName)) {
+                text = Component.literal(translated);
+            } else if (translationKey == null || translationKey.isBlank()) {
+                text = Component.literal(displayName);
+            } else {
+                text = Component.translatable(translationKey);
+            }
             return text.withStyle(style -> style.withColor(accentColor));
         }
     }
@@ -57,16 +75,18 @@ public class SkinDataModels {
      * @param isNew       shows a "NEW" badge in the Armory grid, defaults to {@code false}
      * @param weight      relative likelihood of being rolled by a fuse against its tier-mates;
      *                    higher is more common, defaults to 1
-     * @param unlock      how the skin is earned, shown in the Armory while it is locked. Free
-     *                    text, empty means none. Descriptive only: ownership still comes from
-     *                    {@link SkinAttachment}, nothing here grants a skin
+     * @param lockedText  how the skin is earned, shown in the Armory while it is locked. Free
+     *                    text, empty means none. Descriptive only, it gates nothing
+     * @param unlockedByDefault grants the skin to every player the first time they join, so a
+     *                    pack can ship starter skins without a command
      */
     public record SkinEntry(String id, String name, int labelColor, String rarityId, String collection,
-                            String description, boolean isNew, int weight, String unlock) {
+                            String description, boolean isNew, int weight, String lockedText,
+                            boolean unlockedByDefault) {
 
         /** Legacy constructor for callers predating the Armory fields; fills safe defaults. */
         public SkinEntry(String id, String name, int labelColor) {
-            this(id, name, labelColor, DEFAULT_RARITY_ID, "", "", false, 1, "");
+            this(id, name, labelColor, DEFAULT_RARITY_ID, "", "", false, 1, "", false);
         }
 
         /** Whether this skin has a non-blank description. */
@@ -80,12 +100,30 @@ public class SkinDataModels {
         }
 
         /** Whether this skin states how it is earned. */
-        public boolean hasUnlock() {
-            return unlock != null && !unlock.isBlank();
+        public boolean hasLockedText() {
+            return lockedText != null && !lockedText.isBlank();
         }
     }
 
-    public record WeaponSkins(String baseGun, List<SkinEntry> skins) {}
+    /** Which kind of TACZ item a skin set applies to. */
+    public enum SkinTarget { GUN, ATTACHMENT }
+
+    /**
+     * One base item and every skin declared for it.
+     *
+     * @param baseGun the TACZ id being skinned: a GunId, or an AttachmentId when
+     *                {@code target} is {@link SkinTarget#ATTACHMENT}
+     */
+    public record WeaponSkins(String baseGun, List<SkinEntry> skins, SkinTarget target) {
+
+        public WeaponSkins(String baseGun, List<SkinEntry> skins) {
+            this(baseGun, skins, SkinTarget.GUN);
+        }
+
+        public boolean isAttachment() {
+            return target == SkinTarget.ATTACHMENT;
+        }
+    }
 
     /**
      * The result of a skin lookup: the matched skin together with the weapon it belongs to.

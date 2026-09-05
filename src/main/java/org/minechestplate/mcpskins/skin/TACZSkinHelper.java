@@ -10,18 +10,23 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 
 /**
- * Helper for creating and re-skinning TACZ weapon item stacks via texture overlay.
+ * Helper for creating and re-skinning TACZ item stacks, both guns and attachments.
  * <p>
- * A weapon's {@code GunId} is never swapped to a different registered gun; it always
- * matches the physical weapon in hand. Which skin is shown is controlled entirely by
- * the separate {@link SkinComponents#SKIN_ID} component, which
- * {@link org.minechestplate.mcpskins.mixin.TimelessAPIMixin} reads to swap in the
- * matching texture (see {@link org.minechestplate.mcpskins.client.render.SkinAssetResolver}).
- * This only supports texture recoloring, not geometry changes.
+ * The item's own {@code GunId} / {@code AttachmentId} is never swapped; it always matches the
+ * physical item. Which skin is shown is controlled entirely by the separate
+ * {@link SkinComponents#SKIN_ID} component, which
+ * {@link org.minechestplate.mcpskins.mixin.TimelessAPIMixin} reads to swap in the matching
+ * assets (see {@link org.minechestplate.mcpskins.client.render.SkinAssetResolver}).
  */
 public class TACZSkinHelper {
     // Base item shared by all TACZ weapons
     public static final ResourceLocation TACZ_GUN_ITEM = ResourceLocation.parse("tacz:modern_kinetic_gun");
+
+    /** Base item shared by all TACZ attachments; the AttachmentId tag picks which one. */
+    public static final ResourceLocation TACZ_ATTACHMENT_ITEM = ResourceLocation.parse("tacz:attachment");
+
+    private static final String GUN_ID_TAG = "GunId";
+    private static final String ATTACHMENT_ID_TAG = "AttachmentId";
 
     /**
      * Creates a display stack for the given gun ID, with no skin applied.
@@ -64,17 +69,37 @@ public class TACZSkinHelper {
      * @param newSkinId skin id from the registry; "default:&lt;gunId&gt;" removes the skin
      */
     public static ItemStack applySkin(ItemStack originalWeapon, String newSkinId) {
-        if (originalWeapon.isEmpty() || !originalWeapon.is(BuiltInRegistries.ITEM.get(TACZ_GUN_ITEM))) {
-            return originalWeapon;
-        }
+        if (originalWeapon.isEmpty()) return originalWeapon;
+
+        String baseId = getTaczId(originalWeapon);
+        if (baseId == null) return originalWeapon;
 
         ItemStack skinnedWeapon = originalWeapon.copy();
-
-        String baseGunId = getGunId(skinnedWeapon);
-        if (baseGunId == null) return originalWeapon;
-
-        applySkinComponent(skinnedWeapon, baseGunId, newSkinId);
+        applySkinComponent(skinnedWeapon, baseId, newSkinId);
         return skinnedWeapon;
+    }
+
+    /** Display stack for an attachment, mirroring {@link #createGunStack}. */
+    public static ItemStack createAttachmentStack(String attachmentId, String skinId) {
+        Item item = BuiltInRegistries.ITEM.get(TACZ_ATTACHMENT_ITEM);
+        if (item == null) return ItemStack.EMPTY;
+
+        ItemStack stack = new ItemStack(item);
+        String actualId = bareSkinId(attachmentId);
+
+        CompoundTag tag = new CompoundTag();
+        tag.putString(ATTACHMENT_ID_TAG, actualId);
+        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
+
+        applySkinComponent(stack, actualId, skinId);
+        return stack;
+    }
+
+    /** Display stack for either kind of base item. */
+    public static ItemStack createStack(String baseId, String skinId, SkinDataModels.SkinTarget target) {
+        return target == SkinDataModels.SkinTarget.ATTACHMENT
+                ? createAttachmentStack(baseId, skinId)
+                : createGunStack(baseId, skinId);
     }
 
     /**
@@ -101,8 +126,23 @@ public class TACZSkinHelper {
     public static String getGunId(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return null;
         CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
-        if (!data.contains("GunId")) return null;
-        return data.getUnsafe().getString("GunId");
+        if (!data.contains(GUN_ID_TAG)) return null;
+        return data.getUnsafe().getString(GUN_ID_TAG);
+    }
+
+    /** Raw AttachmentId of a TACZ attachment stack, or {@code null} if it isn't one. */
+    @SuppressWarnings("deprecation")
+    public static String getAttachmentId(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return null;
+        CustomData data = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
+        if (!data.contains(ATTACHMENT_ID_TAG)) return null;
+        return data.getUnsafe().getString(ATTACHMENT_ID_TAG);
+    }
+
+    /** The skinnable TACZ id on a stack, gun or attachment, or {@code null} for anything else. */
+    public static String getTaczId(ItemStack stack) {
+        String gunId = getGunId(stack);
+        return gunId != null ? gunId : getAttachmentId(stack);
     }
 
     /**

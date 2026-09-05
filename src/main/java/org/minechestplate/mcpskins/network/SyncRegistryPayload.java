@@ -44,7 +44,7 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
     private static final int MAX_NAME_LENGTH = 256;
     private static final int MAX_RARITY_LENGTH = 64;
     private static final int MAX_DESCRIPTION_LENGTH = 512;
-    private static final int MAX_UNLOCK_LENGTH = 256;
+    private static final int MAX_LOCKED_TEXT_LENGTH = 256;
 
     /**
      * NeoForge caps clientbound payloads at ~1 MiB. There's no chunking fallback here - past
@@ -53,6 +53,25 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
     private static final int SIZE_WARNING_THRESHOLD = 768 * 1024;
 
     private static volatile boolean oversizeWarningLogged = false;
+    private static volatile boolean truncationWarningLogged = false;
+
+    /**
+     * Writes a string the reader will accept. The read side is bounded, the write side is not,
+     * so an over-long pack field would otherwise produce a packet every client fails to decode
+     * and get them all dropped at join.
+     */
+    private static void writeBounded(FriendlyByteBuf buffer, String value, int max) {
+        String text = value == null ? "" : value;
+        if (text.length() > max) {
+            text = text.substring(0, max);
+            if (!truncationWarningLogged) {
+                truncationWarningLogged = true;
+                MCPSkins.LOGGER.warn("[MCPSkins] A skin pack field is longer than {} characters "
+                        + "and was truncated before syncing to clients.", max);
+            }
+        }
+        buffer.writeUtf(text, max);
+    }
 
     private static List<SkinDataModels.Rarity> readRarities(FriendlyByteBuf buffer) {
         int count = readBoundedSize(buffer, MAX_RARITIES, "rarity count");
@@ -82,9 +101,9 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
     private static void writeRarities(FriendlyByteBuf buffer, List<SkinDataModels.Rarity> rarities) {
         buffer.writeVarInt(rarities.size());
         for (SkinDataModels.Rarity rarity : rarities) {
-            buffer.writeUtf(rarity.id());
-            buffer.writeUtf(rarity.displayName());
-            buffer.writeUtf(rarity.translationKey() == null ? "" : rarity.translationKey());
+            writeBounded(buffer, rarity.id(), MAX_RARITY_LENGTH);
+            writeBounded(buffer, rarity.displayName(), MAX_NAME_LENGTH);
+            writeBounded(buffer, rarity.translationKey(), MAX_NAME_LENGTH);
             buffer.writeInt(rarity.accentColor());
             buffer.writeInt(rarity.order());
             buffer.writeBoolean(rarity.fusable());
@@ -94,7 +113,7 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
             }
             buffer.writeVarInt(rarity.fuseTargets().size());
             for (SkinDataModels.FuseTarget target : rarity.fuseTargets()) {
-                buffer.writeUtf(target.rarityId());
+                writeBounded(buffer, target.rarityId(), MAX_RARITY_LENGTH);
                 buffer.writeVarInt(target.weight());
             }
         }
@@ -106,6 +125,7 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
         for (int i = 0; i < mapSize; i++) {
             String key = buffer.readUtf(MAX_ID_LENGTH);
             String baseGun = buffer.readUtf(MAX_ID_LENGTH);
+            SkinDataModels.SkinTarget target = readTarget(buffer);
             int skinSize = readBoundedSize(buffer, MAX_SKINS_PER_WEAPON, "skin count");
             List<SkinDataModels.SkinEntry> skins = new ArrayList<>();
             for (int j = 0; j < skinSize; j++) {
@@ -117,13 +137,21 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
                 String description = buffer.readUtf(MAX_DESCRIPTION_LENGTH);
                 boolean isNew = buffer.readBoolean();
                 int weight = buffer.readVarInt();
-                String unlock = buffer.readUtf(MAX_UNLOCK_LENGTH);
+                String lockedText = buffer.readUtf(MAX_LOCKED_TEXT_LENGTH);
+                boolean unlockedByDefault = buffer.readBoolean();
                 skins.add(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection,
-                        description, isNew, weight, unlock));
+                        description, isNew, weight, lockedText, unlockedByDefault));
             }
-            map.put(key, new SkinDataModels.WeaponSkins(baseGun, skins));
+            map.put(key, new SkinDataModels.WeaponSkins(baseGun, skins, target));
         }
         return map;
+    }
+
+    /** An ordinal from a newer sender falls back to GUN rather than failing the whole packet. */
+    private static SkinDataModels.SkinTarget readTarget(FriendlyByteBuf buffer) {
+        int ordinal = buffer.readByte();
+        SkinDataModels.SkinTarget[] values = SkinDataModels.SkinTarget.values();
+        return ordinal >= 0 && ordinal < values.length ? values[ordinal] : SkinDataModels.SkinTarget.GUN;
     }
 
     /** Reads a collection size and rejects it before it can drive any allocation or loop. */
@@ -140,19 +168,21 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
         writeRarities(buffer, rarities);
         buffer.writeVarInt(registryData.size());
         for (Map.Entry<String, SkinDataModels.WeaponSkins> entry : registryData.entrySet()) {
-            buffer.writeUtf(entry.getKey());
-            buffer.writeUtf(entry.getValue().baseGun());
+            writeBounded(buffer, entry.getKey(), MAX_ID_LENGTH);
+            writeBounded(buffer, entry.getValue().baseGun(), MAX_ID_LENGTH);
+            buffer.writeByte(entry.getValue().target().ordinal());
             buffer.writeVarInt(entry.getValue().skins().size());
             for (SkinDataModels.SkinEntry skin : entry.getValue().skins()) {
-                buffer.writeUtf(skin.id());
-                buffer.writeUtf(skin.name());
+                writeBounded(buffer, skin.id(), MAX_ID_LENGTH);
+                writeBounded(buffer, skin.name(), MAX_NAME_LENGTH);
                 buffer.writeInt(skin.labelColor());
-                buffer.writeUtf(skin.rarityId());
-                buffer.writeUtf(skin.collection());
-                buffer.writeUtf(skin.description());
+                writeBounded(buffer, skin.rarityId(), MAX_RARITY_LENGTH);
+                writeBounded(buffer, skin.collection(), MAX_NAME_LENGTH);
+                writeBounded(buffer, skin.description(), MAX_DESCRIPTION_LENGTH);
                 buffer.writeBoolean(skin.isNew());
                 buffer.writeVarInt(skin.weight());
-                buffer.writeUtf(skin.unlock());
+                writeBounded(buffer, skin.lockedText(), MAX_LOCKED_TEXT_LENGTH);
+                buffer.writeBoolean(skin.unlockedByDefault());
             }
         }
 

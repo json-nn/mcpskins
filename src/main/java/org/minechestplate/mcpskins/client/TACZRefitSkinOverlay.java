@@ -60,11 +60,8 @@ public class TACZRefitSkinOverlay {
      */
     private static final float SLOT_TRAY_REACH = 2.5f;
 
-    /**
-     * Darkens and softens the shared panel sprite. The Armory is a modal window where an
-     * opaque plate belongs; here it sits over a live screen, so it has to recede.
-     */
-    private static final int TRAY_TINT = 0xCC555555;
+    /** Width of the shadow baked into the tray sprite's border. */
+    private static final int TRAY_SHADOW = 3;
 
     /** Amber for a previewed but unowned skin, the one colour outside the theme. */
     private static final int PREVIEW_ACCENT = 0xFFB347;
@@ -296,9 +293,11 @@ public class TACZRefitSkinOverlay {
         int trayX0 = Math.max(TRAY_MARGIN, centerX - halfSpan - TRAY_PAD);
         int trayX1 = Math.min(width - TRAY_MARGIN, centerX + halfSpan + TRAY_PAD);
 
-        guiGraphics.fill(trayX0 - 3, trayTop - 3, trayX1 + 3, trayTop + trayHeight + 3, 0x4C000000);
-        ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.PANEL, trayX0, trayTop,
-                trayX1 - trayX0, trayHeight, TRAY_TINT);
+        // Drawn past the content bounds because the sprite carries its own drop shadow in the
+        // outer few pixels of its border. No tint and no fill behind it, so a resource pack
+        // replacing tray.png gets exactly what it authored.
+        ArmoryTheme.sprite(guiGraphics, ArmoryTheme.TRAY, trayX0 - TRAY_SHADOW, trayTop - TRAY_SHADOW,
+                (trayX1 - trayX0) + TRAY_SHADOW * 2, trayHeight + TRAY_SHADOW * 2);
 
         // Gentle pulse for the equipped/previewed skin's border in the center slot
         float pulse = 0.5f + 0.5f * Mth.sin((System.currentTimeMillis() % 1200L) / 1200f * ((float) Math.PI * 2f));
@@ -327,8 +326,6 @@ public class TACZRefitSkinOverlay {
                         alphaByte | 0xFFFFFF);
                 ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE_RING, x0, y0, slot.size(), slot.size(),
                         (Math.round(slot.alpha() * (isCenter ? 255 : 115)) << 24) | (ringRgb & 0xFFFFFF));
-                guiGraphics.fill(x0 + 2, y0 + 1, x0 + slot.size() - 2, y0 + 2, (rarity & 0xFFFFFF) | alphaByte);
-
                 if (isCenter && (isCurrentlyEquipped || isPreviewed)) {
                     int glowRgb = isCurrentlyEquipped ? ArmoryTheme.ACCENT : PREVIEW_ACCENT;
                     int glowAlpha = Math.round(slot.alpha() * (0x40 + Math.round(pulse * 0x60))) << 24;
@@ -342,8 +339,9 @@ public class TACZRefitSkinOverlay {
                 guiGraphics.renderItem(thumb, x0 + iconOffset, y0 + iconOffset);
 
                 if (!unlocked && !isPreviewed) {
-                    guiGraphics.fill(x0 + 1, y0 + 1, x0 + slot.size() - 1, y0 + slot.size() - 1,
-                            (Math.round(slot.alpha() * 0x8C) << 24) | 0x0A0A0C);
+                    ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW, x0 + 1, y0 + 1,
+                            slot.size() - 2, slot.size() - 2,
+                            (Math.round(slot.alpha() * 0x8C) << 24) | (ArmoryTheme.LOCKED_DIM & 0xFFFFFF));
                     ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_LOCK,
                             x0 + slot.size() - 11, y0 + slot.size() - 11, 8, 8,
                             (Math.round(slot.alpha() * 255) << 24) | (ArmoryTheme.TEXT_50 & 0xFFFFFF));
@@ -353,7 +351,8 @@ public class TACZRefitSkinOverlay {
                 }
 
                 if (isCenter) {
-                    Component name = Component.literal(entry.name());
+                    // Counter sits in the right corner, so the name gets what is left of the tray.
+                    String name = ArmoryTheme.truncate(mc.font, SkinTranslations.name(entry), trayX1 - trayX0 - 60, 1f);
                     guiGraphics.drawCenteredString(mc.font, name, centerX, trayTop + 5, rarity);
 
                     Component status;
@@ -462,7 +461,7 @@ public class TACZRefitSkinOverlay {
                             ? ApplySkinPayload.removeSkin()
                             : ApplySkinPayload.equip(entry.id()));
                     clearPreviewState();
-                    toastText = Component.translatable("gui.mcpskins.toast_skin_applied", entry.name());
+                    toastText = Component.translatable("gui.mcpskins.toast_skin_applied", SkinTranslations.name(entry));
                     toastStartTime = System.currentTimeMillis();
                     player.playSound(SoundEvents.UI_BUTTON_CLICK.value(), 0.6f, 1.4f);
                 } else if (player != null && MCPSkinsServerConfig.allowLockedSkinPreview()) {

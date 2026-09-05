@@ -26,6 +26,7 @@ public final class ArmoryTheme {
     public static final ResourceLocation TILE = sprite("tile");
     public static final ResourceLocation TILE_RING = sprite("tile_ring");
     public static final ResourceLocation STAGE = sprite("stage");
+    public static final ResourceLocation TRAY = sprite("tray");
     public static final ResourceLocation ROW = sprite("row");
     public static final ResourceLocation RULE_FADE = sprite("rule_fade");
     public static final ResourceLocation GLOW = sprite("glow");
@@ -46,7 +47,8 @@ public final class ArmoryTheme {
     public static final int RULE = 0x29E6E8EA;
     public static final int ROW_HOVER = 0x2EFFFFFF;
     public static final int ROW_SELECTED = 0x4478AAC8;
-    public static final int STAGE_FLOOR = 0xFF0E1013;
+    /** Drawn through the ROW sprite, so the dim takes the tile's corner shape. */
+    public static final int LOCKED_DIM = 0x8C0A0A0C;
 
     public static final float SMALL = 0.75f;
     public static final float BASE = 1.0f;
@@ -70,9 +72,13 @@ public final class ArmoryTheme {
      * ends {@code blitOffset, width, height} and takes no tint, so a colour passed as an extra
      * argument binds silently to {@code height} and hangs the client. Naming the tinted path
      * differently means that cannot compile.
+     * <p>
+     * Blend is enabled explicitly rather than inherited: batched text leaves it off when it
+     * flushes, which would drop the alpha a sprite was authored with.
      */
     public static void sprite(GuiGraphics graphics, ResourceLocation sprite, int x, int y, int width, int height) {
         if (drawable(sprite, width, height)) {
+            RenderSystem.enableBlend();
             graphics.blitSprite(sprite, x, y, width, height);
         }
     }

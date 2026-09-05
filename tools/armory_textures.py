@@ -40,6 +40,7 @@ STAGE = (22, 25, 29)
 TILE = (28, 32, 37)
 CHIP = (38, 43, 49)
 CHIP_LIT = (62, 70, 78)
+TRAY = (16, 18, 22)
 ACCENT = (120, 170, 200)
 
 SEED = 0x5C17
@@ -94,7 +95,33 @@ def plate(size, radius, base, alpha, recessed=False, grain_amount=4, seed=SEED):
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius,
                         outline=(6, 7, 9, 235), width=1)
+    # Snapshot before the bevel: ImageDraw replaces pixels instead of compositing, so its
+    # lines would punch their own alpha into a see-through plate. It may tint, not thin.
+    solid = img.getchannel("A")
     bevel(d, size, radius, STEEL_LIT, STEEL_DIM, recessed)
+    img.putalpha(solid)
+    return img
+
+
+def tray_plate(size, radius, base, alpha, shadow=3):
+    """A plate with its drop shadow baked into the outer border.
+
+    The carousel sits over a live screen rather than a dimmed one, so its backing has to be
+    dark, see-through and self-contained: no code-side tint or shadow fill, which a resource
+    pack could not override.
+    """
+    img = canvas(size)
+    d = ImageDraw.Draw(img)
+    # Filled rings, not nested outlines: consecutive 1px arcs miss each other on the corner
+    # diagonal and leave pinholes, which show as bright specks over a live screen.
+    for i in range(shadow):
+        d.rounded_rectangle([i, i, size - 1 - i, size - 1 - i],
+                            radius=radius + shadow - i, fill=(0, 0, 0, 26 + i * 26))
+    # Clear the plate's footprint so the shadow never stacks up behind a see-through plate.
+    d.rounded_rectangle([shadow, shadow, size - 1 - shadow, size - 1 - shadow],
+                        radius=radius, fill=(0, 0, 0, 0))
+    inner = plate(size - shadow * 2, radius, base, alpha, grain_amount=3, seed=SEED + 5)
+    img.alpha_composite(inner, (shadow, shadow))
     return img
 
 
@@ -152,6 +179,8 @@ def build():
 
     save(plate(LARGE, 4, STAGE, 240, recessed=True, grain_amount=3, seed=SEED + 2),
          "stage", LARGE_BORDER, LARGE)
+
+    save(tray_plate(LARGE, 5, TRAY, 205), "tray", LARGE_BORDER, LARGE)
 
     save(plate(SMALL, 4, TILE, 242, grain_amount=3, seed=SEED + 3),
          "tile", SMALL_BORDER, SMALL)

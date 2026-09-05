@@ -1,6 +1,7 @@
 package org.minechestplate.mcpskins.skin;
 
 import com.mojang.serialization.Codec;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
 import net.neoforged.neoforge.attachment.AttachmentType;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -68,6 +69,29 @@ public class SkinAttachment {
                 );
             }
         }
+    }
+
+    /**
+     * Grants every skin a pack marked {@code "unlocked": true} that the player is missing.
+     * <p>
+     * Called from the datapack sync hook, so it runs once on join and once per {@code /reload}
+     * rather than on a timer. Writes and syncs only when something actually changed, so a
+     * returning player costs one set lookup and no packet.
+     */
+    public static void grantDefaultUnlocks(ServerPlayer player) {
+        Set<String> defaults = SkinManager.INSTANCE.getDefaultUnlockedIds();
+        if (defaults.isEmpty()) {
+            return;
+        }
+        Set<String> owned = player.getData(UNLOCKED_SKINS);
+        if (owned.containsAll(defaults)) {
+            return;
+        }
+        Set<String> updated = new HashSet<>(owned);
+        updated.addAll(defaults);
+        player.setData(UNLOCKED_SKINS, updated);
+        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
+                player, new org.minechestplate.mcpskins.network.SyncUnlocksPayload(new ArrayList<>(updated)));
     }
 
     public static void unlockAllSkins(Player player) {

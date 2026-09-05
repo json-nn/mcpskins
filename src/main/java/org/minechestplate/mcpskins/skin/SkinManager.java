@@ -12,8 +12,10 @@ import org.minechestplate.mcpskins.MCPSkins;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Loads skin definitions from datapacks (JSON files under {@code data/../skins/}) and
@@ -24,9 +26,11 @@ import java.util.Map;
  * therefore be globally unique, not just unique per weapon - the recommended scheme is
  * {@code <base_gun>_<skin_name>} (e.g. {@code "m4a1_cobra"}).
  * <p>
- * The {@code rarity}, {@code collection}, {@code description}, {@code is_new} and
- * {@code unlock} fields are optional; datapacks that predate them still load cleanly with
- * sane defaults.
+ * A file targets one TACZ item through {@code base_gun} or {@code base_attachment}.
+ * <p>
+ * The {@code rarity}, {@code collection}, {@code description}, {@code is_new},
+ * {@code locked_text} and {@code unlocked} fields are optional; datapacks that predate them
+ * still load cleanly with sane defaults.
  */
 public class SkinManager extends SimpleJsonResourceReloadListener {
     public static final SkinManager INSTANCE = new SkinManager();
@@ -41,8 +45,9 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
      */
     private record Snapshot(Map<String, SkinDataModels.WeaponSkins> registry,
                             Map<String, SkinDataModels.SkinLookupResult> skinsById,
-                            Map<String, String> baseGunById) {
-        static final Snapshot EMPTY = new Snapshot(Map.of(), Map.of(), Map.of());
+                            Map<String, String> baseGunById,
+                            Set<String> defaultUnlockedIds) {
+        static final Snapshot EMPTY = new Snapshot(Map.of(), Map.of(), Map.of(), Set.of());
     }
 
     /**
@@ -64,13 +69,23 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         objectIn.forEach((location, element) -> {
             try {
                 JsonObject json = element.getAsJsonObject();
-                String baseGun = json.get("base_gun").getAsString();
+
+                // A file names either a gun or an attachment, never both.
+                boolean attachment = json.has("base_attachment");
+                if (attachment && json.has("base_gun")) {
+                    MCPSkins.LOGGER.error("Skin config {} sets both base_gun and base_attachment; skipping.", location);
+                    return;
+                }
+                String baseGun = json.get(attachment ? "base_attachment" : "base_gun").getAsString();
+                SkinDataModels.SkinTarget target = attachment
+                        ? SkinDataModels.SkinTarget.ATTACHMENT
+                        : SkinDataModels.SkinTarget.GUN;
 
                 List<SkinDataModels.SkinEntry> skins = new ArrayList<>();
 
                 skins.add(new SkinDataModels.SkinEntry(
                         "default:" + baseGun, "Default", 0xFFFFFF,
-                        SkinDataModels.DEFAULT_RARITY_ID, "", "", false, 1, ""));
+                        SkinDataModels.DEFAULT_RARITY_ID, "", "", false, 1, "", true));
 
                 json.getAsJsonArray("skins").forEach(skinElement -> {
                     JsonObject skinObj = skinElement.getAsJsonObject();
@@ -86,13 +101,19 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                     String description = skinObj.has("description") ? skinObj.get("description").getAsString() : "";
                     boolean isNew = skinObj.has("is_new") && skinObj.get("is_new").getAsBoolean();
                     int weight = skinObj.has("weight") ? Math.max(1, skinObj.get("weight").getAsInt()) : 1;
-                    String unlock = skinObj.has("unlock") ? skinObj.get("unlock").getAsString() : "";
+                    String lockedText = skinObj.has("locked_text")
+                            ? skinObj.get("locked_text").getAsString() : "";
+                    boolean unlocked = skinObj.has("unlocked") && skinObj.get("unlocked").getAsBoolean();
 
                     skins.add(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection,
-                            description, isNew, weight, unlock));
+                            description, isNew, weight, lockedText, unlocked));
                 });
 
-                registry.put(baseGun, new SkinDataModels.WeaponSkins(baseGun, skins));
+                SkinDataModels.WeaponSkins previous =
+                        registry.put(baseGun, new SkinDataModels.WeaponSkins(baseGun, skins, target));
+                if (previous != null) {
+                    MCPSkins.LOGGER.warn("Two skin configs both target '{}'; {} wins.", baseGun, location);
+                }
             } catch (Exception e) {
                 MCPSkins.LOGGER.error("Failed to parse TACZ skin config: {}", location, e);
             }
@@ -105,10 +126,14 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
     private void publish(Map<String, SkinDataModels.WeaponSkins> registry) {
         Map<String, SkinDataModels.SkinLookupResult> skinsById = new HashMap<>();
         Map<String, String> baseGunById = new HashMap<>();
+        Set<String> defaultUnlocked = new HashSet<>();
 
         for (SkinDataModels.WeaponSkins weapon : registry.values()) {
             baseGunById.put(weapon.baseGun(), weapon.baseGun());
             for (SkinDataModels.SkinEntry skin : weapon.skins()) {
+                if (skin.unlockedByDefault() && !SkinAttachment.isDefaultEntry(skin.id())) {
+                    defaultUnlocked.add(skin.id());
+                }
                 skinsById.putIfAbsent(skin.id(), new SkinDataModels.SkinLookupResult(weapon, skin));
                 // Both spellings, so getBaseGun still resolves a "default:" prefixed id.
                 baseGunById.putIfAbsent(skin.id(), weapon.baseGun());
@@ -116,7 +141,22 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
             }
         }
 
-        snapshot = new Snapshot(Map.copyOf(registry), Map.copyOf(skinsById), Map.copyOf(baseGunById));
+        snapshot = new Snapshot(Map.copyOf(registry), Map.copyOf(skinsById), Map.copyOf(baseGunById),
+                Set.copyOf(defaultUnlocked));
+    }
+
+    /**
+     * Skins a pack marked {@code "unlocked": true}. Computed once per reload rather than
+     * scanned per player, since the only reader is a login and reload hook.
+     */
+    public Set<String> getDefaultUnlockedIds() {
+        return snapshot.defaultUnlockedIds();
+    }
+
+    /** Whether a base id names an attachment. Unknown ids read as guns. */
+    public SkinDataModels.SkinTarget targetOf(String baseId) {
+        SkinDataModels.WeaponSkins weapon = snapshot.registry().get(TACZSkinHelper.bareSkinId(baseId));
+        return weapon == null ? SkinDataModels.SkinTarget.GUN : weapon.target();
     }
 
     /** Immutable - safe to hand around and iterate. A reload publishes a new map. */

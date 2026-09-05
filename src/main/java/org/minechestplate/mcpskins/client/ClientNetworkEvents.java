@@ -7,6 +7,7 @@ import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import org.minechestplate.mcpskins.MCPSkins;
 import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 import org.minechestplate.mcpskins.client.render.GunModelPatcher;
+import org.minechestplate.mcpskins.client.render.AttachmentSkinPatcher;
 import org.minechestplate.mcpskins.client.render.PatchedGunDisplayCache;
 import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
 import org.minechestplate.mcpskins.client.render.SkinFusionAnimator;
@@ -28,14 +29,21 @@ public final class ClientNetworkEvents {
     }
 
     @SubscribeEvent
+    public static void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        ClientTranslationSync.request(true);
+    }
+
+    @SubscribeEvent
     public static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         SkinAssetResolver.clearCache();
         PatchedGunDisplayCache.clear();
+        AttachmentSkinPatcher.clear();
         GunModelPatcher.clear();
         TaczGeoModelInjector.reset();
         ClientSkinAssetCache.clearAll();
         SkinFusionAnimator.reset();
         TACZRefitSkinOverlay.resetSessionState();
+        ClientTranslationSync.reset();
         MCPSkins.LOGGER.info("[MCPSkins] Disconnected - skin caches and GPU textures released.");
     }
 }

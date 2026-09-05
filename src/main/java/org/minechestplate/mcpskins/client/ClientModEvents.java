@@ -15,6 +15,7 @@ import org.minechestplate.mcpskins.client.gui.settings.MCPSkinsConfigScreen;
 import org.minechestplate.mcpskins.client.gui.settings.RefitButtonPositionScreen;
 import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 import org.minechestplate.mcpskins.client.render.GunModelPatcher;
+import org.minechestplate.mcpskins.client.render.AttachmentSkinPatcher;
 import org.minechestplate.mcpskins.client.render.PatchedGunDisplayCache;
 import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
 import org.minechestplate.mcpskins.client.render.TaczGeoModelInjector;
@@ -46,10 +47,13 @@ public class ClientModEvents {
                         .thenRunAsync(() -> {
                             SkinAssetResolver.clearCache();
                             PatchedGunDisplayCache.clear();
+                            AttachmentSkinPatcher.clear();
                             GunModelPatcher.clear();
                             TaczGeoModelInjector.reset();
                             RefitButtonPositionScreen.clearBackgroundCache();
                             ClientSkinAssetCache.clearAll();
+                            // A language switch reloads resources, so this is where it is noticed.
+                            ClientTranslationSync.request(false);
                             MCPSkins.LOGGER.info("[MCPSkins] Client resources reloaded - skin caches cleared.");
                         }, gameExecutor));
     }

@@ -5,6 +5,7 @@
   "compatibilityLevel": "JAVA_21",
   "refmap": "mcpskins.refmap.json",
   "client": [
+    "AttachmentIdAccessorMixin",
     "TimelessAPIMixin"
   ],
   "injectors": {

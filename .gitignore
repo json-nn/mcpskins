@@ -39,3 +39,6 @@ run/
 repo/
 !**/src/**/repo/
 /.claude/
+/run-server/
+/tools/
+/tools/

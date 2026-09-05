@@ -2,11 +2,12 @@ package org.minechestplate.mcpskins.client.render;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.client.renderer.texture.SimpleTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.minechestplate.mcpskins.MCPSkins;
+import org.minechestplate.mcpskins.client.pack.ClientSkinResourcePack;
 import org.minechestplate.mcpskins.network.asset.RequestSkinAssetPayload;
 import org.minechestplate.mcpskins.network.asset.ServerSkinAssetStore;
 
@@ -33,7 +34,7 @@ public final class ClientSkinAssetCache {
 
     private enum State { PENDING, PRESENT, MISSING }
 
-    private enum Kind { TEXTURE, GEO_MODEL }
+    private enum Kind { TEXTURE, COMPANION, GEO_MODEL }
 
     /** @param attempts consecutive unanswered sends; only widens the backoff */
     private record PendingRequest(Kind kind, ResourceLocation target,
@@ -63,7 +64,31 @@ public final class ClientSkinAssetCache {
     private static final Map<String, State> STATE = new ConcurrentHashMap<>();
     private static final Map<String, PendingRequest> PENDING_META = new ConcurrentHashMap<>();
     private static final Map<Long, Transfer> TRANSFERS = new ConcurrentHashMap<>();
-    private static final Map<ResourceLocation, DynamicTexture> REGISTERED_TEXTURES = new ConcurrentHashMap<>();
+    private static final Set<ResourceLocation> REGISTERED_TEXTURES = ConcurrentHashMap.newKeySet();
+
+    /**
+     * A texture and its companions, collected until everything blocking has landed.
+     * <p>
+     * Registering early would mean showing an animated skin as an un-sliced strip, or letting a
+     * shader look for a PBR map that has not arrived and cache the miss for the session.
+     */
+    private static final class Assembly {
+        byte[] texture;
+        final Map<String, byte[]> companions = new ConcurrentHashMap<>();
+        final Set<String> settled = ConcurrentHashMap.newKeySet();
+
+        boolean readyToBuild() {
+            if (texture == null) return false;
+            for (TextureCompanion companion : TextureCompanion.ALL) {
+                if (companion.blocking() && companion.isWanted() && !settled.contains(companion.id())) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    private static final Map<String, Assembly> ASSEMBLIES = new ConcurrentHashMap<>();
     private static final Set<String> WARNED_DECODE_FAILURES = ConcurrentHashMap.newKeySet();
 
     /**
@@ -97,7 +122,20 @@ public final class ClientSkinAssetCache {
     // ------------------------------------------------------------------
 
     public static boolean checkOrRequestTexture(ResourceLocation location) {
-        return checkOrRequest(location.toString(), Kind.TEXTURE, location);
+        String key = location.toString();
+        boolean present = checkOrRequest(key, Kind.TEXTURE, location);
+        if (!present) {
+            // Companions go out with the texture, not after it, so the whole set costs one
+            // round trip rather than one each.
+            for (TextureCompanion companion : TextureCompanion.ALL) {
+                if (!companion.isWanted()) continue;
+                ResourceLocation path = companion.pathFor(location);
+                if (path != null) {
+                    checkOrRequest(path.toString(), Kind.COMPANION, path);
+                }
+            }
+        }
+        return present;
     }
 
     /**
@@ -135,6 +173,10 @@ public final class ClientSkinAssetCache {
     private static void retryIfOverdue(String key, long now) {
         PendingRequest meta = PENDING_META.get(key);
         if (meta == null || now < meta.retryAtMillis()) return;
+        // Already downloaded and only waiting on a companion; re-sending would fetch the
+        // image a second time for nothing.
+        Assembly held = ASSEMBLIES.get(key);
+        if (held != null && held.texture != null) return;
 
         if (now - meta.firstSentAtMillis() > GIVE_UP_AFTER_MILLIS) {
             if (PENDING_META.remove(key, meta)) {
@@ -143,6 +185,9 @@ public final class ClientSkinAssetCache {
                 MCPSkins.LOGGER.warn(
                         "[MCPSkins] Giving up on skin asset '{}' - no reply in {} ms across {} attempt(s).",
                         key, now - meta.firstSentAtMillis(), meta.attempts());
+                // A companion nobody answered must still release its texture, or the skin
+                // waits for something that is never coming.
+                settleCompanion(key, null);
             }
             return;
         }
@@ -166,6 +211,8 @@ public final class ClientSkinAssetCache {
 
     public static void onMissing(String path) {
         if (isStaleArrival(path)) return;
+        // Most skins ship no companions at all, so a miss here is the ordinary answer.
+        if (settleCompanion(path, null)) return;
         resolve(path, State.MISSING);
     }
 
@@ -274,35 +321,112 @@ public final class ClientSkinAssetCache {
             return;
         }
 
-        boolean ok = switch (meta.kind()) {
-            case TEXTURE -> registerTexture(meta.target(), rawBytes);
-            case GEO_MODEL -> TaczGeoModelInjector.inject(meta.target(), rawBytes);
-        };
-
-        resolve(path, ok ? State.PRESENT : State.MISSING);
+        switch (meta.kind()) {
+            case TEXTURE -> {
+                assembly(path).texture = rawBytes;
+                tryBuild(path, meta.target());
+            }
+            case COMPANION -> settleCompanion(path, rawBytes);
+            case GEO_MODEL -> resolve(path, TaczGeoModelInjector.inject(meta.target(), rawBytes)
+                    ? State.PRESENT : State.MISSING);
+        }
     }
 
-    private static boolean registerTexture(ResourceLocation location, byte[] pngBytes) {
-        try (InputStream in = new ByteArrayInputStream(pngBytes)) {
-            NativeImage image = NativeImage.read(in);
-            DynamicTexture texture;
-            try {
-                texture = new DynamicTexture(image);
-            } catch (RuntimeException e) {
-                image.close(); // DynamicTexture takes ownership only on success
-                throw e;
+    private static Assembly assembly(String texturePath) {
+        return ASSEMBLIES.computeIfAbsent(texturePath, key -> new Assembly());
+    }
+
+    /**
+     * Records a companion's outcome, present or absent, and lets its texture proceed.
+     *
+     * @return true if {@code path} was a companion at all
+     */
+    private static boolean settleCompanion(String path, byte[] bytes) {
+        TextureCompanion companion = TextureCompanion.matching(path);
+        if (companion == null) return false;
+
+        String texturePath = companion.textureOf(path);
+        Assembly assembly = assembly(texturePath);
+        assembly.settled.add(companion.id());
+        if (bytes != null) {
+            assembly.companions.put(companion.id(), bytes);
+        }
+        resolve(path, bytes == null ? State.MISSING : State.PRESENT);
+
+        PendingRequest textureMeta = PENDING_META.get(texturePath);
+        if (textureMeta != null) {
+            tryBuild(texturePath, textureMeta.target());
+        }
+        return true;
+    }
+
+    /** Builds and registers the texture once nothing blocking is still outstanding. */
+    private static void tryBuild(String texturePath, ResourceLocation location) {
+        Assembly assembly = ASSEMBLIES.get(texturePath);
+        if (assembly == null || !assembly.readyToBuild()) return;
+        ASSEMBLIES.remove(texturePath);
+        resolve(texturePath, register(location, assembly) ? State.PRESENT : State.MISSING);
+    }
+
+    /**
+     * Publishes the texture and every companion it came with to the streamed resource pack,
+     * then registers it. Going through the pack rather than straight to the GPU is what lets a
+     * shader find the PBR maps, which it looks up by path when the texture first binds.
+     */
+    private static boolean register(ResourceLocation location, Assembly assembly) {
+        SkinTextureAnimator.forget(location);
+        try {
+            ClientSkinResourcePack.put(location, assembly.texture);
+            for (TextureCompanion companion : TextureCompanion.ALL) {
+                byte[] bytes = assembly.companions.get(companion.id());
+                ResourceLocation path = companion.pathFor(location);
+                if (bytes != null && path != null) {
+                    ClientSkinResourcePack.put(path, bytes);
+                }
             }
-            Minecraft.getInstance().getTextureManager().register(location, texture);
-            DynamicTexture previous = REGISTERED_TEXTURES.put(location, texture);
-            if (previous != null) {
-                previous.close();
+
+            // A plain SimpleTexture on purpose: a shader mod attaches its PBR maps to this
+            // exact class, and a subclass measurably stopped it looking them up at all.
+            SkinAnimationMeta animation = parseAnimation(location, assembly);
+            Minecraft.getInstance().getTextureManager().register(location, new SimpleTexture(location));
+            REGISTERED_TEXTURES.add(location);
+            SkinTextureAnimator.register(location, assembly.texture, animation);
+
+            if (animation != null) {
+                MCPSkins.LOGGER.info("[MCPSkins] Animated skin texture '{}': {} frame(s), {}x{}{}.",
+                        location, animation.frames().size(), animation.frameWidth(),
+                        animation.frameHeight(), animation.interpolate() ? ", interpolated" : "");
+            }
+            for (TextureCompanion companion : TextureCompanion.ALL) {
+                if (assembly.companions.containsKey(companion.id()) && !"animation".equals(companion.id())) {
+                    MCPSkins.LOGGER.info("[MCPSkins] Companion '{}' for '{}' is readable by the resource manager.",
+                            companion.id(), location);
+                }
             }
             return true;
-        } catch (IOException | RuntimeException e) {
+        } catch (RuntimeException e) {
             if (WARNED_DECODE_FAILURES.add(location.toString())) {
-                MCPSkins.LOGGER.warn("[MCPSkins] Failed to decode network-delivered texture '{}'", location, e);
+                MCPSkins.LOGGER.warn("[MCPSkins] Failed to register network-delivered texture '{}'", location, e);
             }
             return false;
+        }
+    }
+
+    /** Reads the image header only far enough to size the animation, then parses it. */
+    private static SkinAnimationMeta parseAnimation(ResourceLocation location, Assembly assembly) {
+        byte[] mcmeta = assembly.companions.get("animation");
+        if (mcmeta == null) return null;
+        try (InputStream in = new ByteArrayInputStream(assembly.texture)) {
+            NativeImage image = NativeImage.read(in);
+            try {
+                return SkinAnimationMeta.parse(mcmeta, image.getWidth(), image.getHeight(), location.toString());
+            } finally {
+                image.close();
+            }
+        } catch (IOException | RuntimeException e) {
+            MCPSkins.LOGGER.warn("[MCPSkins] Could not read '{}' to size its animation; it stays static.",
+                    location, e);
+            return null;
         }
     }
 
@@ -319,11 +443,14 @@ public final class ClientSkinAssetCache {
         PENDING_META.clear();
         TRANSFERS.clear();
         WARNED_DECODE_FAILURES.clear();
+        ASSEMBLIES.clear();
+        SkinTextureAnimator.clear();
+        ClientSkinResourcePack.clear();
 
         // release() unregisters and closes. Leaving the registrations behind stranded a dead
         // texture per asset of every server visited. Double-close is a no-op.
         TextureManager textureManager = Minecraft.getInstance().getTextureManager();
-        for (ResourceLocation location : REGISTERED_TEXTURES.keySet()) {
+        for (ResourceLocation location : REGISTERED_TEXTURES) {
             textureManager.release(location);
         }
         REGISTERED_TEXTURES.clear();

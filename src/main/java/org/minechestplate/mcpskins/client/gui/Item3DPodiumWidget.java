@@ -4,15 +4,21 @@ import com.mojang.blaze3d.platform.Lighting;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
+import com.tacz.guns.api.TimelessAPI;
 import com.tacz.guns.util.RenderDistance;
 import org.lwjgl.opengl.GL11;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.Vec3;
 import org.minechestplate.mcpskins.MCPSkins;
+import org.minechestplate.mcpskins.client.render.BedrockModelBounds;
+import org.minechestplate.mcpskins.client.render.ClientAttachmentIndexPatcher;
+import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
 import java.lang.reflect.Field;
 
@@ -24,6 +30,12 @@ import java.lang.reflect.Field;
 public final class Item3DPodiumWidget {
 
     private static final ItemDisplayContext RENDER_CONTEXT = ItemDisplayContext.FIXED;
+
+    /** Bedrock units to blocks, the scale model bounds are measured in. */
+    private static final double CENTER_SCALE = 1 / 16.0;
+
+    /** How much of the panel a fitted model spans, leaving room for it to turn. */
+    private static final double FIT_FILL = 0.8;
 
     // Full-bright packed light, same as vanilla's GuiGraphics#renderItem uses for icons
     private static final int FULL_BRIGHT_PACKED_LIGHT = 0xF000F0;
@@ -132,7 +144,7 @@ public final class Item3DPodiumWidget {
 
         int centerX = x + width / 2;
         int centerY = y + height / 2;
-        float baseScale = Math.min(width, height) * 0.55f;
+        float baseScale = baseScale();
 
         guiGraphics.enableScissor(x, y, x + width, y + height);
         try {
@@ -181,6 +193,7 @@ public final class Item3DPodiumWidget {
             pose.scale(scale, -scale, scale);
             pose.mulPose(Axis.XP.rotationDegrees(pitch));
             pose.mulPose(Axis.YP.rotationDegrees(yaw));
+            applyAttachmentCentering(pose);
 
             Lighting.setupFor3DItems();
             RenderSystem.disableCull(); // the mirror above flips winding order
@@ -209,6 +222,55 @@ public final class Item3DPodiumWidget {
         } finally {
             pose.popPose();
         }
+    }
+
+    /**
+     * Attachment geometry is authored around its mount point, not its middle, so spinning it
+     * about the item origin swings a long one out of the panel. Applied after the rotations,
+     * which is the space the item renderer receives, so it holds at every angle.
+     * <p>
+     * TACZ draws an attachment through {@code scale(-1, -1, 1)} plus, under
+     * {@code ItemDisplayContext.FIXED}, a turn about Y, which is what swaps the model's x and
+     * z on the way to item space. The signs were confirmed by measuring where the model lands
+     * for a known offset, not derived, so leave them alone without re-measuring.
+     */
+    private void applyAttachmentCentering(PoseStack pose) {
+        BedrockModelBounds.Bounds bounds = attachmentBounds();
+        if (bounds == null) return;
+        Vec3 center = bounds.center();
+        pose.translate(center.z * CENTER_SCALE, -center.y * CENTER_SCALE, center.x * CENTER_SCALE);
+    }
+
+    /**
+     * Sizes the preview to the model rather than assuming one, so an attachment whose geometry
+     * is much larger or smaller than a weapon's still opens fully in frame. Weapons keep the
+     * fixed factor: TACZ scales those per gun in its own display config, which this has no
+     * view of. Zoom still multiplies whatever this returns.
+     */
+    private float baseScale() {
+        float fallback = Math.min(width, height) * 0.55f;
+        BedrockModelBounds.Bounds bounds = attachmentBounds();
+        if (bounds == null) return fallback;
+
+        Vec3 center = bounds.center();
+        double radiusXZ = bounds.horizontalRadius(center) * CENTER_SCALE;
+        double radiusY = bounds.verticalRadius(center) * CENTER_SCALE;
+        if (radiusXZ <= 0 || radiusY <= 0) return fallback;
+
+        double fit = Math.min(width * FIT_FILL / (2 * radiusXZ), height * FIT_FILL / (2 * radiusY));
+        return (float) Mth.clamp(fit, fallback * 0.2, fallback * 6.0);
+    }
+
+    /** Bounds of the held attachment's model, or null for anything that isn't one. */
+    private BedrockModelBounds.Bounds attachmentBounds() {
+        String attachmentId = TACZSkinHelper.getAttachmentId(stack);
+        if (attachmentId == null) return null;
+        ResourceLocation id = ResourceLocation.tryParse(attachmentId);
+        if (id == null) return null;
+
+        ResourceLocation modelLocation = TimelessAPI.getClientAttachmentIndex(id)
+                .map(ClientAttachmentIndexPatcher::getBaseModelLocation).orElse(null);
+        return modelLocation == null ? null : BedrockModelBounds.of(modelLocation);
     }
 
     /**

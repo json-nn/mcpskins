@@ -74,8 +74,6 @@ neoForge {
     runs {
         client {
             client()
-            jvmArguments.addAll '-Xmx5G', '-Xms1G'
-            programArguments.addAll '--width', '1280', '--height', '720'
 
             // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
@@ -83,9 +81,6 @@ neoForge {
 
         server {
             server()
-            // Separate game directory: run/mods holds client-only mods (Iris, Sodium,
-            // FerriteCore) that must never be loaded by a server.
-            gameDirectory = project.file('run-server')
             programArgument '--nogui'
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }

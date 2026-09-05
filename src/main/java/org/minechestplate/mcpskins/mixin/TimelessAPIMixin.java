@@ -2,9 +2,12 @@ package org.minechestplate.mcpskins.mixin;
 
 import com.tacz.guns.api.TimelessAPI;
 import com.tacz.guns.client.resource.GunDisplayInstance;
+import com.tacz.guns.client.resource.index.ClientAttachmentIndex;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import org.minechestplate.mcpskins.MCPSkins;
+import org.minechestplate.mcpskins.client.render.AttachmentSkinContext;
+import org.minechestplate.mcpskins.client.render.AttachmentSkinPatcher;
 import org.minechestplate.mcpskins.client.render.GunDisplayInstancePatcher;
 import org.minechestplate.mcpskins.client.render.GunModelPatcher;
 import org.minechestplate.mcpskins.client.render.PatchedGunDisplayCache;
@@ -113,5 +116,28 @@ public class TimelessAPIMixin {
             cir.setReturnValue(Optional.of(patchBase));
         }
         // If both fall through, the original unskinned instance stands.
+    }
+
+    /**
+     * The attachment lookup is keyed by id, not by stack, so the stack's skin arrives through
+     * {@link AttachmentSkinContext}. Always consumed, hit or miss, so nothing carries over to
+     * the next lookup.
+     */
+    @Inject(
+            method = "getClientAttachmentIndex",
+            at = @At("RETURN"),
+            cancellable = true,
+            require = 0
+    )
+    private static void mcpskins$applyAttachmentSkin(ResourceLocation attachmentId,
+                                                     CallbackInfoReturnable<Optional<ClientAttachmentIndex>> cir) {
+        String skinId = AttachmentSkinContext.consume(attachmentId);
+        Optional<ClientAttachmentIndex> original = cir.getReturnValue();
+        if (skinId == null || original == null || original.isEmpty()) return;
+
+        ClientAttachmentIndex patched = AttachmentSkinPatcher.patch(original.get(), attachmentId.toString(), skinId);
+        if (patched != null) {
+            cir.setReturnValue(Optional.of(patched));
+        }
     }
 }
