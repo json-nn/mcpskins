@@ -105,6 +105,13 @@ public class SkinArmoryScreen extends Screen {
     private static final int STAGE_INSET = 3;
     private static final int CHIP_PAD = 8;
     private static final int SEARCH_MIN_W = 46;
+
+    /**
+     * Smallest share of the header the search field keeps. A fixed floor was not enough: the
+     * panel is capped in width, so at a high resolution a set of long translated captions ate
+     * everything down to that floor and left the field unusable.
+     */
+    private static final float SEARCH_MIN_SHARE = 0.30f;
     /** Enough for an ellipsis plus a glyph, so a squeezed chip still reads as a button. */
     private static final int MIN_CHIP_W = 18;
 
@@ -214,7 +221,10 @@ public class SkinArmoryScreen extends Screen {
             tileScroll = 0;
             rebuild();
         });
-        this.addRenderableWidget(searchBox);
+        // Added as a plain widget: it is drawn in renderHeader inside a scissor instead,
+        // because EditBox draws its hint and value unclipped and a translated hint that is
+        // wider than the field would otherwise run out over the buttons beside it.
+        this.addWidget(searchBox);
 
         SkinDataModels.SkinLookupResult focus = focusSkinId != null
                 ? SkinManager.INSTANCE.findSkin(focusSkinId) : null;
@@ -247,16 +257,18 @@ public class SkinArmoryScreen extends Screen {
         // widths are measured rather than assumed, because a translated caption can be far
         // wider than the English one and used to run over the search field.
         int headerW = innerX1 - innerX0;
+        int searchMin = Math.max(SEARCH_MIN_W, Math.round(headerW * SEARCH_MIN_SHARE));
+
         HeaderLabels labels = headerLabels(tier);
-        if (tier != Tier.COMPACT && labels.totalWidth() + SEARCH_MIN_W + GAP > headerW) {
+        if (tier != Tier.COMPACT && labels.totalWidth() + searchMin + GAP > headerW) {
             labels = headerLabels(Tier.COMPACT); // the short captions, before squeezing anything
         }
-        int chipRoom = headerW - SEARCH_MIN_W - GAP;
+        int chipRoom = headerW - searchMin - GAP;
         if (labels.totalWidth() > chipRoom) {
             labels = squeeze(labels, chipRoom);
         }
 
-        int chipsX = Math.max(innerX0 + SEARCH_MIN_W + GAP, innerX1 - labels.totalWidth());
+        int chipsX = Math.max(innerX0 + searchMin + GAP, innerX1 - labels.totalWidth());
 
         Rect[] filters = new Rect[StatusFilter.values().length];
         int cursor = chipsX;
@@ -502,6 +514,15 @@ public class SkinArmoryScreen extends Screen {
         ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ICON_SEARCH, search.x0() + PAD,
                 search.y0() + (CONTROL_H - ICON) / 2, ICON, ICON,
                 focused ? ArmoryTheme.ACCENT : ArmoryTheme.TEXT_35);
+
+        if (searchBox != null) {
+            guiGraphics.enableScissor(search.x0(), search.y0(), search.x1(), search.y1());
+            try {
+                searchBox.render(guiGraphics, mouseX, mouseY, 0f);
+            } finally {
+                guiGraphics.disableScissor();
+            }
+        }
 
         for (StatusFilter filter : StatusFilter.values()) {
             renderChip(guiGraphics, layout.filters()[filter.ordinal()],
