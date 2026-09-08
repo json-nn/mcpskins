@@ -20,10 +20,9 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Animates skin textures by uploading frames into a texture the game already owns.
  * <p>
- * Deliberately does not wrap or subclass the texture. A skin texture has to stay a plain
+ * Deliberately does not wrap or subclass the texture. A skin texture must stay a plain
  * {@code SimpleTexture} for a shader mod to attach PBR maps to it: a subclass was tried and
- * measured, and Iris stopped looking up the normal and specular maps altogether. Driving the
- * upload from the GL id leaves the texture object untouched, which keeps both working.
+ * measured, and Iris stopped requesting the maps altogether.
  * <p>
  * One shared counter drives every animation, so they stay in step and none drift after a stall.
  */

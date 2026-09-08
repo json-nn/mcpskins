@@ -12,27 +12,15 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Builds a modified copy of a {@link GunDisplayInstance} with an overridden texture,
- * icon, and/or HUD icon(s), for TACZ's fork at MUKSC/TACZ-1.21.1 (neoforge/1.21.1).
- * Geometry replacement is handled separately by {@link GunModelPatcher}, since geometry
- * isn't a simple field once loaded.
+ * Copies a {@link GunDisplayInstance} with an overridden texture, icon or HUD icon. Geometry is
+ * not a simple field once loaded, so {@link GunModelPatcher} handles that separately.
  * <p>
- * {@code GunDisplayInstance} is neither {@code Cloneable} nor a record and its only
- * constructor does real asset loading, so a copy is made via
- * {@code Unsafe#allocateInstance} plus a field-by-field reflective copy.
+ * The class is neither {@code Cloneable} nor a record, and its constructor does real asset
+ * loading, so copies go through {@code Unsafe#allocateInstance} plus a reflective field copy.
+ * Each override applies independently: one failing field leaves the rest working.
  * <p>
- * The four overrides (texture, icon, HUD, HUD-empty) are applied independently in
- * {@link #withOverrides}: a failure on one field is logged once and only that override
- * stays the base weapon's asset.
- * <p>
- * The base instance loads its texture/model lazily. Copying before that finishes would
- * carry over "not loaded" flags and get silently overwritten, so {@link #isBaseReadyToPatch}
- * checks TACZ's own load flags first and this class never forces the load itself (an
- * earlier version did, via the public getter, which raced with resource pack reloads).
- * <p>
- * The icon field's real name isn't verified against this fork's decompiled source, so
- * {@link #resolveIconField} tries {@link #ICON_FIELD_CANDIDATES} in order. If none match,
- * icon overrides no-op (one warning) while everything else keeps working.
+ * Never forces the lazy texture load, which raced with resource pack reloads;
+ * {@link #isBaseReadyToPatch} waits for TACZ's own flags instead.
  */
 public final class GunDisplayInstancePatcher {
 
@@ -60,10 +48,7 @@ public final class GunDisplayInstancePatcher {
     private GunDisplayInstancePatcher() {
     }
 
-    /**
-     * Reads the texture field directly rather than via the public getter, which would
-     * force the lazy load as a side effect (see class javadoc).
-     */
+    /** Directly, not through the getter, which would force the lazy load as a side effect. */
     public static ResourceLocation getTexture(GunDisplayInstance instance) {
         if (instance == null) return null;
         Field field = resolveTextureField();
@@ -122,10 +107,7 @@ public final class GunDisplayInstancePatcher {
         }
     }
 
-    /**
-     * Unlike {@link #getTexture}, reads the public getter directly since {@code hudTexture}
-     * is set synchronously and has no lazy-load side effect to avoid.
-     */
+    /** The getter is fine here: {@code hudTexture} is set synchronously, with no lazy load. */
     public static ResourceLocation getHud(GunDisplayInstance instance) {
         return instance != null ? instance.getHUDTexture() : null;
     }
@@ -174,10 +156,8 @@ public final class GunDisplayInstancePatcher {
     private static final Set<String> WARNED_WRITE_FAILURES = ConcurrentHashMap.newKeySet();
 
     /**
-     * Returns a copy of {@code instance} with the given overrides applied (any may be
-     * {@code null} to leave that asset untouched). Returns {@code null} only if the
-     * original isn't ready to copy yet or the copy itself fails; a single field write
-     * failing does not affect the others.
+     * @param  instance any override may be null to leave that asset untouched
+     * @return null only if the original isn't ready to copy yet, or the copy itself failed
      */
     public static GunDisplayInstance withOverrides(GunDisplayInstance instance, ResourceLocation textureOverride,
                                                    ResourceLocation iconOverride, ResourceLocation hudOverride, ResourceLocation hudEmptyOverride) {
@@ -254,7 +234,6 @@ public final class GunDisplayInstancePatcher {
                         break;
                     }
                 } catch (NoSuchFieldException ignored) {
-                    // try the next candidate
                 }
             }
             cachedIconField = found;
@@ -279,12 +258,8 @@ public final class GunDisplayInstancePatcher {
             Unsafe unsafe = getUnsafe();
             Object rawCopy = unsafe.allocateInstance(GunDisplayInstance.class);
             GunDisplayInstance copy = (GunDisplayInstance) rawCopy;
-            // Walks the superclass chain, not just GunDisplayInstance's own declared fields.
-            // allocateInstance leaves everything at its default, so anything declared by a
-            // superclass would silently stay null/0 in the copy. GunDisplayInstance extends
-            // Object in the forks seen so far, which is the only reason the narrower version
-            // worked - findField below already assumes inheritance is possible, and this
-            // should not disagree with it.
+            // The whole superclass chain: allocateInstance leaves every field at its default,
+            // so an inherited one would silently stay null in the copy.
             for (Class<?> current = GunDisplayInstance.class; current != null && current != Object.class;
                  current = current.getSuperclass()) {
                 for (Field field : current.getDeclaredFields()) {

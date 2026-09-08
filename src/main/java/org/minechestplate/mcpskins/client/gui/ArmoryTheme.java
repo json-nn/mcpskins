@@ -66,15 +66,11 @@ public final class ArmoryTheme {
     }
 
     /**
-     * Draws a sprite at its own colours.
+     * Draws a sprite at its own colours. Not overloaded with a tinted form on purpose:
+     * {@code blitSprite}'s six-int signature ends in {@code width, height} and takes no tint, so
+     * a colour passed as an extra argument binds to {@code height} and hangs the client.
      * <p>
-     * Deliberately not overloaded with a tinted form: {@code blitSprite}'s six-int signature
-     * ends {@code blitOffset, width, height} and takes no tint, so a colour passed as an extra
-     * argument binds silently to {@code height} and hangs the client. Naming the tinted path
-     * differently means that cannot compile.
-     * <p>
-     * Blend is enabled explicitly rather than inherited: batched text leaves it off when it
-     * flushes, which would drop the alpha a sprite was authored with.
+     * Blend is enabled explicitly, since batched text leaves it off when it flushes.
      */
     public static void sprite(GuiGraphics graphics, ResourceLocation sprite, int x, int y, int width, int height) {
         if (drawable(sprite, width, height)) {
@@ -84,10 +80,9 @@ public final class ArmoryTheme {
     }
 
     /**
-     * Draws a sprite multiplied by {@code argb}. 1.21.1 has no tinted blit, so the colour goes
-     * through the shader; {@code innerBlit} draws immediately, so it applies to this call
-     * alone. The reset is in a {@code finally} because a leaked shader colour tints the rest
-     * of the frame.
+     * 1.21.1 has no tinted blit, so the colour goes through the shader; {@code innerBlit} draws
+     * immediately, so it applies to this call alone. Reset in a {@code finally}, because a
+     * leaked shader colour tints the rest of the frame.
      */
     public static void spriteTinted(GuiGraphics graphics, ResourceLocation sprite,
                                     int x, int y, int width, int height, int argb) {

@@ -5,25 +5,18 @@ import net.minecraft.network.chat.MutableComponent;
 
 import java.util.List;
 
-/**
- * Data types describing skins loaded by {@link SkinManager}.
- */
+/** Data types describing skins loaded by {@link SkinManager}. */
 public class SkinDataModels {
 
-    /** Rarity assumed when a skin declares none. Always exists - see {@link RarityManager}. */
     public static final String DEFAULT_RARITY_ID = "common";
 
     /**
-     * A rarity tier, defined either as one of {@link RarityManager}'s built-ins or by a
-     * datapack. Used for filtering/sorting and accent colors in the Armory, and for the fuse
-     * ladder in {@code SkinUnlockItem}. Does not replace {@link SkinEntry#labelColor}, which
-     * remains the source of truth for the item's tint.
+     * A rarity tier, built in or datapack-defined.
      *
-     * @param order      position in the ladder; the built-ins are spaced 100 apart so custom
-     *                   tiers can slot between them
-     * @param fusable    false excludes this tier from fusing in both directions
-     * @param fuseCost   overrides the server config's global cost, or null to use it
-     * @param fuseTargets explicit weighted targets, or empty to fuse into the next tier by order
+     * @param order       position in the ladder; built-ins are spaced 100 apart so custom tiers
+     *                    can slot between them
+     * @param fuseCost    overrides the server config's global cost, or null to use it
+     * @param fuseTargets weighted targets, or empty to fuse into the next tier by order
      */
     public record Rarity(String id, String displayName, String translationKey, int accentColor,
                          int order, boolean fusable, Integer fuseCost, List<FuseTarget> fuseTargets) {
@@ -32,11 +25,7 @@ public class SkinDataModels {
             fuseTargets = fuseTargets == null ? List.of() : List.copyOf(fuseTargets);
         }
 
-        /**
-         * Always accent-coloured. Resolution order: a skin pack's own {@code skin_lang} entry,
-         * then a {@code translation_key} pointing into a real resource pack, then the literal
-         * {@code display_name}.
-         */
+        /** Resolved through {@code skin_lang}, then {@code translation_key}, then the literal name. */
         public MutableComponent label() {
             return styled(SkinTranslations.rarityName(this));
         }
@@ -59,61 +48,42 @@ public class SkinDataModels {
         }
     }
 
-    /** One possible outcome of fusing, weighted against the other targets of the same rarity. */
     public record FuseTarget(String rarityId, int weight) {}
 
     /**
      * A single skin definition.
      *
-     * @param id          globally unique skin id (see {@link SkinManager} for the naming scheme)
-     * @param name        display name
-     * @param labelColor  the single source of truth for the skin's tint color
-     * @param rarityId    resolved through {@link RarityManager}, never stored resolved - the two
-     *                    datapack folders load without a guaranteed order between them
-     * @param collection  collection name for grouping in the Armory, empty means none
-     * @param description short lore text shown in the Armory info panel, empty means none
-     * @param isNew       shows a "NEW" badge in the Armory grid, defaults to {@code false}
-     * @param weight      relative likelihood of being rolled by a fuse against its tier-mates;
-     *                    higher is more common, defaults to 1
-     * @param lockedText  how the skin is earned, shown in the Armory while it is locked. Free
-     *                    text, empty means none. Descriptive only, it gates nothing
-     * @param unlockedByDefault grants the skin to every player the first time they join, so a
-     *                    pack can ship starter skins without a command
+     * @param id                globally unique across every weapon and attachment
+     * @param rarityId          resolved on read, never at load: rarities and skins are separate
+     *                          reload listeners with no ordering between them
+     * @param weight            relative likelihood of being rolled by a fuse against its tier-mates
+     * @param lockedText        how the skin is earned, shown while locked. Descriptive only
+     * @param unlockedByDefault granted to every player on first join
      */
     public record SkinEntry(String id, String name, int labelColor, String rarityId, String collection,
                             String description, boolean isNew, int weight, String lockedText,
                             boolean unlockedByDefault) {
 
-        /** Legacy constructor for callers predating the Armory fields; fills safe defaults. */
-        public SkinEntry(String id, String name, int labelColor) {
-            this(id, name, labelColor, DEFAULT_RARITY_ID, "", "", false, 1, "", false);
-        }
-
-        /** Whether this skin has a non-blank description. */
         public boolean hasDescription() {
-            return description != null && !description.isBlank();
+            return notBlank(description);
         }
 
-        /** Whether this skin belongs to a named collection. */
         public boolean hasCollection() {
-            return collection != null && !collection.isBlank();
+            return notBlank(collection);
         }
 
-        /** Whether this skin states how it is earned. */
         public boolean hasLockedText() {
-            return lockedText != null && !lockedText.isBlank();
+            return notBlank(lockedText);
+        }
+
+        private static boolean notBlank(String value) {
+            return value != null && !value.isBlank();
         }
     }
 
-    /** Which kind of TACZ item a skin set applies to. */
     public enum SkinTarget { GUN, ATTACHMENT }
 
-    /**
-     * One base item and every skin declared for it.
-     *
-     * @param baseGun the TACZ id being skinned: a GunId, or an AttachmentId when
-     *                {@code target} is {@link SkinTarget#ATTACHMENT}
-     */
+    /** @param baseGun a GunId, or an AttachmentId when {@code target} is {@link SkinTarget#ATTACHMENT} */
     public record WeaponSkins(String baseGun, List<SkinEntry> skins, SkinTarget target) {
 
         public WeaponSkins(String baseGun, List<SkinEntry> skins) {
@@ -125,8 +95,5 @@ public class SkinDataModels {
         }
     }
 
-    /**
-     * The result of a skin lookup: the matched skin together with the weapon it belongs to.
-     */
     public record SkinLookupResult(WeaponSkins weapon, SkinEntry skin) {}
 }

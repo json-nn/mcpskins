@@ -65,7 +65,6 @@ public class MCPSkins {
         NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
         NeoForge.EVENT_BUS.addListener(this::onDatapackSync);
 
-        // Sync unlocked skins on join, respawn, and dimension change.
         NeoForge.EVENT_BUS.addListener(this::onPlayerLogIn);
         NeoForge.EVENT_BUS.addListener(this::onPlayerRespawn);
         NeoForge.EVENT_BUS.addListener(this::onPlayerChangeDimension);
@@ -84,8 +83,7 @@ public class MCPSkins {
     }
 
     private void onAddReloadListeners(AddReloadListenerEvent event) {
-        // No ordering guarantee against SkinManager - skins hold rarity ids and resolve on
-        // read, so either load order is fine.
+        // No ordering guarantee against SkinManager, but skins resolve rarity ids on read.
         event.addListener(RarityManager.INSTANCE);
         event.addListener(SkinManager.INSTANCE);
         event.addListener(SkinLangManager.INSTANCE);
@@ -149,8 +147,8 @@ public class MCPSkins {
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // 1.10.0: adds the skin translation request/sync pair. The registrar isn't optional,
-        // so mismatched versions can't connect.
+        // 1.10.0 added the translation request/sync pair; the registrar is not optional,
+        // so mismatched versions cannot connect.
         PayloadRegistrar registrar = event.registrar("1.10.0");
 
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);
@@ -158,10 +156,9 @@ public class MCPSkins {
         registrar.playToClient(SkinFusionPayload.TYPE, SkinFusionPayload.CODEC, SkinFusionPayload::handleData);
         registrar.playToClient(SyncTranslationsPayload.TYPE, SyncTranslationsPayload.CODEC, SyncTranslationsPayload::handleData);
 
-        // Payload handlers run on the main thread by default; executesOn(NETWORK) is an
-        // explicit opt-in. Both serverbound handlers need it: they screen the request off the
-        // tick loop and hop back to MAIN only for work that touches game state. Asset requests
-        // also do blocking file/zip I/O plus Deflate, which would stall every tick.
+        // Both serverbound handlers screen the request off the tick loop and hop back to MAIN
+        // only for work that touches game state. Asset requests also do blocking zip I/O plus
+        // Deflate, which would stall every tick.
         registrar = registrar.executesOn(HandlerThread.NETWORK);
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToServer(RequestSkinAssetPayload.TYPE, RequestSkinAssetPayload.CODEC, RequestSkinAssetPayload::handleData);
@@ -174,11 +171,7 @@ public class MCPSkins {
         registrar.playToClient(SkinAssetThrottledPayload.TYPE, SkinAssetThrottledPayload.CODEC, SkinAssetThrottledPayload::handleData);
     }
 
-    /**
-     * Fires once when a player joins and once per {@code /reload}, which is also exactly when
-     * the set of default-unlocked skins can change, so the grant rides along here rather than
-     * costing anything per tick.
-     */
+    /** Fires on join and per {@code /reload}, exactly when default-unlocked skins can change. */
     private void onDatapackSync(OnDatapackSyncEvent event) {
         SyncRegistryPayload skinPayload = SyncRegistryPayload.createFromServer();
         if (event.getPlayer() != null) {

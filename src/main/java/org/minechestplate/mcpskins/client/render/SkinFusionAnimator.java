@@ -70,9 +70,6 @@ public final class SkinFusionAnimator {
     private SkinFusionAnimator() {
     }
 
-    // ------------------------------------------------------------------
-    // Packet entry
-    // ------------------------------------------------------------------
 
     public static void onFusion(SkinFusionPayload payload) {
         Minecraft mc = Minecraft.getInstance();
@@ -80,8 +77,8 @@ public final class SkinFusionAnimator {
             return;
         }
 
-        // Naming an entity rather than a raw position means the effect can only ever appear on a
-        // player the client already tracks, and dies with them.
+        // An entity rather than a raw position, so the effect can only appear on a player the
+        // client already tracks, and dies with them.
         Entity entity = mc.level.getEntity(payload.playerId());
         if (!(entity instanceof Player player) || entity.isRemoved()) {
             return;
@@ -103,8 +100,7 @@ public final class SkinFusionAnimator {
         boolean cue = MCPSkinsClientConfig.fusionAnimSound() && allowCue(payload.playerId(), gameTime);
 
         if (!animate) {
-            // Nothing is going to reach the reveal, so the payoff it would have played fires
-            // now instead of being lost.
+            // Nothing will reach the reveal, so its payoff fires now instead of being lost.
             if (cue) {
                 playAt(mc, player.position(), SoundEvents.PLAYER_LEVELUP, 0.5f, 1.6f);
             }
@@ -126,10 +122,7 @@ public final class SkinFusionAnimator {
                 gameTime, MCPSkinsClientConfig.fusionAnimDurationMs() / 50.0));
     }
 
-    /**
-     * Keeps a packet flood from turning into a chime machine. Separate from {@link #claimSlot}
-     * because the audio cue also fires when the animation itself is switched off.
-     */
+    /** Separate from {@link #claimSlot}: the cue also fires when the animation is switched off. */
     private static boolean allowCue(int entityId, long gameTime) {
         if (entityId == lastCueEntityId && gameTime - lastCueGameTime < REPLACE_COOLDOWN_TICKS) {
             return false;
@@ -172,9 +165,6 @@ public final class SkinFusionAnimator {
         return RarityManager.INSTANCE.get(lookup.skin().rarityId()).accentColor();
     }
 
-    // ------------------------------------------------------------------
-    // Tick: particles, sound cues, culling
-    // ------------------------------------------------------------------
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
@@ -230,10 +220,7 @@ public final class SkinFusionAnimator {
         mc.level.playLocalSound(at.x, at.y, at.z, sound, SoundSource.PLAYERS, volume, pitch, false);
     }
 
-    /**
-     * Emitted on the tick thread on purpose. Doing this from the render pass would tie the
-     * particle count to frame rate, so a fast machine would look completely different.
-     */
+    /** On the tick thread on purpose: from the render pass the count would follow frame rate. */
     private static void emitParticles(Minecraft mc, SkinFusionAnimation animation,
                                       SkinFusionAnimation.Basis basis, Player player,
                                       boolean firstPerson, float t,
@@ -275,9 +262,6 @@ public final class SkinFusionAnimator {
         mc.level.addParticle(options, at.x + dx, at.y + dy, at.z + dz, 0.0, 0.0, 0.0);
     }
 
-    // ------------------------------------------------------------------
-    // Render
-    // ------------------------------------------------------------------
 
     @SubscribeEvent
     public static void onRenderLevel(RenderLevelStageEvent event) {
@@ -348,11 +332,7 @@ public final class SkinFusionAnimator {
         }
     }
 
-    /**
-     * The level renderer owns this PoseStack, so the pop has to survive anything the item
-     * renderer throws. An unbalanced push corrupts every later draw in the frame, vanilla
-     * included.
-     */
+    /** The level renderer owns this PoseStack: an unbalanced push corrupts the rest of the frame. */
     private static void drawItem(Minecraft mc, ItemStack stack, Vec3 at, Vec3 camera,
                                  PoseStack pose, MultiBufferSource buffers,
                                  int light, float scale, float roll) {
@@ -372,14 +352,8 @@ public final class SkinFusionAnimator {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Shared helpers and teardown
-    // ------------------------------------------------------------------
 
-    /**
-     * Re-resolved every tick and frame rather than held, so a dimension change, respawn or the
-     * player leaving tracking range ends the animation without a dedicated listener.
-     */
+    /** Re-resolved rather than held, so a respawn or a dimension change ends the animation. */
     private static Player resolve(Minecraft mc, SkinFusionAnimation animation) {
         Entity entity = mc.level.getEntity(animation.entityId());
         if (!(entity instanceof Player player) || entity.isRemoved() || entity.level() != mc.level) {
@@ -392,7 +366,6 @@ public final class SkinFusionAnimator {
         return player == mc.player && mc.options.getCameraType().isFirstPerson();
     }
 
-    /** Called on disconnect so nothing survives into the next server. */
     public static void reset() {
         ACTIVE.clear();
         renderFailed = false;

@@ -22,13 +22,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.util.Optional;
 
 /**
- * Swaps a skin's texture, icon, HUD icons, and geometry into
- * {@code TimelessAPI.getGunDisplay} when the stack carries a {@link SkinComponents#SKIN_ID}.
- * The weapon's GunId never changes, only what renders for it.
- * <p>
- * Every override is optional and resolved through {@link SkinAssetResolver}, falling back to
- * the base asset when a file is missing or unsupported on this fork. {@code stack} is threaded
- * through to {@link GunModelPatcher#getOrCreate} only for animation priming.
+ * Swaps a skin's texture, icon, HUD icons and geometry into TACZ's display lookups when the
+ * stack carries a {@link SkinComponents#SKIN_ID}. The item's own id never changes, only what
+ * renders for it. Every override is optional and falls back to the base asset.
  */
 @Mixin(TimelessAPI.class)
 public class TimelessAPIMixin {

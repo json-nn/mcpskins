@@ -21,15 +21,12 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Loads rarity tiers from {@code data/<namespace>/skin_rarities/} and exposes them by id.
+ * Loads rarity tiers from {@code data/<namespace>/skin_rarities/} and exposes them by id. The
+ * five built-ins are registered in code, so the mod runs with no rarity datapack at all; a file
+ * named after one replaces it, any other name adds a tier.
  * <p>
- * The five built-ins are registered in code, so the mod works with no rarity datapack at all
- * and every existing skin pack keeps loading. A file whose name matches a built-in replaces it;
- * any other name adds a tier.
- * <p>
- * Kept separate from {@link SkinManager} rather than resolving ids into {@code SkinEntry} at
- * load time: the two folders are two reload listeners with no guaranteed order between them,
- * so resolution has to happen on read.
+ * Ids stay unresolved until read, because this and {@link SkinManager} are two reload listeners
+ * with no guaranteed order between them.
  */
 public class RarityManager extends SimpleJsonResourceReloadListener {
     private static final List<SkinDataModels.Rarity> BUILT_INS = List.of(
@@ -53,11 +50,7 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
 
     private static final Set<String> WARNED_UNKNOWN = ConcurrentHashMap.newKeySet();
 
-    /**
-     * Must stay below every static field above it. Constructing it seeds {@link #snapshot} from
-     * {@link #BUILT_INS}, and static initializers run in textual order - declared any higher and
-     * the constructor reads a null BUILT_INS.
-     */
+    /** Must stay below BUILT_INS: the constructor reads it, and initializers run in order. */
     public static final RarityManager INSTANCE = new RarityManager();
 
     public RarityManager() {
@@ -169,10 +162,7 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
         return new Snapshot(Map.copyOf(byId), List.copyOf(sorted), lowest);
     }
 
-    /**
-     * Never null. An unrecognized id falls back to the lowest tier and warns once, so a typo
-     * costs a skin its sorting position rather than its existence.
-     */
+    /** Never null: an unknown id warns once and falls back, so a typo costs sorting, not the skin. */
     public SkinDataModels.Rarity get(String rarityId) {
         Snapshot current = snapshot;
         if (rarityId == null || rarityId.isBlank()) return current.lowest();
@@ -187,7 +177,6 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
         return current.lowest();
     }
 
-    /** Ascending by order. */
     public List<SkinDataModels.Rarity> sorted() {
         return snapshot.sorted();
     }

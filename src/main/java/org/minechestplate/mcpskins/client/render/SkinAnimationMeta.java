@@ -10,13 +10,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The {@code animation} block of a vanilla {@code .png.mcmeta}, parsed for a skin texture.
- * <p>
- * Same shape and defaults as the vanilla format, so a pack author writes the file they already
- * know: {@code frametime}, {@code interpolate}, optional {@code width}/{@code height}, and an
- * optional {@code frames} list of indices or {@code {index, time}} objects. Frames default to a
- * square grid of {@code min(width, height)} read left to right, top to bottom, which makes the
- * common vertical strip work with no fields at all.
+ * The {@code animation} block of a vanilla {@code .png.mcmeta}, with vanilla's shape and
+ * defaults: frames are a square grid of {@code min(width, height)} read left to right, top to
+ * bottom, so the common vertical strip needs no fields at all.
  * <p>
  * Anything malformed logs one line and leaves the texture static rather than failing the skin.
  */

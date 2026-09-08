@@ -37,6 +37,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.minechestplate.mcpskins.client.gui.ArmoryLayout.*;
+
 /**
  * Standalone skin catalog and inspector, independent of what is in the player's hand. Opened
  * by hotkey or {@code /mcpskins armory}.
@@ -54,98 +56,10 @@ import java.util.Optional;
  */
 public class SkinArmoryScreen extends Screen {
 
-    /** Column widths and type sizes per panel width. */
-    private enum Tier {
-        WIDE(132, 128, 2.0f, 17, true),
-        MID(112, 112, 1.5f, 17, false),
-        COMPACT(88, 88, 1.25f, 16, false);
-
-        final int railWidth;
-        final int detailWidth;
-        final float nameScale;
-        final int gunRowHeight;
-        final boolean lore;
-
-        Tier(int railWidth, int detailWidth, float nameScale, int gunRowHeight, boolean lore) {
-            this.railWidth = railWidth;
-            this.detailWidth = detailWidth;
-            this.nameScale = nameScale;
-            this.gunRowHeight = gunRowHeight;
-            this.lore = lore;
-        }
-    }
-
     private enum FocusPane { RAIL, TILES }
-
-    private enum StatusFilter { ALL, OWNED, LOCKED }
-
-    private enum SortMode { RARITY, ALPHABETICAL, NEWEST }
-
-    private static final int PANEL_MIN_W = 320;
-    private static final int PANEL_MAX_W = 640;
-    private static final int PANEL_MIN_H = 240;
-    private static final int PANEL_MAX_H = 360;
-    private static final int PANEL_MARGIN = 8;
-
-    private static final int TIER_WIDE_MIN = 560;
-    private static final int TIER_MID_MIN = 440;
-
-    private static final int PAD = 6;
-    private static final int GAP = 6;
-    private static final int GAP_TIGHT = 4;
-    private static final int CONTROL_H = 15;
-    private static final int SECTION_H = 11;
-    private static final int SKIN_ROW_H = 12;
-    private static final int SKIN_ROW_INDENT = 10;
-    private static final int TILE_H = 40;
-    private static final int INFO_ROW_H = 9;
-    private static final int EQUIP_H = 17;
-    private static final int ICON = 8;
-    /** Past the stage frame, so a zoomed model cannot paint over its border. */
-    private static final int STAGE_INSET = 3;
-    private static final int CHIP_PAD = 8;
-    private static final int SEARCH_MIN_W = 46;
-
-    /**
-     * Smallest share of the header the search field keeps. A fixed floor was not enough: the
-     * panel is capped in width, so at a high resolution a set of long translated captions ate
-     * everything down to that floor and left the field unusable.
-     */
-    private static final float SEARCH_MIN_SHARE = 0.30f;
-    /** Enough for an ellipsis plus a glyph, so a squeezed chip still reads as a button. */
-    private static final int MIN_CHIP_W = 18;
 
     /** A pipe cannot occur in a gun or skin id, so composite keys never collide. */
     private static final char SEPARATOR = '|';
-
-    private record Rect(int x0, int y0, int x1, int y1) {
-        boolean contains(double mouseX, double mouseY) {
-            return mouseX >= x0 && mouseX < x1 && mouseY >= y0 && mouseY < y1;
-        }
-
-        int width() {
-            return x1 - x0;
-        }
-
-        int height() {
-            return y1 - y0;
-        }
-    }
-
-    /** Every zone for this frame, so render and hit-testing read the same numbers. */
-    /** The chip captions as measured, so what is drawn is exactly what was laid out. */
-    private record HeaderLabels(String[] filters, String custom, String sort,
-                                int filterW, int customW, int sortW) {
-
-        int totalWidth() {
-            int count = StatusFilter.values().length;
-            return filterW * count + GAP_TIGHT * count + customW + GAP + sortW;
-        }
-    }
-
-    private record Layout(Tier tier, HeaderLabels labels, Rect panel, Rect search, Rect[] filters, Rect custom, Rect sort,
-                          Rect rail, Rect railList, Rect stage, Rect tiles, Rect info, Rect equip) {
-    }
 
     /** One line in the rail. A null {@code skinId} means the gun row itself. */
     private record RailRow(String gunId, String skinId, int top, int height) {
@@ -194,16 +108,14 @@ public class SkinArmoryScreen extends Screen {
         this.focusSkinId = focusSkinId;
     }
 
-    // -----------------------------------------------------------------------------------
     // Init / layout
-    // -----------------------------------------------------------------------------------
 
     @Override
     protected void init() {
         podium.resetView();
         podium.setChrome(false);
 
-        Layout layout = computeLayout();
+        Layout layout = compute(this.width, this.height, this.font, sortMode);
         String previous = searchBox != null ? searchBox.getValue() : "";
 
         int textX = layout.search().x0() + PAD + ICON + GAP_TIGHT;
@@ -221,9 +133,8 @@ public class SkinArmoryScreen extends Screen {
             tileScroll = 0;
             rebuild();
         });
-        // Added as a plain widget: it is drawn in renderHeader inside a scissor instead,
-        // because EditBox draws its hint and value unclipped and a translated hint that is
-        // wider than the field would otherwise run out over the buttons beside it.
+        // Drawn in renderHeader inside a scissor instead: EditBox draws its hint and value
+        // unclipped, so a long translated hint would run out over the buttons beside it.
         this.addWidget(searchBox);
 
         SkinDataModels.SkinLookupResult focus = focusSkinId != null
@@ -236,115 +147,10 @@ public class SkinArmoryScreen extends Screen {
         }
 
         rebuild();
-        scrollRailToSelection(computeLayout());
+        scrollRailToSelection(compute(this.width, this.height, this.font, sortMode));
     }
 
-    /** Recomputed every frame; cheaper than caching and risking staleness after a resize. */
-    private Layout computeLayout() {
-        int panelW = Mth.clamp(this.width - PANEL_MARGIN * 2, PANEL_MIN_W, PANEL_MAX_W);
-        int panelH = Mth.clamp(this.height - PANEL_MARGIN * 2, PANEL_MIN_H, PANEL_MAX_H);
-        int px = (this.width - panelW) / 2;
-        int py = (this.height - panelH) / 2;
-        Rect panel = new Rect(px, py, px + panelW, py + panelH);
-
-        Tier tier = panelW >= TIER_WIDE_MIN ? Tier.WIDE : panelW >= TIER_MID_MIN ? Tier.MID : Tier.COMPACT;
-
-        int innerX0 = panel.x0() + PAD;
-        int innerX1 = panel.x1() - PAD;
-        int headerY = panel.y0() + PAD;
-
-        // Laid out from the right edge inward, so the search field absorbs the slack. Chip
-        // widths are measured rather than assumed, because a translated caption can be far
-        // wider than the English one and used to run over the search field.
-        int headerW = innerX1 - innerX0;
-        int searchMin = Math.max(SEARCH_MIN_W, Math.round(headerW * SEARCH_MIN_SHARE));
-
-        HeaderLabels labels = headerLabels(tier);
-        if (tier != Tier.COMPACT && labels.totalWidth() + searchMin + GAP > headerW) {
-            labels = headerLabels(Tier.COMPACT); // the short captions, before squeezing anything
-        }
-        int chipRoom = headerW - searchMin - GAP;
-        if (labels.totalWidth() > chipRoom) {
-            labels = squeeze(labels, chipRoom);
-        }
-
-        int chipsX = Math.max(innerX0 + searchMin + GAP, innerX1 - labels.totalWidth());
-
-        Rect[] filters = new Rect[StatusFilter.values().length];
-        int cursor = chipsX;
-        for (StatusFilter f : StatusFilter.values()) {
-            filters[f.ordinal()] = new Rect(cursor, headerY, cursor + labels.filterW(), headerY + CONTROL_H);
-            cursor += labels.filterW() + GAP_TIGHT;
-        }
-        Rect custom = new Rect(cursor, headerY, cursor + labels.customW(), headerY + CONTROL_H);
-        cursor += labels.customW() + GAP;
-        Rect sort = new Rect(cursor, headerY, cursor + labels.sortW(), headerY + CONTROL_H);
-        Rect search = new Rect(innerX0, headerY, chipsX - GAP, headerY + CONTROL_H);
-
-        int contentY0 = headerY + CONTROL_H + GAP;
-        int contentY1 = panel.y1() - PAD;
-
-        Rect rail = new Rect(innerX0, contentY0, innerX0 + tier.railWidth, contentY1);
-        Rect railList = new Rect(rail.x0(), rail.y0() + SECTION_H, rail.x1(), rail.y1());
-        Rect detail = new Rect(innerX1 - tier.detailWidth, contentY0, innerX1, contentY1);
-        Rect stage = new Rect(rail.x1() + GAP, contentY0, detail.x0() - GAP, contentY1);
-
-        // Stacked bottom-up: Equip pinned to the floor, info above it, tiles take the rest.
-        Rect equip = new Rect(detail.x0(), detail.y1() - EQUIP_H, detail.x1(), detail.y1());
-        int infoRows = 2;
-        Rect info = new Rect(detail.x0(), equip.y0() - GAP_TIGHT - infoRows * INFO_ROW_H,
-                detail.x1(), equip.y0() - GAP_TIGHT);
-        Rect tiles = new Rect(detail.x0(), detail.y0() + SECTION_H,
-                detail.x1(), Math.max(detail.y0() + SECTION_H + TILE_H, info.y0() - GAP_TIGHT));
-
-        return new Layout(tier, labels, panel, search, filters, custom, sort, rail, railList, stage, tiles, info, equip);
-    }
-
-    private int chipWidth(String label) {
-        return this.font.width(label) + CHIP_PAD * 2;
-    }
-
-    private HeaderLabels headerLabels(Tier tier) {
-        String[] filters = new String[StatusFilter.values().length];
-        int filterW = 0;
-        for (StatusFilter f : StatusFilter.values()) {
-            filters[f.ordinal()] = statusFilterLabel(f, tier).getString();
-            filterW = Math.max(filterW, chipWidth(filters[f.ordinal()]));
-        }
-        String custom = customLabel(tier).getString();
-        String sort = sortModeLabel(sortMode, tier).getString();
-        return new HeaderLabels(filters, custom, sort, filterW, chipWidth(custom), chipWidth(sort));
-    }
-
-    /**
-     * Last resort when even the short captions overrun the header: shrink every chip by the
-     * same factor and cut its caption to match, so the row stays inside the panel instead of
-     * overlapping the search field.
-     */
-    private HeaderLabels squeeze(HeaderLabels labels, int available) {
-        int count = StatusFilter.values().length;
-        int gaps = GAP_TIGHT * count + GAP;
-        int textRoom = Math.max(0, available - gaps);
-        int current = Math.max(1, labels.totalWidth() - gaps);
-        double factor = Math.min(1.0, textRoom / (double) current);
-
-        int filterW = Math.max(MIN_CHIP_W, (int) (labels.filterW() * factor));
-        int customW = Math.max(MIN_CHIP_W, (int) (labels.customW() * factor));
-        int sortW = Math.max(MIN_CHIP_W, (int) (labels.sortW() * factor));
-
-        String[] filters = new String[count];
-        for (int i = 0; i < count; i++) {
-            filters[i] = ArmoryTheme.truncate(this.font, labels.filters()[i], filterW - CHIP_PAD, ArmoryTheme.BASE);
-        }
-        return new HeaderLabels(filters,
-                ArmoryTheme.truncate(this.font, labels.custom(), customW - CHIP_PAD, ArmoryTheme.BASE),
-                ArmoryTheme.truncate(this.font, labels.sort(), sortW - CHIP_PAD, ArmoryTheme.BASE),
-                filterW, customW, sortW);
-    }
-
-    // -----------------------------------------------------------------------------------
     // Data
-    // -----------------------------------------------------------------------------------
 
     /**
      * Rebuilds the rail from the current search, filters and sort. A non-empty search is global,
@@ -358,8 +164,7 @@ public class SkinArmoryScreen extends Screen {
         String query = searchBox != null ? searchBox.getValue().trim().toLowerCase(Locale.ROOT) : "";
         boolean searching = !query.isEmpty();
 
-        // Guns first, then attachments, so attachments read as their own section instead of
-        // scattering through the weapon list by name.
+        // Guns first, so attachments read as their own section rather than scattering by name.
         List<SkinDataModels.WeaponSkins> weapons = new ArrayList<>(SkinManager.INSTANCE.getRegistry().values());
         weapons.sort(Comparator.comparing(SkinDataModels.WeaponSkins::isAttachment)
                 .thenComparing(w -> weaponDisplayName(w.baseGun()), String.CASE_INSENSITIVE_ORDER));
@@ -403,8 +208,8 @@ public class SkinArmoryScreen extends Screen {
         int top = 0;
         for (GunGroup group : groups) {
             boolean expanded = searching || group.weapon().baseGun().equals(selectedGun);
-            railRows.add(new RailRow(group.weapon().baseGun(), null, top, layoutTier().gunRowHeight));
-            top += layoutTier().gunRowHeight;
+            railRows.add(new RailRow(group.weapon().baseGun(), null, top, tierFor(this.width).gunRowHeight));
+            top += tierFor(this.width).gunRowHeight;
             if (expanded) {
                 for (SkinDataModels.SkinEntry entry : group.skins()) {
                     railRows.add(new RailRow(group.weapon().baseGun(), entry.id(), top, SKIN_ROW_H));
@@ -429,11 +234,6 @@ public class SkinArmoryScreen extends Screen {
         };
         return Comparator.<SkinDataModels.SkinEntry>comparingInt(
                 e -> isDefaultSkin(weapon, e) ? 0 : 1).thenComparing(mode);
-    }
-
-    private Tier layoutTier() {
-        int panelW = Mth.clamp(this.width - PANEL_MARGIN * 2, PANEL_MIN_W, PANEL_MAX_W);
-        return panelW >= TIER_WIDE_MIN ? Tier.WIDE : panelW >= TIER_MID_MIN ? Tier.MID : Tier.COMPACT;
     }
 
     private GunGroup findGroup(String gunId) {
@@ -475,15 +275,13 @@ public class SkinArmoryScreen extends Screen {
         return registry.isEmpty() ? null : registry.keySet().iterator().next();
     }
 
-    // -----------------------------------------------------------------------------------
     // Rendering
-    // -----------------------------------------------------------------------------------
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         guiGraphics.fillGradient(0, 0, this.width, this.height, 0xC00A0A0C, 0xE0050506);
 
-        Layout layout = computeLayout();
+        Layout layout = compute(this.width, this.height, this.font, sortMode);
         Rect panel = layout.panel();
 
         ArmoryTheme.sprite(guiGraphics, ArmoryTheme.PANEL, panel.x0(), panel.y0(), panel.width(), panel.height());
@@ -495,7 +293,6 @@ public class SkinArmoryScreen extends Screen {
         renderInfo(guiGraphics, layout);
         renderEquip(guiGraphics, layout, mouseX, mouseY);
 
-        // Draws the search box over the chrome; calls renderBackground(), hence the no-op.
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         renderTooltips(guiGraphics, layout, mouseX, mouseY);
@@ -856,8 +653,7 @@ public class SkinArmoryScreen extends Screen {
     private void renderTooltips(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
         RailRow row = railRowAt(layout, mouseX, mouseY);
         if (row != null && row.skinId() == null) {
-            // Every row, not only truncated ones: conditional tooltips read as arbitrary, and
-            // the count keeps it useful when the name already fits.
+            // Every row, not only truncated ones: a conditional tooltip reads as arbitrary.
             GunGroup group = findGroup(row.gunId());
             List<Component> lines = new ArrayList<>();
             lines.add(Component.literal(weaponDisplayName(row.gunId())));
@@ -885,9 +681,7 @@ public class SkinArmoryScreen extends Screen {
         guiGraphics.renderTooltip(this.font, lines, Optional.empty(), mouseX, mouseY);
     }
 
-    // -----------------------------------------------------------------------------------
     // Mouse input
-    // -----------------------------------------------------------------------------------
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
@@ -896,7 +690,7 @@ public class SkinArmoryScreen extends Screen {
         }
         if (button != 0) return false;
 
-        Layout layout = computeLayout();
+        Layout layout = compute(this.width, this.height, this.font, sortMode);
 
         for (StatusFilter filter : StatusFilter.values()) {
             if (layout.filters()[filter.ordinal()].contains(mouseX, mouseY)) {
@@ -982,7 +776,7 @@ public class SkinArmoryScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        Layout layout = computeLayout();
+        Layout layout = compute(this.width, this.height, this.font, sortMode);
         if (podium.isInBounds(mouseX, mouseY)) {
             podium.onMouseScrolled(scrollY);
             return true;
@@ -1079,9 +873,7 @@ public class SkinArmoryScreen extends Screen {
         tileScroll = Mth.clamp(tileScroll, 0, maxTileScroll(layout));
     }
 
-    // -----------------------------------------------------------------------------------
     // Keyboard input
-    // -----------------------------------------------------------------------------------
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
@@ -1109,7 +901,7 @@ public class SkinArmoryScreen extends Screen {
     }
 
     private void handleNavigation(int keyCode) {
-        Layout layout = computeLayout();
+        Layout layout = compute(this.width, this.height, this.font, sortMode);
         if (focusPane == FocusPane.RAIL) {
             if (groups.isEmpty()) return;
             int index = 0;
@@ -1122,7 +914,7 @@ public class SkinArmoryScreen extends Screen {
             if (keyCode == GLFW.GLFW_KEY_UP) index = Math.max(0, index - 1);
             else if (keyCode == GLFW.GLFW_KEY_DOWN) index = Math.min(groups.size() - 1, index + 1);
             selectGun(groups.get(index).weapon().baseGun());
-            scrollRailToSelection(computeLayout());
+            scrollRailToSelection(compute(this.width, this.height, this.font, sortMode));
             return;
         }
 
@@ -1146,9 +938,7 @@ public class SkinArmoryScreen extends Screen {
         return true;
     }
 
-    // -----------------------------------------------------------------------------------
     // Equipping
-    // -----------------------------------------------------------------------------------
 
     /**
      * Browsing needs no weapon in hand; the stage is a synthetic preview. Equipping does, since
@@ -1219,9 +1009,7 @@ public class SkinArmoryScreen extends Screen {
         return normalized.equals(TACZSkinHelper.bareSkinId(entry.id()));
     }
 
-    // -----------------------------------------------------------------------------------
     // Helpers
-    // -----------------------------------------------------------------------------------
 
     private SkinDataModels.SkinEntry skinById(String gunId, String skinId) {
         GunGroup group = findGroup(gunId);
@@ -1286,34 +1074,6 @@ public class SkinArmoryScreen extends Screen {
         }
         return TimelessAPI.getGunDisplay(previewStack(weapon.baseGun(), null))
                 .map(GunModelPatcher::getBaseModelLocation).orElse(null);
-    }
-
-    private Component statusFilterLabel(StatusFilter filter, Tier tier) {
-        boolean shortLabel = tier == Tier.COMPACT;
-        return switch (filter) {
-            case ALL -> Component.translatable(shortLabel
-                    ? "gui.mcpskins.armory.filter_all_short" : "gui.mcpskins.armory.filter_all");
-            case OWNED -> Component.translatable(shortLabel
-                    ? "gui.mcpskins.armory.filter_owned_short" : "gui.mcpskins.armory.filter_owned");
-            case LOCKED -> Component.translatable(shortLabel
-                    ? "gui.mcpskins.armory.filter_locked_short" : "gui.mcpskins.armory.filter_locked");
-        };
-    }
-
-    private Component customLabel(Tier tier) {
-        return Component.translatable(tier == Tier.COMPACT
-                ? "gui.mcpskins.armory.filter_custom_model_short"
-                : "gui.mcpskins.armory.filter_custom_model");
-    }
-
-    private Component sortModeLabel(SortMode mode, Tier tier) {
-        Component value = switch (mode) {
-            case RARITY -> Component.translatable("gui.mcpskins.armory.sort_rarity");
-            case ALPHABETICAL -> Component.translatable("gui.mcpskins.armory.sort_alphabetical");
-            case NEWEST -> Component.translatable("gui.mcpskins.armory.sort_newest");
-        };
-        return tier == Tier.COMPACT ? value
-                : Component.translatable("gui.mcpskins.armory.sort", value);
     }
 
     private void playClick() {

@@ -5,12 +5,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Per-player, per-second cap for serverbound payload handlers.
- * <p>
- * A modified client can send any registered payload as fast as it likes; without a cap a
- * handler that does real work per packet becomes a main-thread flood. Handlers call
- * {@link #allow} and drop the packet when it returns false. {@link #forget} clears a player's
- * window on logout.
+ * Per-player, per-second cap for serverbound payload handlers. A modified client can send any
+ * registered payload as fast as it likes, so a handler doing real work per packet needs one.
  */
 public final class ServerboundRateLimiter {
 

@@ -22,17 +22,13 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * A client resource pack backed by memory rather than a file, so assets streamed from the
- * server can be looked up through the normal {@code ResourceManager}.
+ * A memory-backed client resource pack, so server-streamed assets can be found through the
+ * normal {@code ResourceManager}. A shader locates a PBR map by appending {@code _n} or
+ * {@code _s} to a texture's path and asking the resource manager, so bytes that exist only as a
+ * GL texture are invisible to it.
  * <p>
- * Skin textures themselves do not need this; they are registered straight into the texture
- * manager. Shader PBR maps do: Iris finds a normal or specular map by appending {@code _n} or
- * {@code _s} to a texture's path and asking the resource manager for it, so bytes that only
- * exist as a GL texture are invisible to it.
- * <p>
- * The pack is registered once at startup so its namespace is known to the resource manager;
- * its contents stay live, since {@code getResource} is answered per call rather than snapshotted
- * at reload.
+ * Registered at startup so its namespace is known, but answered per call, so content arriving
+ * long after the last reload is still served.
  */
 public class ClientSkinResourcePack implements PackResources {
 

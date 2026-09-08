@@ -8,16 +8,13 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Resolves optional skin override files (texture, icon, HUD, LOD, geo-model), falling back
- * to the base weapon asset when no override exists.
+ * Resolves optional skin override files, falling back to the base asset when none exists.
  * <p>
- * A colon in skinId is treated as an explicit namespace override; baseGunId's colon gets
- * folded into a subfolder since it's not valid in a ResourceLocation path.
+ * A colon in skinId is an explicit namespace override; the base id's colon folds into a
+ * subfolder, since it is not valid in a ResourceLocation path.
  * <p>
- * Presence checks go through {@link ClientSkinAssetCache}, which fetches bytes from the
- * server on first use. This runs every render frame, so path construction is memoized - but
- * the presence check deliberately is not, since an in-flight asset has to be re-polled to
- * notice it arriving. Call {@link #clearCache()} to pick up new skin files without a restart.
+ * This runs every render frame, so path construction is memoized. The presence check is not:
+ * an in-flight asset has to be re-polled to notice it arriving.
  */
 public final class SkinAssetResolver {
     private static final Set<String> WARNED_INVALID = ConcurrentHashMap.newKeySet();
@@ -34,10 +31,7 @@ public final class SkinAssetResolver {
     private static final Map<ResolveKey, ResourceLocation> RESOLVE_CACHE = new ConcurrentHashMap<>();
     private static final Map<ModelKey, ModelPaths> MODEL_PATH_CACHE = new ConcurrentHashMap<>();
 
-    /**
-     * "Never a valid path", compared by identity. {@code computeIfAbsent} stores nothing when
-     * the mapper returns null, so a null here would rebuild the path every frame forever.
-     */
+    /** Sentinel, compared by identity: {@code computeIfAbsent} stores nothing for a null. */
     private static final ResourceLocation INVALID_LOCATION =
             ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "invalid_path_sentinel");
     private static final ModelPaths INVALID_MODEL_PATHS = new ModelPaths(INVALID_LOCATION, INVALID_LOCATION);
@@ -50,18 +44,12 @@ public final class SkinAssetResolver {
     }
 
     /**
-     * Resolves a skin's geo-model override. Has two path forms: the physical path
-     * ({@code assets/<namespace>/geo_models/<sub>.json}) used to check existence, and the
-     * collapsed form ({@code namespace:<sub>}, no {@code geo_models/} prefix or
-     * {@code .json} suffix) that TACZ's own config and asset manager actually expect.
-     * E.g. base model {@code create_armorer:gun/cannon_geo} + skin "galaxy" resolves to
+     * Two path forms are in play: the physical {@code assets/<ns>/geo_models/<sub>.json} used to
+     * check existence, and the collapsed {@code ns:<sub>} that TACZ's asset manager expects. So
+     * {@code create_armorer:gun/cannon_geo} plus skin "galaxy" becomes
      * {@code create_armorer:gun/cannon_geo__skin_galaxy}.
-     * <p>
-     * Also used for the LOD model by passing {@link GunModelPatcher#getBaseLodModelLocation}
-     * instead of the main model location.
      *
-     * @return the collapsed-form location of the skin's geo-model, or null if the base
-     *         location is unknown or no matching file exists
+     * @return the collapsed location, or null if the base is unknown or no file exists
      */
     public static ResourceLocation resolveModel(ResourceLocation baseModelLocation, String skinId) {
         if (baseModelLocation == null || skinId == null || skinId.isBlank()) return null;
@@ -103,25 +91,21 @@ public final class SkinAssetResolver {
         return new ModelPaths(physical, collapsed);
     }
 
-    /** Resolves a skin's optional inventory icon override. Falls back to the base icon if
-     *  {@code <skinId>_icon.png} doesn't exist. */
+
     public static ResourceLocation resolveIcon(String modId, String baseGunId, String skinId, ResourceLocation fallback) {
         return resolve(modId, baseGunId, skinId, "textures/skins/%s/%s_icon.png", fallback);
     }
 
-    /** Resolves a skin's optional HUD icon override (the weapon silhouette TACZ draws
-     *  bottom-right while it's held). Expects a 3:1 aspect ratio. */
+    /** The silhouette TACZ draws bottom-right while the weapon is held. Expects 3:1. */
     public static ResourceLocation resolveHud(String modId, String baseGunId, String skinId, ResourceLocation fallback) {
         return resolve(modId, baseGunId, skinId, "textures/skins/%s/%s_hud.png", fallback);
     }
 
-    /** Resolves a skin's optional "out of ammo" HUD variant. {@code fallback} may be null
-     *  if the base weapon has none - TACZ just tints the normal HUD icon red instead. */
+    /** {@code fallback} may be null: TACZ then tints the normal HUD icon red instead. */
     public static ResourceLocation resolveHudEmpty(String modId, String baseGunId, String skinId, ResourceLocation fallback) {
         return resolve(modId, baseGunId, skinId, "textures/skins/%s/%s_hud_empty.png", fallback);
     }
 
-    /** Resolves a skin's optional LOD texture override, independent of {@link #resolveTexture}. */
     public static ResourceLocation resolveLodTexture(String modId, String baseGunId, String skinId, ResourceLocation fallback) {
         return resolve(modId, baseGunId, skinId, "textures/skins/%s/%s_lod.png", fallback);
     }
@@ -163,8 +147,7 @@ public final class SkinAssetResolver {
         return candidate;
     }
 
-    /** Clears both the resolved-path memo and the invalid-path warning dedup set. Asset
-     *  state itself lives in {@link ClientSkinAssetCache}, cleared separately. */
+    /** Clears the path memo only; asset state lives in {@link ClientSkinAssetCache}. */
     public static void clearCache() {
         RESOLVE_CACHE.clear();
         MODEL_PATH_CACHE.clear();

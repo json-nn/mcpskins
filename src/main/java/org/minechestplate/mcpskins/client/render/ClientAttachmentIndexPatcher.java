@@ -15,15 +15,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Builds a copy of a {@link ClientAttachmentIndex} with the skin's UV texture, inventory icon
- * and geometry written in, the attachment-side counterpart of {@link GunDisplayInstancePatcher}.
+ * The attachment-side counterpart of {@link GunDisplayInstancePatcher}. Simpler, because an
+ * attachment model carries no animation state machine: the replacement loads through TACZ's own
+ * {@code getOrLoadAttachmentModel} and drops into a field.
  * <p>
- * Simpler than the gun path: an attachment model carries no animation state machine, so the
- * replacement can be loaded through TACZ's own {@code getOrLoadAttachmentModel} and dropped
- * into a field instead of re-running a constructor.
- * <p>
- * Reads go through the fields rather than the getters, which force the lazy model load as a
- * side effect. Any single override that fails leaves the rest applied.
+ * Reads go through fields rather than getters, which would force the lazy model load.
  */
 public final class ClientAttachmentIndexPatcher {
 

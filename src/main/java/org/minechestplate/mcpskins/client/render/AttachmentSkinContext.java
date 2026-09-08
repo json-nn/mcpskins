@@ -6,14 +6,10 @@ import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
 /**
  * Carries a stack's skin id across TACZ's {@code getClientAttachmentIndex}, which is keyed by
- * attachment id alone and so has no idea which stack asked.
- * <p>
- * Every caller reads the id off a stack immediately before the lookup, so recording it there
- * and consuming it in the lookup covers the item renderer, the gun-mounted renderer, the refit
- * screen and tooltips without hooking each one. The recorded id has to match the requested one
- * or the skin is dropped, which keeps a stale entry from leaking onto an unrelated attachment.
- * <p>
- * Client render thread only.
+ * attachment id alone. Every caller reads the id off a stack immediately before that lookup, so
+ * recording here covers the item renderer, the gun-mounted renderer, the refit screen and
+ * tooltips at once. A recorded id that does not match the requested one is dropped, so a stale
+ * entry cannot leak onto an unrelated attachment. Client render thread only.
  */
 public final class AttachmentSkinContext {
 

@@ -37,9 +37,8 @@ public final class TaczGeoModelInjector {
     private static final Set<String> WARNED_PARSE_FAILURES = ConcurrentHashMap.newKeySet();
 
     /**
-     * Keys we added, so {@link #reset()} removes exactly those and {@link #inject} knows what
-     * it owns. Without it a model from one server survives into the next session and shadows
-     * its replacement, since {@code putIfAbsent} would silently keep the stale entry.
+     * Keys we added, so {@link #reset()} removes exactly those: otherwise a model from one
+     * server survives into the next session and {@code putIfAbsent} keeps the stale entry.
      */
     private static final Set<ResourceLocation> INJECTED = ConcurrentHashMap.newKeySet();
 
@@ -149,15 +148,13 @@ public final class TaczGeoModelInjector {
         }
     }
 
-    /** Tries the "bedrockModel" field by name first; falls back to scanning by generic
-     *  type in case a future TACZ fork renames it. */
+    /** By name first, then by generic type in case a fork renames the field. */
     private static Field findLazyManagerField(Class<?> owner, Class<?> lazyManagerClass, Class<?> pojoClass)
             throws ReflectiveOperationException {
         try {
             Field byName = owner.getDeclaredField("bedrockModel");
             if (byName.getType() == lazyManagerClass) return byName;
         } catch (NoSuchFieldException ignored) {
-            // fall through to the generic-type scan below
         }
         for (Field field : owner.getDeclaredFields()) {
             if (field.getType() != lazyManagerClass) continue;
@@ -193,12 +190,9 @@ public final class TaczGeoModelInjector {
     }
 
     /**
-     * Removes our injected entries and drops every cached handle, forcing rediscovery on the
-     * next {@link #inject}. Called on resource reload and on disconnect.
-     * <p>
-     * {@link #dataMap} is a live reference to a map TACZ owns. If TACZ ever replaces it rather
-     * than clearing it, injections would land in an orphaned map forever, since
-     * {@code supportState == 1} blocks rediscovery.
+     * Drops our entries and every cached handle, forcing rediscovery on the next
+     * {@link #inject}: {@link #dataMap} is a live reference, and TACZ replacing rather than
+     * clearing it would leave injections landing in an orphaned map forever.
      */
     public static void reset() {
         synchronized (TaczGeoModelInjector.class) {

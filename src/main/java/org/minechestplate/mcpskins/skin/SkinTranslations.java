@@ -3,20 +3,15 @@ package org.minechestplate.mcpskins.skin;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 /**
- * Translations for the text a skin pack authors: skin names, descriptions, collections, unlock
- * hints and rarity tiers.
+ * Translations for pack-authored text: skin names, descriptions, collections, unlock hints and
+ * rarity tiers.
  * <p>
- * Skin packs never reach the client, so a {@code lang} folder in one would not be loaded the way
- * a resource pack's is. Instead the server loads every locale from
- * {@code data/<namespace>/skin_lang/} and sends a client the one table it needs, which also
- * means adding a language costs a {@code /reload} rather than a client-side install.
- * <p>
- * Keys are derived from ids, so a pack translates by writing the id it already chose and never
- * has to declare a key. Anything missing falls through to the text in the skin file, so a
- * partial translation is a normal state rather than an error.
+ * Skin packs never reach the client, so a {@code lang} folder in one would never be loaded. The
+ * server loads every locale from {@code data/<namespace>/skin_lang/} and sends each client the
+ * one table it needs. Keys are derived from ids, and anything missing falls back to the text in
+ * the skin file, so a partial translation is a normal state rather than an error.
  */
 public final class SkinTranslations {
 
@@ -31,10 +26,6 @@ public final class SkinTranslations {
     private SkinTranslations() {
     }
 
-    // -----------------------------------------------------------------------------------
-    // Keys
-    // -----------------------------------------------------------------------------------
-
     public static String skinKey(String skinId, String field) {
         return "skin." + sanitize(skinId) + '.' + field;
     }
@@ -43,10 +34,7 @@ public final class SkinTranslations {
         return "rarity." + sanitize(rarityId);
     }
 
-    /**
-     * Collections are free text rather than ids, so the key is a slug of the name. One entry
-     * then covers every skin in the set instead of repeating the same translation per skin.
-     */
+    /** Collections are free text, so the key is a slug; one entry covers the whole set. */
     public static String collectionKey(String collection) {
         return "collection." + sanitize(collection);
     }
@@ -60,19 +48,11 @@ public final class SkinTranslations {
         return out.toString();
     }
 
-    // -----------------------------------------------------------------------------------
-    // Loading and sync
-    // -----------------------------------------------------------------------------------
-
     /** Server side, on reload. */
     public static void load(Map<String, Map<String, String>> byLocale) {
         Map<String, Map<String, String>> copy = new HashMap<>();
         byLocale.forEach((locale, entries) -> copy.put(locale, Map.copyOf(entries)));
         tables = Map.copyOf(copy);
-    }
-
-    public static Set<String> locales() {
-        return tables.keySet();
     }
 
     /** The table to send a client: the default locale, overlaid with the requested one. */
@@ -93,10 +73,6 @@ public final class SkinTranslations {
         clientTable = Map.of();
     }
 
-    // -----------------------------------------------------------------------------------
-    // Resolution
-    // -----------------------------------------------------------------------------------
-
     /** Uses the table this client was sent. Falls back to {@code literal}. */
     public static String text(String key, String literal) {
         String value = clientTable.get(key);
@@ -113,10 +89,6 @@ public final class SkinTranslations {
         }
         return value == null || value.isBlank() ? literal : value;
     }
-
-    // -----------------------------------------------------------------------------------
-    // Field accessors, so call sites never build a key by hand
-    // -----------------------------------------------------------------------------------
 
     public static String name(SkinDataModels.SkinEntry entry) {
         return text(skinKey(entry.id(), "name"), entry.name());

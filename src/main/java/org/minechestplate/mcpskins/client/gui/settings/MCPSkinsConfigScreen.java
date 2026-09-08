@@ -88,9 +88,7 @@ public class MCPSkinsConfigScreen extends Screen {
         updateRowPositions();
     }
 
-    // -----------------------------------------------------------------------------------
     // Row construction
-    // -----------------------------------------------------------------------------------
 
     private int addToggleRow(int y, int centerX, String labelKey, ModConfigSpec.BooleanValue value, boolean fallback) {
         boolean current = MCPSkinsClientConfig.SPEC.isLoaded() ? value.get() : fallback;
@@ -164,9 +162,7 @@ public class MCPSkinsConfigScreen extends Screen {
         }
     }
 
-    // -----------------------------------------------------------------------------------
     // Scrolling
-    // -----------------------------------------------------------------------------------
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
@@ -178,9 +174,7 @@ public class MCPSkinsConfigScreen extends Screen {
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
 
-    // -----------------------------------------------------------------------------------
     // Rendering
-    // -----------------------------------------------------------------------------------
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {

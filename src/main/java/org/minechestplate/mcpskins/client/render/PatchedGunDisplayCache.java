@@ -9,13 +9,12 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Caches patched {@link GunDisplayInstance} objects so {@link GunDisplayInstancePatcher}
- * doesn't rebuild one via Unsafe on every {@code TimelessAPI.getGunDisplay} call.
+ * Caches patched {@link GunDisplayInstance} objects, so one is not rebuilt via Unsafe on every
+ * {@code getGunDisplay} call.
  * <p>
- * Keyed by {@code (baseGunId, skinId)} plus the overrides - not by {@code original}'s identity,
- * which TACZ changes within a frame, and not by {@link ClientSkinAssetCache#generation()}, which
- * invalidated every entry on any unrelated asset and replayed the held weapon's draw sound.
- * A late asset shows up as a changed override anyway.
+ * Keyed by {@code (baseGunId, skinId)} plus the overrides. Not by {@code original}'s identity,
+ * which TACZ changes within a frame, and not by the asset generation, which invalidated every
+ * entry on any unrelated asset; a late asset shows up as a changed override anyway.
  */
 public final class PatchedGunDisplayCache {
 

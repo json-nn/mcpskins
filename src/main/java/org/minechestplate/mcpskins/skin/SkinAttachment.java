@@ -31,20 +31,15 @@ public class SkinAttachment {
     /** Registry ids of a weapon's stock appearance, which nobody needs to unlock. */
     private static final String DEFAULT_PREFIX = "default:";
 
-    /**
-     * Whether {@code skinId} names a weapon's stock appearance rather than a real skin.
-     * {@link SkinManager#apply} synthesizes one per weapon so the UIs have something to draw
-     * for "no skin"; they're never unlockable.
-     */
+    /** {@link SkinManager#apply} synthesizes one per weapon for "no skin". Never unlockable. */
     public static boolean isDefaultEntry(String skinId) {
         return skinId != null && skinId.startsWith(DEFAULT_PREFIX);
     }
 
     /**
-     * The <em>authorization</em> predicate. Must never grant anything based on the shape of an
-     * id - special-casing {@code default:} here is what let any client equip any locked skin.
-     * Removal is a separate flagged request now (see {@code ApplySkinPayload}), so no id needs
-     * trusting. For "should the UI show this as unlocked", use {@link #isOwnedOrDefault}.
+     * The <em>authorization</em> predicate. Must never grant on the shape of an id: special-casing
+     * {@code default:} here is what let any client equip any locked skin. For "should the UI show
+     * this as unlocked", use {@link #isOwnedOrDefault} instead.
      */
     public static boolean hasSkin(Player player, String skinId) {
         return skinId != null && player.getData(UNLOCKED_SKINS).contains(skinId);
@@ -73,10 +68,7 @@ public class SkinAttachment {
 
     /**
      * Grants every skin a pack marked {@code "unlocked": true} that the player is missing.
-     * <p>
-     * Called from the datapack sync hook, so it runs once on join and once per {@code /reload}
-     * rather than on a timer. Writes and syncs only when something actually changed, so a
-     * returning player costs one set lookup and no packet.
+     * Writes and syncs only on an actual change, so a returning player costs no packet.
      */
     public static void grantDefaultUnlocks(ServerPlayer player) {
         Set<String> defaults = SkinManager.INSTANCE.getDefaultUnlockedIds();

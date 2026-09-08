@@ -16,20 +16,13 @@ import org.minechestplate.mcpskins.MCPSkins;
 
 /**
  * Re-initializes the held weapon's animation state machine in first person after it has been
- * replaced underneath the renderer. Without this the weapon draws at its bind pose - the
- * "detached hands" look - until the player switches hotbar slots.
+ * replaced underneath the renderer. Without this the weapon draws at its bind pose, the
+ * "detached hands" look, until the player switches hotbar slots.
  * <p>
- * TACZ's own recovery ({@code TickAnimationEvent.tickAnimation(Post)}) is gated on
- * <em>not</em> being in first person. There, the only caller of {@code tryInit} is
- * {@code IFPAnimationInstance.triggerDraw()}, which latches after its first call and is reset
- * only by building a new instance - which simplebedrockmodel does on a slot change, or when
- * {@code AbstractGunItem.isSame} reports a different GunId/GunDisplayId.
- * <p>
- * A skin swap changes neither id by design, yet {@code getGunDisplay} returns a different
- * instance, and {@code GunItemRendererWrapper.getStateMachine} reads the state machine off
- * that instance. F3+T does the same by rebuilding every {@code GunDisplayInstance}. Both leave
- * an uninitialized machine nothing in first person will touch. The F3+T case is a TACZ bug and
- * reproduces without this mod.
+ * TACZ's own recovery is gated on <em>not</em> being in first person, and the only thing that
+ * re-inits there latches after its first call. A skin swap deliberately changes neither GunId
+ * nor GunDisplayId, so nothing else notices the new instance. F3+T leaves the same
+ * uninitialized machine behind, and that case reproduces without this mod.
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, value = Dist.CLIENT)
 public final class FirstPersonAnimationFix {

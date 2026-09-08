@@ -21,26 +21,19 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Builds a full geometry replacement for a skin - main model plus TACZ's separate LOD
- * model/texture - when {@link SkinAssetResolver#resolveModel} finds a geo-model file.
+ * Builds a full geometry replacement for a skin, main model plus TACZ's separate LOD.
  * <p>
- * Geometry is a parsed {@code BedrockGunModel}, not a swappable field, so this copies the base
- * weapon's {@code GunDisplay} config with the model/LOD fields replaced and re-runs
- * {@code GunDisplayInstance}'s constructor. Fields come from {@link #discover}; LOD fails
- * independently, leaving main-model skinning intact. Bone names must match the base weapon's
- * animations - {@link #createInstance} catches a mismatch and degrades to base geometry.
- * <p>
- * New instances own an uninitialized state machine, so a held weapon needs
- * {@link #primeAnimation} or it renders at its bind pose (the "detached hands" look TACZ also
- * shows after F3+T). Texture-only skins shallow-copy the base instance and keep its primed one.
+ * Geometry is a parsed {@code BedrockGunModel} rather than a swappable field, so this copies the
+ * base weapon's {@code GunDisplay} config with the model fields replaced and re-runs
+ * {@code GunDisplayInstance}'s constructor. The new instance owns an uninitialized state machine,
+ * so a held weapon needs {@link #primeAnimation} or it renders at its bind pose.
  */
 public final class GunModelPatcher {
 
     /**
      * Keyed on the overrides as requested, before {@link #getOrCreate}'s filtering.
-     * {@code generation} only retries negative entries ({@code result == null}) - a model TACZ
-     * hasn't registered yet leaves the overrides identical. Positive entries ignore it, see
-     * {@link PatchedGunDisplayCache}.
+     * {@code generation} only retries negative entries: a model TACZ has not registered yet
+     * leaves the overrides identical.
      */
     private record CacheEntry(ResourceLocation modelOverride,
                               ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride,
@@ -72,9 +65,7 @@ public final class GunModelPatcher {
     private static volatile Field lodModelField;   // GunLod -> ResourceLocation (model)
     private static volatile Field lodTextureField; // GunLod -> ResourceLocation (texture)
 
-    // Pre-flight check via ClientAssetsManager.INSTANCE.getBedrockModelPOJO: a file
-    // existing in a resource pack doesn't guarantee TACZ's model registry picked it up.
-    // If this probe can't be set up, isModelRecognized() just returns true.
+    // A file existing in a resource pack doesn't mean TACZ's model registry picked it up.
     private static volatile Object clientAssetsManagerInstance;
     private static volatile Method getBedrockModelPOJOMethod;
     private static volatile boolean assetsManagerProbeDone = false;
@@ -97,7 +88,6 @@ public final class GunModelPatcher {
         if (modelOverride == null && lodModelOverride == null && lodTextureOverride == null) return null;
         if (!ensureSupported(base)) return null;
 
-        // Keyed on what was asked for, not what survives the filtering below.
         ResourceLocation requestedModel = modelOverride;
         ResourceLocation requestedLodModel = lodModelOverride;
 
@@ -107,7 +97,6 @@ public final class GunModelPatcher {
                 && Objects.equals(existing.modelOverride(), requestedModel)
                 && Objects.equals(existing.lodModelOverride(), requestedLodModel)
                 && Objects.equals(existing.lodTextureOverride(), lodTextureOverride)
-                // Negative entries retry as assets land; positive ones stand until an override changes.
                 && (existing.result() != null || existing.generation() == generation)) {
             return existing.result();
         }
@@ -127,8 +116,6 @@ public final class GunModelPatcher {
             lodModelOverride = null;
         }
         if (modelOverride == null && lodModelOverride == null && lodTextureOverride == null) {
-            // Requested values, not the filtered nulls - otherwise the hit check above can
-            // never match this entry and every frame re-runs isModelRecognized().
             CACHE.put(cacheKey, new CacheEntry(requestedModel, requestedLodModel, lodTextureOverride, generation, null));
             return null;
         }
@@ -155,14 +142,10 @@ public final class GunModelPatcher {
     private static volatile boolean primeWarningLogged = false;
 
     /**
-     * Runs TACZ's init/draw sequence to get a new instance's state machine out of its bind pose
-     * (see class javadoc). No-op once initialized.
+     * Runs TACZ's init/draw sequence to get a new instance's state machine out of its bind pose.
+     * No-op once initialized.
      * <p>
-     * {@code tryInit} re-enters {@code getGunDisplay} via {@code setCurrentGunItem} - the only
-     * public way to build the context TACZ's scripts expect, and safe because
-     * {@link #getOrCreate} caches the entry first.
-     * <p>
-     * Held stack only: {@code tryInit} ends in {@code trigger("draw")} and that animation carries
+     * Held stack only: {@code tryInit} ends in {@code trigger("draw")}, and that animation carries
      * sound keyframes, so priming the Armory's preview stacks fired a draw sound per skin browsed.
      */
     private static void primeAnimation(GunDisplayInstance created, ItemStack stack) {
@@ -214,16 +197,12 @@ public final class GunModelPatcher {
                 location, kind, kind);
     }
 
-    /** Clears the cache of built geo-instances. Called on client resource reload. */
     public static void clear() {
         CACHE.clear();
         WARNED_UNRECOGNIZED.clear();
     }
 
-    /**
-     * Returns the base weapon's real model location, read directly off its config rather
-     * than guessed, since different gunpacks use different namespaces/folders.
-     */
+    /** Read off the config rather than guessed: gunpacks use their own namespaces and folders. */
     public static ResourceLocation getBaseModelLocation(GunDisplayInstance base) {
         if (base == null) return null;
         if (!ensureSupported(base)) return null;
@@ -237,10 +216,7 @@ public final class GunModelPatcher {
         }
     }
 
-    /**
-     * Returns the base weapon's real LOD geo-model location, or {@code null} if LOD isn't
-     * supported on this fork, or this particular weapon has no {@code "lod"} block at all.
-     */
+    /** Null when the fork has no LOD support, or this weapon has no {@code "lod"} block. */
     public static ResourceLocation getBaseLodModelLocation(GunDisplayInstance base) {
         return readLocation(baseLodConfig(base), lodModelField);
     }
@@ -277,8 +253,6 @@ public final class GunModelPatcher {
             Object result = getBedrockModelPOJOMethod.invoke(clientAssetsManagerInstance, location);
             return result != null;
         } catch (ReflectiveOperationException | RuntimeException e) {
-            // Fail open - refusing every model would disable geo skins outright, and
-            // createInstance reports its own failures with better context anyway.
             if (WARNED_UNRECOGNIZED.add("probe-failure")) {
                 MCPSkins.LOGGER.warn("[MCPSkins] ClientAssetsManager model probe failed; "
                         + "geo-model overrides will be attempted without pre-validation.", e);
@@ -340,84 +314,76 @@ public final class GunModelPatcher {
         }
     }
 
+    /** {@code getModelLocation()} is the one member this class has to find by name. */
     private static boolean discover(GunDisplayInstance sample) throws ReflectiveOperationException {
-        // 1) The single (ResourceLocation, GunDisplay) constructor
-        Constructor<?> found = null;
-        for (Constructor<?> ctor : GunDisplayInstance.class.getDeclaredConstructors()) {
-            Class<?>[] params = ctor.getParameterTypes();
-            if (params.length == 2 && params[0] == ResourceLocation.class) {
-                found = ctor;
-                break;
-            }
-        }
-        if (found == null) return false;
-        found.setAccessible(true);
-        Class<?> displayClass = found.getParameterTypes()[1];
+        Constructor<?> constructor = findDisplayConstructor();
+        if (constructor == null) return false;
+        Class<?> displayClass = constructor.getParameterTypes()[1];
 
-        // 2) The field on GunDisplayInstance holding this config, found by field type
-        Field foundConfigField = null;
-        for (Field field : GunDisplayInstance.class.getDeclaredFields()) {
-            if (Modifier.isStatic(field.getModifiers())) continue;
-            if (field.getType() == displayClass) {
-                field.setAccessible(true);
-                foundConfigField = field;
-                break;
-            }
-        }
+        Field foundConfigField = findFieldByType(GunDisplayInstance.class, displayClass);
         if (foundConfigField == null) return false;
-
         Object sampleConfig = foundConfigField.get(sample);
         if (sampleConfig == null) return false;
 
-        // 3) getModelLocation(), the one verified method name this class relies on
         Method getModelLocation = findMethod(displayClass, "getModelLocation");
         if (getModelLocation == null) return false;
         getModelLocation.setAccessible(true);
-        Object currentModelLocation = getModelLocation.invoke(sampleConfig);
-        if (!(currentModelLocation instanceof ResourceLocation)) return false;
+        if (!(getModelLocation.invoke(sampleConfig) instanceof ResourceLocation modelLocation)) return false;
 
-        // For comparing against the path SkinAssetResolver builds for a skin.
-        ResourceLocation realModelLocation = (ResourceLocation) currentModelLocation;
-        MCPSkins.LOGGER.info(
-                "[MCPSkins][diag] Base weapon's real model ResourceLocation: '{}' "
-                        + "(namespace='{}', path='{}').",
-                realModelLocation, realModelLocation.getNamespace(), realModelLocation.getPath());
-
-        // 4) Model field on GunDisplay, matched by value - equals, not ==, since the getter
-        //    may return a rebuilt copy
-        Field foundModelField = null;
-        for (Field field : displayClass.getDeclaredFields()) {
-            if (Modifier.isStatic(field.getModifiers())) continue;
-            if (field.getType() != ResourceLocation.class) continue;
-            field.setAccessible(true);
-            Object value = field.get(sampleConfig);
-            if (Objects.equals(value, currentModelLocation)) {
-                foundModelField = field;
-                break;
-            }
-        }
+        Field foundModelField =
+                findFieldByValue(displayClass, ResourceLocation.class, sampleConfig, modelLocation);
         if (foundModelField == null) return false;
 
-        displayInstanceConstructor = found;
+        displayInstanceConstructor = constructor;
         gunDisplayClass = displayClass;
         configField = foundConfigField;
         modelLocationField = foundModelField;
 
-        // 5) LOD support, independent of everything above - a failure here doesn't affect it
+        // Independent of everything above: no LOD support still leaves full main-model skinning.
         try {
             lodSupported = discoverLod(displayClass);
         } catch (ReflectiveOperationException | RuntimeException e) {
             lodSupported = false;
         }
         if (!lodSupported) warnLodUnsupportedOnce();
-
         return true;
     }
 
+    private static Constructor<?> findDisplayConstructor() {
+        for (Constructor<?> ctor : GunDisplayInstance.class.getDeclaredConstructors()) {
+            Class<?>[] params = ctor.getParameterTypes();
+            if (params.length == 2 && params[0] == ResourceLocation.class) {
+                ctor.setAccessible(true);
+                return ctor;
+            }
+        }
+        return null;
+    }
+
+    private static Field findFieldByType(Class<?> owner, Class<?> type) {
+        for (Field field : owner.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers()) || field.getType() != type) continue;
+            field.setAccessible(true);
+            return field;
+        }
+        return null;
+    }
+
+    /** equals, not ==: the getter may hand back a rebuilt copy rather than the field itself. */
+    private static Field findFieldByValue(Class<?> owner, Class<?> type, Object instance, Object value)
+            throws ReflectiveOperationException {
+        for (Field field : owner.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers()) || field.getType() != type) continue;
+            field.setAccessible(true);
+            if (Objects.equals(field.get(instance), value)) return field;
+        }
+        return null;
+    }
+
     /**
-     * Finds the LOD config field by type rather than value, since the sample weapon may have
-     * no {@code "lod"} block. Its two {@code ResourceLocation} sub-fields are told apart by
-     * writing a sentinel into each and seeing which getter reflects it back.
+     * By type rather than value, since the sample weapon may have no {@code "lod"} block. Its two
+     * {@code ResourceLocation} fields are told apart by writing a sentinel into each and seeing
+     * which getter reflects it back.
      */
     private static boolean discoverLod(Class<?> displayClass) throws ReflectiveOperationException {
         Field foundLodField = null;
@@ -489,8 +455,7 @@ public final class GunModelPatcher {
                         lodConfigField.set(configCopy, lodCopy);
                     }
                 }
-                // else: this weapon has no "lod" block, nothing to skin
-            }
+                }
 
             ResourceLocation identitySource = modelOverride != null ? modelOverride
                     : lodModelOverride != null ? lodModelOverride : lodTextureOverride;
@@ -516,10 +481,7 @@ public final class GunModelPatcher {
         }
     }
 
-    /**
-     * The build path catches {@link Throwable} because a reflective call into another mod's
-     * constructor can fail in almost any way. A dying JVM isn't one of those ways.
-     */
+    /** The build path catches {@link Throwable}; a dying JVM is not something to swallow. */
     private static void rethrowIfFatal(Throwable t) {
         if (t instanceof VirtualMachineError || t instanceof LinkageError || t instanceof ThreadDeath) {
             throw (Error) t;
@@ -530,7 +492,6 @@ public final class GunModelPatcher {
         try {
             Unsafe unsafe = getUnsafe();
             Object copy = unsafe.allocateInstance(type);
-            // Superclass fields included - allocateInstance leaves them at their defaults.
             for (Class<?> current = type; current != null && current != Object.class;
                  current = current.getSuperclass()) {
                 for (Field field : current.getDeclaredFields()) {
@@ -541,7 +502,6 @@ public final class GunModelPatcher {
             }
             return copy;
         } catch (ReflectiveOperationException e) {
-            // createInstance logs this properly, with the override paths in hand.
             MCPSkins.LOGGER.debug("[MCPSkins] Unsafe shallow copy of {} failed.", type.getName(), e);
             return null;
         }

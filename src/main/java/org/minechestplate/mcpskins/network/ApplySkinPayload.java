@@ -34,7 +34,7 @@ import java.util.Objects;
 public record ApplySkinPayload(String skinId, boolean unequip) implements CustomPacketPayload {
     public static final Type<ApplySkinPayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "apply_skin"));
 
-    // Matched by translation key rather than rendered text, so it works regardless of language
+    // Matched by translation key, not rendered text, so it holds in every language.
     private static final String OWNER_LORE_KEY = "tooltip.mcpskins.skin_owner";
 
     /** Bounded; readUtf()'s 32767 default is far beyond any real skin id. */
@@ -49,12 +49,10 @@ public record ApplySkinPayload(String skinId, boolean unequip) implements Custom
             ApplySkinPayload::new
     );
 
-    /** Server still verifies ownership. */
     public static ApplySkinPayload equip(String skinId) {
         return new ApplySkinPayload(skinId, false);
     }
 
-    /** Returns the held weapon to stock. Carries no skin id. */
     public static ApplySkinPayload removeSkin() {
         return new ApplySkinPayload("", true);
     }
@@ -71,17 +69,16 @@ public record ApplySkinPayload(String skinId, boolean unequip) implements Custom
         if (!ServerboundRateLimiter.allow(player.getUUID(), MAX_PER_SECOND)) return;
 
         context.enqueueWork(() -> {
-            // Null means "strip the skin". On the unequip path nothing from the packet is
-            // trusted or even read; the outcome comes entirely from the weapon in hand.
+            // Null strips the skin. Nothing from the packet is read on this path: the outcome
+            // comes entirely from the weapon in hand.
             String appliedSkinId = null;
             String requiredBaseGun = null;
             if (!unequip) {
                 if (skinId == null || skinId.isBlank()) {
                     return;
                 }
-                // Stock entries are not equippable; they exist only so the UIs have something
-                // to draw for "no skin". Asking for one means the client should have set
-                // unequip instead.
+                // Stock entries exist only so the UIs have something to draw for "no skin".
+                // Asking for one means the client should have set unequip instead.
                 if (SkinAttachment.isDefaultEntry(skinId)) {
                     return;
                 }
@@ -105,8 +102,7 @@ public record ApplySkinPayload(String skinId, boolean unequip) implements Custom
             }
             ItemStack weapon = player.getItemInHand(hand);
 
-            // Re-applying the skin already shown is a no-op: skip the lore rebuild and the
-            // inventory re-sync a spam client would otherwise force on every packet.
+            // Skips the lore rebuild and re-sync a spam client would force on every packet.
             String targetBare = appliedSkinId == null ? null : TACZSkinHelper.bareSkinId(appliedSkinId);
             if (Objects.equals(TACZSkinHelper.getSkinId(weapon), targetBare)) {
                 return;
@@ -127,7 +123,7 @@ public record ApplySkinPayload(String skinId, boolean unequip) implements Custom
                 }
             }
 
-            // Only show "owner" lore when a skin is actually applied, not on the stock weapon
+            // Owner lore belongs on an applied skin, not on the stock weapon.
             if (!unequip) {
                 Component ownerLore = Component.translatable(OWNER_LORE_KEY,
                                 Component.literal(player.getName().getString()).withStyle(ChatFormatting.GOLD))
@@ -140,11 +136,7 @@ public record ApplySkinPayload(String skinId, boolean unequip) implements Custom
         });
     }
 
-    /**
-     * The hand holding {@code baseId}, or either hand holding any skinnable TACZ item when it
-     * is null. Both UIs equip from the offhand too, so the server has to resolve the same way
-     * instead of assuming the main hand.
-     */
+    /** Both UIs equip from the offhand too, so the main hand can't be assumed here either. */
     private static InteractionHand findHand(ServerPlayer player, String baseId) {
         for (InteractionHand hand : InteractionHand.values()) {
             String heldId = TACZSkinHelper.getTaczId(player.getItemInHand(hand));

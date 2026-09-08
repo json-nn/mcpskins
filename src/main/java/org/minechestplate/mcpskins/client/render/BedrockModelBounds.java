@@ -15,15 +15,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
- * Bounding box of a Bedrock model's cubes, in Bedrock units, used to centre and size the
- * Armory's 3D preview.
+ * Bounding box of a Bedrock model's cubes, used to centre and size the Armory's 3D preview.
  * <p>
- * Helper bones are skipped. TACZ builds a scope's reticle as a plane over a hundred units from
- * the optic and its laser as a beam running off into the distance, neither of which is part of
- * the shape a player sees on the item. Counting them puts the centre nowhere near the model and
- * makes the fit useless, which is what threw scopes out of frame.
- * <p>
- * Per-cube rotations are ignored, which only has to be close enough to frame a preview.
+ * Helper bones are skipped: TACZ builds a scope's reticle as a plane a hundred units from the
+ * optic, and counting it puts the centre nowhere near the model. Per-cube rotations are
+ * ignored, which is close enough to frame a preview.
  */
 public final class BedrockModelBounds {
 

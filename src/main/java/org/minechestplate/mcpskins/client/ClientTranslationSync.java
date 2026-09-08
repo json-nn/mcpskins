@@ -7,11 +7,8 @@ import org.minechestplate.mcpskins.network.RequestTranslationsPayload;
 import org.minechestplate.mcpskins.skin.SkinTranslations;
 
 /**
- * Asks the server for the skin translations matching this client's language.
- * <p>
- * Called when the registry arrives and again on every resource reload, which is what switching
- * language triggers. The last requested locale is remembered so a reload for any other reason
- * costs nothing.
+ * Asks the server for translations matching this client's language, on login and on every
+ * resource reload, which is what switching language triggers.
  */
 public final class ClientTranslationSync {
 

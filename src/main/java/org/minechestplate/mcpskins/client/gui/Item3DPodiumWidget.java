@@ -37,7 +37,6 @@ public final class Item3DPodiumWidget {
     /** How much of the panel a fitted model spans, leaving room for it to turn. */
     private static final double FIT_FILL = 0.8;
 
-    // Full-bright packed light, same as vanilla's GuiGraphics#renderItem uses for icons
     private static final int FULL_BRIGHT_PACKED_LIGHT = 0xF000F0;
 
     private static final float MIN_ZOOM = 0.5f;
@@ -60,7 +59,6 @@ public final class Item3DPodiumWidget {
     private boolean userHasInteracted = false;
     private long lastFrameNanos = -1L;
 
-    // If rendering throws once, fall back to a flat icon instead of retrying every frame
     private boolean renderFailed = false;
     private boolean warnedOnce = false;
 
@@ -114,10 +112,6 @@ public final class Item3DPodiumWidget {
         userHasInteracted = false;
     }
 
-    /**
-     * @param accentColor backdrop accent stripe color (usually the current skin's
-     *                    {@code labelColor})
-     */
     public void render(GuiGraphics guiGraphics, float partialTick, int accentColor) {
         if (width <= 0 || height <= 0) return;
 
@@ -148,10 +142,9 @@ public final class Item3DPodiumWidget {
 
         guiGraphics.enableScissor(x, y, x + width, y + height);
         try {
-            // The panel behind sits at GUI z=0, mid depth buffer, so a long gun scaled up and
-            // turned edge-on reaches past it and its far end fails the depth test. glClear
-            // honours the scissor, so this clears only the podium and the model keeps the full
-            // range for self-occlusion. Tooltips draw later and nearer, so they still win.
+            // A long gun scaled up and turned edge-on reaches past the panel behind it and
+            // fails the depth test. glClear honours the scissor, so this clears the podium
+            // only, and the model keeps its full range for self-occlusion.
             RenderSystem.depthMask(true);
             GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
 
@@ -189,7 +182,7 @@ public final class Item3DPodiumWidget {
         try {
             pose.translate(centerX, centerY, 150.0);
             float scale = baseScale * zoom;
-            // Y is mirrored to keep the item right-side up under ItemDisplayContext.FIXED
+            // Y is mirrored to keep the item right-side up under FIXED.
             pose.scale(scale, -scale, scale);
             pose.mulPose(Axis.XP.rotationDegrees(pitch));
             pose.mulPose(Axis.YP.rotationDegrees(yaw));
@@ -198,9 +191,8 @@ public final class Item3DPodiumWidget {
             Lighting.setupFor3DItems();
             RenderSystem.disableCull(); // the mirror above flips winding order
 
-            // Without this, TACZ picks the LOD geo-model here instead of the full one, since
-            // RenderDistance.inRenderHighPolyModelDistance only returns true near a recent GUI
-            // render timestamp. TACZ's own GunSmithTableScreen does the same before its preview.
+            // Or TACZ serves the LOD model here: its high-poly check wants a recent GUI render
+            // timestamp. GunSmithTableScreen does the same before its own preview.
             RenderDistance.markGuiRenderTimestamp();
             try {
                 mc.getItemRenderer().renderStatic(
@@ -225,14 +217,13 @@ public final class Item3DPodiumWidget {
     }
 
     /**
-     * Attachment geometry is authored around its mount point, not its middle, so spinning it
-     * about the item origin swings a long one out of the panel. Applied after the rotations,
-     * which is the space the item renderer receives, so it holds at every angle.
+     * Attachment geometry is authored around its mount point, so spinning it about the item
+     * origin swings a long one out of the panel. Applied after the rotations, the space the item
+     * renderer receives, so it holds at every angle.
      * <p>
-     * TACZ draws an attachment through {@code scale(-1, -1, 1)} plus, under
-     * {@code ItemDisplayContext.FIXED}, a turn about Y, which is what swaps the model's x and
-     * z on the way to item space. The signs were confirmed by measuring where the model lands
-     * for a known offset, not derived, so leave them alone without re-measuring.
+     * The axis swap comes from TACZ's own {@code scale(-1, -1, 1)} plus a turn about Y under
+     * {@code FIXED}. These signs were measured, not derived: do not change them without
+     * re-measuring where a known offset lands.
      */
     private void applyAttachmentCentering(PoseStack pose) {
         BedrockModelBounds.Bounds bounds = attachmentBounds();
@@ -242,10 +233,9 @@ public final class Item3DPodiumWidget {
     }
 
     /**
-     * Sizes the preview to the model rather than assuming one, so an attachment whose geometry
-     * is much larger or smaller than a weapon's still opens fully in frame. Weapons keep the
-     * fixed factor: TACZ scales those per gun in its own display config, which this has no
-     * view of. Zoom still multiplies whatever this returns.
+     * Measured for attachments, so an unusually large or small one still opens fully in frame.
+     * Weapons keep the fixed factor, since TACZ scales those per gun in a display config this
+     * has no view of. Zoom multiplies whatever comes back either way.
      */
     private float baseScale() {
         float fallback = Math.min(width, height) * 0.55f;
@@ -261,7 +251,6 @@ public final class Item3DPodiumWidget {
         return (float) Mth.clamp(fit, fallback * 0.2, fallback * 6.0);
     }
 
-    /** Bounds of the held attachment's model, or null for anything that isn't one. */
     private BedrockModelBounds.Bounds attachmentBounds() {
         String attachmentId = TACZSkinHelper.getAttachmentId(stack);
         if (attachmentId == null) return null;
@@ -274,9 +263,9 @@ public final class Item3DPodiumWidget {
     }
 
     /**
-     * Closes the 100ms window {@link RenderDistance#markGuiRenderTimestamp()} opens. Left set,
-     * it also forces full geometry for every 16px gun icon on screen. Reflective and optional:
-     * if TACZ moves the field the hint just stays open, as it did before.
+     * Closes the 100ms window {@link RenderDistance#markGuiRenderTimestamp()} opens, which would
+     * otherwise force full geometry for every 16px gun icon too. Optional: if TACZ moves the
+     * field, the hint just stays open as it did before.
      */
     private static final Field GUI_RENDER_TIMESTAMP = resolveTimestampField();
 
@@ -299,7 +288,6 @@ public final class Item3DPodiumWidget {
         try {
             GUI_RENDER_TIMESTAMP.setLong(null, -1L);
         } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Best effort - worst case the hint stays open for its 100ms.
         }
     }
 

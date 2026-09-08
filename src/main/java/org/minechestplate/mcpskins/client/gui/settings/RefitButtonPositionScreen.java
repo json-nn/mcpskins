@@ -22,13 +22,10 @@ import java.util.Optional;
 /**
  * Lets the player drag the refit toggle button anywhere on screen before saving.
  * <p>
- * Background is whatever the player drops in as {@code assets/mcpskins/textures/gui/setting.png}
- * (a screenshot of TACZ's refit screen works well), stretched to fill the window. Falls back
- * to a plain dark fill if it's missing.
- * <p>
- * The attachment slot row is drawn separately on top, from TACZ's real textures at its
- * actual position (see {@link TACZAttachmentRowPreview}) - that's what the button should
- * line up against, not the background image.
+ * The backdrop is whatever the player drops in as
+ * {@code assets/mcpskins/textures/gui/setting.png}, a screenshot of TACZ's refit screen being the
+ * obvious choice. The attachment slot row on top comes from TACZ's real textures at its real
+ * position (see {@link TACZAttachmentRowPreview}), and that is what the button lines up against.
  */
 public class RefitButtonPositionScreen extends Screen {
 
@@ -101,9 +98,6 @@ public class RefitButtonPositionScreen extends Screen {
         clampToBounds();
     }
 
-    // -----------------------------------------------------------------------------------
-    // Dragging
-    // -----------------------------------------------------------------------------------
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
@@ -137,9 +131,6 @@ public class RefitButtonPositionScreen extends Screen {
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
-    // -----------------------------------------------------------------------------------
-    // Rendering
-    // -----------------------------------------------------------------------------------
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
@@ -148,8 +139,7 @@ public class RefitButtonPositionScreen extends Screen {
 
         boolean hovered = !dragging && mouseX >= workingX0 && mouseX <= workingX0 + workingSize
                 && mouseY >= workingY0 && mouseY <= workingY0 + workingSize;
-        // active=false: this screen has no "skin mode on" concept, so the lit state
-        // depends only on hover/drag
+        // active=false: no "skin mode on" here, so the lit state follows hover and drag only.
         RefitToggleButtonRenderer.render(guiGraphics, workingX0, workingY0, workingSize, hovered || dragging, false);
 
         if ((hovered || dragging) && MCPSkinsClientConfig.refitButtonTooltip()) {
@@ -181,7 +171,6 @@ public class RefitButtonPositionScreen extends Screen {
         guiGraphics.drawCenteredString(this.font, coords, this.width / 2, y, 0xFFFFFFFF);
     }
 
-    /** Draws setting.png stretched to fill the window, or a dark fill if it's missing. */
     private void drawBackground(GuiGraphics guiGraphics) {
         resolveBackgroundSizeIfNeeded();
         if (backgroundWidth > 0 && backgroundHeight > 0) {
@@ -215,7 +204,7 @@ public class RefitButtonPositionScreen extends Screen {
         }
     }
 
-    /** No-op - avoids the vanilla blurred background under our own opaque fill. */
+    /** No-op: the vanilla blur would sit under our own opaque fill. */
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
     }

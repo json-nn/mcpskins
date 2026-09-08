@@ -11,11 +11,10 @@ import java.util.List;
 
 /**
  * One running fusion effect: the consumed items lob out of the hands, orbit a point in front of
- * the player while the ring contracts, collapse to the center, and the rolled skin pops out.
+ * the player while the ring contracts, collapse to the centre, and the rolled skin pops out.
  * <p>
- * Pure state and geometry. It never touches the render pipeline or the config, so the caller
- * decides when to draw and how long the whole thing lasts. Everything derives from a single
- * normalized progress value, which keeps the phases from drifting apart at odd durations.
+ * Pure state and geometry, driven entirely by one normalized progress value so the phases can't
+ * drift apart at odd durations. The caller decides when to draw and how long it lasts.
  */
 public final class SkinFusionAnimation {
 
@@ -55,8 +54,8 @@ public final class SkinFusionAnimation {
     private static final double HAND_SIDE = 0.42;
     private static final double LOB_HEIGHT = 0.55;
 
-    // The chest anchor sits inside the near plane in first person, so aim off the eye along the
-    // full look vector instead. That also keeps the ring in frame when looking up or down.
+    // A chest anchor sits inside the near plane in first person, so this aims off the eye along
+    // the full look vector, which also keeps the ring in frame when looking up or down.
     private static final double EYE_FORWARD = 1.60;
     private static final double EYE_DROP = 0.25;
     private static final double EYE_HAND_FORWARD = 0.40;
@@ -131,11 +130,7 @@ public final class SkinFusionAnimation {
         return startGameTime;
     }
 
-    /**
-     * Absolute elapsed time against an absolute start, so a lag spike jumps progress forward
-     * rather than letting an accumulator drift. Freezes with the game, since both game time and
-     * the partial tick stop while paused.
-     */
+    /** Absolute, so a lag spike jumps progress forward instead of letting an accumulator drift. */
     public float progress(long gameTime, float partialTick) {
         double elapsed = (gameTime - startGameTime) + partialTick;
         if (elapsed < 0.0) {
@@ -200,11 +195,7 @@ public final class SkinFusionAnimation {
         return new Basis(anchor, right, flat);
     }
 
-    /**
-     * Alternates sides so the ring looks like it came out of both hands. The real hand render
-     * position is not reachable from the level render pass, and launch is short enough that the
-     * approximation does not read as wrong.
-     */
+    /** Approximated: the real hand render position isn't reachable from the level render pass. */
     public Vec3 handOrigin(Player player, float partialTick, boolean firstPerson, Basis basis, int index) {
         double side = ((index & 1) == 0) == mainHand ? HAND_SIDE : -HAND_SIDE;
 
@@ -232,8 +223,8 @@ public final class SkinFusionAnimation {
             return slot;
         }
 
-        // Lerping toward the live slot, spin included, means the item slides into a moving
-        // orbit instead of snapping when launch ends.
+        // Toward the live slot, spin included, so the item slides into a moving orbit rather
+        // than snapping when launch ends.
         return handOrigin.lerp(slot, easeOutCubic(p))
                 .add(0.0, LOB_HEIGHT * Math.sin(Math.PI * p), 0.0);
     }

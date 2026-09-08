@@ -14,16 +14,11 @@ import org.minechestplate.mcpskins.client.render.SkinFusionAnimator;
 import java.util.List;
 
 /**
- * Server-to-client: a fuse just succeeded on {@code playerId}, play the effect. Purely
- * decorative - the items were already consumed and the result already granted before this
- * was sent, so dropping it costs nothing but the visuals.
+ * Server-to-client: a fuse succeeded, play the effect. Purely decorative, so dropping it costs
+ * nothing but the visuals.
  *
- * @param playerId        entity id of the fusing player, resolved against the client's own level
- * @param mainHand        which hand fused, only used to pick the side the first item leaves from
- * @param consumedSkinIds one id per orbiting item, in the order they were taken. Fusing matches
- *                        on rarity rather than skin, so these are frequently different skins and
- *                        each one has to keep its own tint
- * @param resultSkinId    skin that was rolled, for the item revealed at the center
+ * @param consumedSkinIds one id per orbiting item, in the order taken; fusing matches on rarity,
+ *                        so these are often different skins and each keeps its own tint
  */
 public record SkinFusionPayload(int playerId, boolean mainHand, List<String> consumedSkinIds,
                                 String resultSkinId) implements CustomPacketPayload {
@@ -33,8 +28,7 @@ public record SkinFusionPayload(int playerId, boolean mainHand, List<String> con
     /** Caps the orbiting item count, and with it the per-frame render work a fuse can cost. */
     public static final int MAX_RING_ITEMS = 12;
 
-    // Bounded for the same reason as ApplySkinPayload: readUtf()'s 32767 default is far
-    // beyond any real skin id.
+    // Bounded; readUtf()'s 32767 default is far beyond any real skin id.
     private static final int MAX_SKIN_ID_LENGTH = 256;
 
     public static final StreamCodec<FriendlyByteBuf, SkinFusionPayload> CODEC = StreamCodec.composite(
