@@ -101,9 +101,11 @@ for exactly how packs are discovered and registered.
 Each pack has two halves, exactly like a normal resource pack + datapack, just merged
 under one root:
 
-- **`data/<namespace>/skins/`**: JSON files that register skins per-weapon. Each entry
-  needs at minimum an `id`, `name`, and `label_color`; `rarity`, `collection`,
-  `description`, and `is_new` are optional. See [`SkinManager`](src/main/java/org/minechestplate/mcpskins/skin/SkinManager.java)
+- **`data/<namespace>/skins/`**: JSON files that register skins per-weapon. A file targets one
+  TACZ item through either `base_gun` or `base_attachment` (setting both is an error and the
+  file is skipped), and lists its skins under `skins`. Each entry needs at minimum an `id`,
+  `name`, and `label_color`; `rarity`, `collection`, `description`, `is_new`, `weight`,
+  `locked_text`, and `unlocked` are optional. See [`SkinManager`](src/main/java/org/minechestplate/mcpskins/skin/SkinManager.java)
   for the exact schema and the recommended `<base_gun>_<skin_name>` ID naming convention.
   Skin IDs are global, not per-weapon, so keep that in mind when naming them.
 - **`assets/<namespace>/textures/skins/<base_gun, ":"→"/">/<skin_id>.png`**: the

@@ -6,14 +6,14 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.EntityArgument;
-import net.minecraft.core.component.DataComponents;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.CustomData;
+import org.minechestplate.mcpskins.api.RevokeSource;
+import org.minechestplate.mcpskins.api.UnlockResult;
+import org.minechestplate.mcpskins.api.UnlockSource;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
-import org.minechestplate.mcpskins.item.ModItems;
+import org.minechestplate.mcpskins.item.SkinUnlockItem;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
@@ -35,7 +35,19 @@ public class SkinCommand {
                                                     ServerPlayer target = EntityArgument.getPlayer(context, "player");
                                                     String id = StringArgumentType.getString(context, "gunId");
 
-                                                    SkinAttachment.unlockSkin(target, id);
+                                                    UnlockResult result = SkinAttachment.unlockSkin(target, id, UnlockSource.COMMAND);
+                                                    if (result == UnlockResult.UNKNOWN_SKIN) {
+                                                        context.getSource().sendFailure(Component.translatable("commands.mcpskins.give_item.unknown_skin", id));
+                                                        return 0;
+                                                    }
+                                                    if (result == UnlockResult.UNAVAILABLE) {
+                                                        context.getSource().sendFailure(Component.translatable("commands.mcpskins.unavailable_skin", id));
+                                                        return 0;
+                                                    }
+                                                    if (result == UnlockResult.CANCELLED) {
+                                                        context.getSource().sendFailure(Component.translatable("commands.mcpskins.give_skin.cancelled", id, target.getName().getString()));
+                                                        return 0;
+                                                    }
 
                                                     context.getSource().sendSuccess(() -> Component.translatable("commands.mcpskins.give_skin.success", id, target.getName().getString()), true);
                                                     return 1;
@@ -52,14 +64,14 @@ public class SkinCommand {
 
                                                     SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(skinId);
                                                     if (lookup == null) {
-                                                        context.getSource().sendFailure(Component.translatable("commands.mcpskins.give_item.unknown_skin", skinId));
+                                                        boolean exists = SkinManager.INSTANCE.findSkinRaw(skinId) != null;
+                                                        context.getSource().sendFailure(exists
+                                                                ? Component.translatable("commands.mcpskins.unavailable_skin", skinId)
+                                                                : Component.translatable("commands.mcpskins.give_item.unknown_skin", skinId));
                                                         return 0;
                                                     }
 
-                                                    ItemStack unlockStack = new ItemStack(ModItems.SKIN_UNLOCK_ITEM.get());
-                                                    CompoundTag tag = new CompoundTag();
-                                                    tag.putString("SkinToUnlock", skinId);
-                                                    unlockStack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
+                                                    ItemStack unlockStack = SkinUnlockItem.create(skinId);
 
                                                     // Same fallback as vanilla /give: drop at the player's feet if the inventory is full
                                                     boolean added = target.getInventory().add(unlockStack);
@@ -87,7 +99,7 @@ public class SkinCommand {
                                         .executes(context -> {
                                             ServerPlayer target = EntityArgument.getPlayer(context, "player");
 
-                                            SkinAttachment.clearSkins(target);
+                                            SkinAttachment.clearSkins(target, RevokeSource.COMMAND);
 
                                             context.getSource().sendSuccess(() -> Component.translatable("commands.mcpskins.take_all.success", target.getName().getString()), true);
                                             return 1;
@@ -100,7 +112,7 @@ public class SkinCommand {
                                                     ServerPlayer target = EntityArgument.getPlayer(context, "player");
                                                     String id = StringArgumentType.getString(context, "skinId");
 
-                                                    boolean removed = SkinAttachment.revokeSkin(target, id);
+                                                    boolean removed = SkinAttachment.revokeSkin(target, id, RevokeSource.COMMAND);
 
                                                     if (removed) {
                                                         context.getSource().sendSuccess(() -> Component.translatable("commands.mcpskins.take_skin.success", id, target.getName().getString()), true);

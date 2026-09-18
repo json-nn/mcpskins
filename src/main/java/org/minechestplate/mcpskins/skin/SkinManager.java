@@ -43,6 +43,16 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
     /** Replaced wholesale, never mutated: written on reload and network threads, read on render. */
     private volatile Snapshot snapshot = Snapshot.EMPTY;
 
+    /**
+     * Memoized availability-filtered registry. {@link #getRegistry()} sits on the refit overlay's
+     * per-frame path, so it must not rebuild the map on every call.
+     */
+    private record FilteredView(Snapshot source, int generation, boolean filtering,
+                                Map<String, SkinDataModels.WeaponSkins> registry) {
+    }
+
+    private volatile FilteredView filteredView;
+
     public SkinManager() {
         super(new GsonBuilder().create(), "skins");
     }
@@ -127,9 +137,19 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                 Set.copyOf(defaultUnlocked));
     }
 
-    /** Computed once per reload rather than scanned per player. */
+    /** Computed once per reload rather than scanned per player, then filtered on availability. */
     public Set<String> getDefaultUnlockedIds() {
-        return snapshot.defaultUnlockedIds();
+        Set<String> ids = snapshot.defaultUnlockedIds();
+        if (!SkinAvailability.isEnabled()) {
+            return ids;
+        }
+        Set<String> available = new HashSet<>();
+        for (String skinId : ids) {
+            if (SkinAvailability.isSkinAvailable(skinId)) {
+                available.add(skinId);
+            }
+        }
+        return available;
     }
 
     /** Whether a base id names an attachment. Unknown ids read as guns. */
@@ -138,8 +158,39 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         return weapon == null ? SkinDataModels.SkinTarget.GUN : weapon.target();
     }
 
-    /** Immutable - safe to hand around and iterate. A reload publishes a new map. */
+    /**
+     * Immutable - safe to hand around and iterate. A reload publishes a new map.
+     * <p>
+     * Items TACZ has not loaded are left out, so this is what gets synced to clients and what the
+     * UIs read. A client holds the already filtered copy it was sent.
+     */
     public Map<String, SkinDataModels.WeaponSkins> getRegistry() {
+        Snapshot current = snapshot;
+        boolean filtering = SkinAvailability.isEnabled();
+        int generation = SkinAvailability.generation();
+
+        FilteredView cached = filteredView;
+        if (cached != null && cached.source() == current
+                && cached.generation() == generation && cached.filtering() == filtering) {
+            return cached.registry();
+        }
+
+        Map<String, SkinDataModels.WeaponSkins> registry = current.registry();
+        if (filtering) {
+            Map<String, SkinDataModels.WeaponSkins> available = new HashMap<>();
+            registry.forEach((baseId, weapon) -> {
+                if (SkinAvailability.isAvailable(weapon)) {
+                    available.put(baseId, weapon);
+                }
+            });
+            registry = Map.copyOf(available);
+        }
+        filteredView = new FilteredView(current, generation, filtering, registry);
+        return registry;
+    }
+
+    /** The registry exactly as parsed, availability ignored. */
+    public Map<String, SkinDataModels.WeaponSkins> getRawRegistry() {
         return snapshot.registry();
     }
 
@@ -158,6 +209,15 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
 
     /** @return the skin with the item it belongs to, or null if the id is unknown */
     public SkinDataModels.SkinLookupResult findSkin(String skinId) {
+        SkinDataModels.SkinLookupResult lookup = findSkinRaw(skinId);
+        return lookup != null && SkinAvailability.isAvailable(lookup.weapon()) ? lookup : null;
+    }
+
+    /**
+     * Ignores availability. Only for callers that must tell an id no pack declares from one whose
+     * weapon simply is not installed; everything else wants {@link #findSkin}.
+     */
+    public SkinDataModels.SkinLookupResult findSkinRaw(String skinId) {
         if (skinId == null) return null;
         return snapshot.skinsById().get(skinId);
     }
@@ -170,6 +230,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         List<SkinDataModels.SkinLookupResult> list = new ArrayList<>();
         for (SkinDataModels.SkinLookupResult result : snapshot.skinsById().values()) {
             if (SkinAttachment.isDefaultEntry(result.skin().id())) continue;
+            if (!SkinAvailability.isAvailable(result.weapon())) continue;
             if (result.skin().rarityId().equals(rarityId)) {
                 list.add(result);
             }
@@ -177,10 +238,40 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         return list;
     }
 
-    /** For command tab-completion. */
+    /** Every non-empty collection name in load order. Matched exactly, since they are free text. */
+    public List<String> getCollections() {
+        List<String> names = new ArrayList<>();
+        for (SkinDataModels.WeaponSkins weapon : snapshot.registry().values()) {
+            if (!SkinAvailability.isAvailable(weapon)) continue;
+            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
+                if (skin.hasCollection() && !names.contains(skin.collection())) {
+                    names.add(skin.collection());
+                }
+            }
+        }
+        return names;
+    }
+
+    /** Real skin ids in a collection, stock entries excluded. Empty when nothing matches. */
+    public List<String> getSkinIdsInCollection(String collection) {
+        List<String> ids = new ArrayList<>();
+        if (collection == null || collection.isBlank()) return ids;
+        for (SkinDataModels.WeaponSkins weapon : snapshot.registry().values()) {
+            if (!SkinAvailability.isAvailable(weapon)) continue;
+            for (SkinDataModels.SkinEntry skin : weapon.skins()) {
+                if (!SkinAttachment.isDefaultEntry(skin.id()) && collection.equals(skin.collection())) {
+                    ids.add(skin.id());
+                }
+            }
+        }
+        return ids;
+    }
+
+    /** For command tab-completion. Skins for items TACZ has not loaded are left out. */
     public List<String> getAllSkinIds() {
         List<String> list = new ArrayList<>();
         for (SkinDataModels.WeaponSkins weapon : snapshot.registry().values()) {
+            if (!SkinAvailability.isAvailable(weapon)) continue;
             for (SkinDataModels.SkinEntry skin : weapon.skins()) {
                 list.add(skin.id());
             }

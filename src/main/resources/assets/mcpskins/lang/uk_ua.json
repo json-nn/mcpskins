@@ -93,5 +93,10 @@
   "gui.mcpskins.config.position_reset": "Скинути",
   "gui.mcpskins.config.position_cancel": "Скасувати",
   "gui.mcpskins.config.position_coords": "X: %1$s  Y: %2$s   (%3$s: %4$s, %5$s)",
-  "tooltip.mcpskins.open_in_armory": "Натисни щоб відкрити перегляд в арсеналі"
+  "tooltip.mcpskins.open_in_armory": "Натисни щоб відкрити перегляд в арсеналі",
+  "commands.mcpskins.give_skin.cancelled": "Unlocking %1$s for %2$s was blocked by a script",
+  "message.mcpskins.unknown_skin": "Unknown skin id: %s (not found in registry)",
+  "message.mcpskins.fuse_cancelled": "Fusing was blocked by a script.",
+  "commands.mcpskins.unavailable_skin": "Skin %s belongs to a gun or attachment TACZ has not loaded",
+  "message.mcpskins.unavailable_skin": "This skin belongs to a gun or attachment that isn't installed."
 }

@@ -4,6 +4,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
@@ -13,7 +14,9 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.Level;
+import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.network.PacketDistributor;
+import org.minechestplate.mcpskins.api.event.SkinFuseEvent;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.network.SkinFusionPayload;
 import org.minechestplate.mcpskins.skin.RarityManager;
@@ -92,15 +95,33 @@ final class SkinFusion {
 
         SkinDataModels.SkinLookupResult rolled = roll(player, viable);
 
+        // Everything is validated and rolled, but nothing is spent yet: the hook for pity rules.
+        SkinDataModels.SkinLookupResult result = rolled;
+        if (player instanceof ServerPlayer serverPlayer) {
+            SkinFuseEvent.Pre event =
+                    new SkinFuseEvent.Pre(serverPlayer, rarity.id(), heldSkinId, rolled.skin().id());
+            if (NeoForge.EVENT_BUS.post(event).isCanceled()) {
+                return refuse(level, player, stack, ChatFormatting.RED,
+                        Component.translatable("message.mcpskins.fuse_cancelled"));
+            }
+            SkinDataModels.SkinLookupResult overridden = SkinManager.INSTANCE.findSkin(event.getResultSkinId());
+            if (overridden != null) {
+                result = overridden;
+            }
+        }
+
         // Read before consuming, since consumeSlots empties the stacks it takes from.
         List<String> fusedSkinIds = collectFusedSkins(player, matchingSlots, fuseCost, heldSkinId);
         if (consumesItems) {
             consumeSlots(player, matchingSlots, fuseCost);
         }
-        grantUnlockItem(unlockItem, player, hand, stack, rolled.skin().id());
-        player.sendSystemMessage(UnlockMessages.fused(locale, rarity, rolled));
+        grantUnlockItem(unlockItem, player, hand, stack, result.skin().id());
+        player.sendSystemMessage(UnlockMessages.fused(locale, rarity, result));
         PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
-                SkinFusionPayload.create(player, hand, fusedSkinIds, rolled.skin().id()));
+                SkinFusionPayload.create(player, hand, fusedSkinIds, result.skin().id()));
+        if (player instanceof ServerPlayer serverPlayer) {
+            NeoForge.EVENT_BUS.post(new SkinFuseEvent.Post(serverPlayer, fusedSkinIds, result.skin().id()));
+        }
 
         // Re-fetched, because grantUnlockItem may have replaced the hand's contents outright.
         return InteractionResultHolder.success(player.getItemInHand(hand));

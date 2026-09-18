@@ -1,0 +1,1 @@
+org.minechestplate.mcpskins.compat.kubejs.MCPSkinsKubePlugin

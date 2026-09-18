@@ -13,8 +13,10 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemLore;
+import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.minechestplate.mcpskins.MCPSkins;
+import org.minechestplate.mcpskins.api.event.SkinEquipEvent;
 import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinManager;
@@ -104,7 +106,15 @@ public record ApplySkinPayload(String skinId, boolean unequip) implements Custom
 
             // Skips the lore rebuild and re-sync a spam client would force on every packet.
             String targetBare = appliedSkinId == null ? null : TACZSkinHelper.bareSkinId(appliedSkinId);
-            if (Objects.equals(TACZSkinHelper.getSkinId(weapon), targetBare)) {
+            String previousSkinId = TACZSkinHelper.getSkinId(weapon);
+            if (Objects.equals(previousSkinId, targetBare)) {
+                return;
+            }
+
+            // Last thing before the stack changes, so cancelling leaves it exactly as it was.
+            SkinEquipEvent event = new SkinEquipEvent(player, hand, TACZSkinHelper.getTaczId(weapon),
+                    previousSkinId, appliedSkinId);
+            if (NeoForge.EVENT_BUS.post(event).isCanceled()) {
                 return;
             }
 

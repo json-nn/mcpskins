@@ -16,6 +16,8 @@ public class MCPSkinsServerConfig {
     public static final ModConfigSpec.IntValue EQUIP_BYPASS_PERMISSION_LEVEL;
     public static final ModConfigSpec.IntValue ADMIN_COMMAND_PERMISSION_LEVEL;
 
+    public static final ModConfigSpec.BooleanValue HIDE_UNAVAILABLE_SKINS;
+
     static {
         ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
 
@@ -40,6 +42,14 @@ public class MCPSkinsServerConfig {
                 .defineInRange("adminCommandPermissionLevel", 4, 2, 4);
         builder.pop();
 
+        builder.push("content");
+        HIDE_UNAVAILABLE_SKINS = builder
+                .comment("Hide skins whose base gun or attachment is not loaded in TACZ.",
+                        "Turn this off to see every skin a pack declares, missing textures included,",
+                        "which is useful while authoring a pack against a gunpack you haven't installed.")
+                .define("hideUnavailableSkins", true);
+        builder.pop();
+
         SPEC = builder.build();
     }
 
@@ -48,6 +58,10 @@ public class MCPSkinsServerConfig {
 
     // Accessors go through SPEC.isLoaded() since ConfigValue#get() throws until a
     // server/world is actually joined.
+
+    public static boolean hideUnavailableSkins() {
+        return safe(HIDE_UNAVAILABLE_SKINS, true);
+    }
 
     public static boolean fuseEnabled() {
         return safe(FUSE_ENABLED, true);

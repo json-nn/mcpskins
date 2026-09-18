@@ -1,9 +1,10 @@
 package org.minechestplate.mcpskins.item;
 
 import net.minecraft.ChatFormatting;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
@@ -12,16 +13,16 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.Level;
-import net.neoforged.neoforge.network.PacketDistributor;
-import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
+import org.minechestplate.mcpskins.api.UnlockResult;
+import org.minechestplate.mcpskins.api.UnlockSource;
 import org.minechestplate.mcpskins.skin.RarityManager;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
@@ -36,6 +37,15 @@ public class SkinUnlockItem extends Item {
 
     public SkinUnlockItem(Properties properties) {
         super(properties);
+    }
+
+    /** The one place the {@code SkinToUnlock} tag is written. */
+    public static ItemStack create(String skinId) {
+        ItemStack stack = new ItemStack(ModItems.SKIN_UNLOCK_ITEM.get());
+        CompoundTag tag = new CompoundTag();
+        tag.putString("SkinToUnlock", skinId);
+        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
+        return stack;
     }
 
     @Override
@@ -115,9 +125,27 @@ public class SkinUnlockItem extends Item {
             return InteractionResultHolder.fail(stack);
         }
 
+        // Checked on both sides, like the ownership test above, so the client never predicts a
+        // consume the server is going to refuse. The registry is synced, so both agree.
+        if (SkinManager.INSTANCE.findSkin(skinId) == null) {
+            if (!level.isClientSide()) {
+                boolean exists = SkinManager.INSTANCE.findSkinRaw(skinId) != null;
+                player.sendSystemMessage(Component.translatable(exists
+                        ? "message.mcpskins.unavailable_skin"
+                        : "message.mcpskins.unknown_skin", skinId).withStyle(ChatFormatting.RED));
+            }
+            return InteractionResultHolder.fail(stack);
+        }
+
         if (!level.isClientSide()) {
-            SkinAttachment.unlockSkin(player, skinId);
-            PacketDistributor.sendToPlayer((ServerPlayer) player, new SyncUnlocksPayload(new ArrayList<>(player.getData(SkinAttachment.UNLOCKED_SKINS))));
+            // Sync rides along inside unlockSkin, so nothing is sent twice.
+            UnlockResult result = SkinAttachment.unlockSkin(player, skinId, UnlockSource.UNLOCK_ITEM);
+            if (result != UnlockResult.UNLOCKED) {
+                // Only a listener cancelling gets this far, and only the server knows about it,
+                // so undo the client's optimistic consume.
+                player.containerMenu.broadcastFullState();
+                return InteractionResultHolder.fail(stack);
+            }
             player.sendSystemMessage(UnlockMessages.unlocked(UnlockMessages.localeOf(player), skinId));
         } else {
             level.playSound(player, player.blockPosition(), SoundEvents.PLAYER_LEVELUP, SoundSource.PLAYERS, 0.5f, 1.5f);

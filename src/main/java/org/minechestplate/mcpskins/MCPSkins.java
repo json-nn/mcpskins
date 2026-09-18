@@ -27,6 +27,7 @@ import org.minechestplate.mcpskins.network.ApplySkinPayload;
 import org.minechestplate.mcpskins.network.RequestTranslationsPayload;
 import org.minechestplate.mcpskins.network.ServerboundRateLimiter;
 import org.minechestplate.mcpskins.network.SkinFusionPayload;
+import org.minechestplate.mcpskins.network.Payloads;
 import org.minechestplate.mcpskins.network.SyncRegistryPayload;
 import org.minechestplate.mcpskins.network.SyncTranslationsPayload;
 import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
@@ -38,6 +39,7 @@ import org.minechestplate.mcpskins.network.asset.SkinAssetThrottledPayload;
 import org.minechestplate.mcpskins.pack.MCPSkinsPackFinder;
 import org.minechestplate.mcpskins.skin.RarityManager;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
+import org.minechestplate.mcpskins.skin.SkinAvailability;
 import org.minechestplate.mcpskins.skin.SkinComponents;
 import org.minechestplate.mcpskins.skin.SkinLangManager;
 import org.minechestplate.mcpskins.skin.SkinManager;
@@ -137,13 +139,13 @@ public class MCPSkins {
 
     /** Pushes the table for the player's own language, so a /reload lands without a round trip. */
     private void sendTranslations(ServerPlayer player) {
-        PacketDistributor.sendToPlayer(player,
+        Payloads.sendTo(player,
                 new SyncTranslationsPayload(SkinTranslations.tableFor(player.clientInformation().language())));
     }
 
     private void syncSkinsToClient(ServerPlayer player) {
         java.util.Set<String> unlockedSkins = player.getData(SkinAttachment.UNLOCKED_SKINS);
-        PacketDistributor.sendToPlayer(player, new SyncUnlocksPayload(new ArrayList<>(unlockedSkins)));
+        Payloads.sendTo(player, new SyncUnlocksPayload(new ArrayList<>(unlockedSkins)));
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
@@ -173,9 +175,14 @@ public class MCPSkins {
 
     /** Fires on join and per {@code /reload}, exactly when default-unlocked skins can change. */
     private void onDatapackSync(OnDatapackSyncEvent event) {
+        // Only safe here: TACZ swaps in an empty common index during AddReloadListenerEvent and
+        // fills it as its own listeners apply, so availability cannot be judged before this point.
+        SkinAvailability.invalidate();
+        SkinAvailability.report(SkinManager.INSTANCE.getRawRegistry());
+
         SyncRegistryPayload skinPayload = SyncRegistryPayload.createFromServer();
         if (event.getPlayer() != null) {
-            PacketDistributor.sendToPlayer(event.getPlayer(), skinPayload);
+            Payloads.sendTo(event.getPlayer(), skinPayload);
             sendTranslations(event.getPlayer());
             SkinAttachment.grantDefaultUnlocks(event.getPlayer());
         } else {
