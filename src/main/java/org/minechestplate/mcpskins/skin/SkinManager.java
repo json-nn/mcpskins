@@ -19,7 +19,8 @@ import java.util.Set;
 
 /**
  * Loads skin definitions from {@code data/<namespace>/skins/} and exposes them by base item id.
- * A file targets one TACZ item through {@code base_gun} or {@code base_attachment}.
+ * A file targets one item through whichever {@code base_*} key names its family;
+ * see {@link SkinnableItemType}.
  * <p>
  * A skin's id doubles as its texture file name and its unlock key in
  * {@link SkinAttachment#UNLOCKED_SKINS}, a set shared across every item, so ids must be
@@ -64,15 +65,23 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
             try {
                 JsonObject json = element.getAsJsonObject();
 
-                boolean attachment = json.has("base_attachment");
-                if (attachment && json.has("base_gun")) {
-                    MCPSkins.LOGGER.error("Skin config {} sets both base_gun and base_attachment; skipping.", location);
+                SkinnableItemType type = null;
+                for (SkinnableItemType candidate : SkinnableItemType.all()) {
+                    if (!json.has(candidate.jsonKey())) continue;
+                    if (type != null) {
+                        MCPSkins.LOGGER.error("Skin config {} sets both {} and {}; skipping.",
+                                location, type.jsonKey(), candidate.jsonKey());
+                        return;
+                    }
+                    type = candidate;
+                }
+                if (type == null) {
+                    MCPSkins.LOGGER.error("Skin config {} names no base item; expected one of {}.",
+                            location, SkinnableItemType.all().stream().map(SkinnableItemType::jsonKey).toList());
                     return;
                 }
-                String baseGun = json.get(attachment ? "base_attachment" : "base_gun").getAsString();
-                SkinDataModels.SkinTarget target = attachment
-                        ? SkinDataModels.SkinTarget.ATTACHMENT
-                        : SkinDataModels.SkinTarget.GUN;
+                String baseGun = json.get(type.jsonKey()).getAsString();
+                SkinDataModels.SkinTarget target = type.target();
 
                 List<SkinDataModels.SkinEntry> skins = new ArrayList<>();
 
@@ -107,11 +116,11 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                     MCPSkins.LOGGER.warn("Two skin configs both target '{}'; {} wins.", baseGun, location);
                 }
             } catch (Exception e) {
-                MCPSkins.LOGGER.error("Failed to parse TACZ skin config: {}", location, e);
+                MCPSkins.LOGGER.error("Failed to parse skin config: {}", location, e);
             }
         });
         publish(registry);
-        MCPSkins.LOGGER.info("Loaded {} TACZ weapon skin configs.", registry.size());
+        MCPSkins.LOGGER.info("Loaded {} skin config(s).", registry.size());
     }
 
     /** Builds the lookup indices and publishes the new state as one atomic replacement. */

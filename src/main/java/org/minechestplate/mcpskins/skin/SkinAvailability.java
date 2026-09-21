@@ -54,9 +54,9 @@ public final class SkinAvailability {
         return MCPSkinsServerConfig.hideUnavailableSkins() && ServerLifecycleHooks.getCurrentServer() != null;
     }
 
-    /** Whether TACZ has the gun or attachment this skin set is painted on. */
+    /** Whether the owning mod has actually loaded the item this skin set is painted on. */
     public static boolean isAvailable(SkinDataModels.WeaponSkins weapon) {
-        return weapon != null && isAvailable(weapon.baseGun(), weapon.isAttachment());
+        return weapon != null && isAvailable(weapon.baseGun(), weapon.target());
     }
 
     /** Whether the item a skin id belongs to is loaded. Unknown skin ids read as unavailable. */
@@ -65,31 +65,39 @@ public final class SkinAvailability {
         return lookup != null && isAvailable(lookup.weapon());
     }
 
-    private static boolean isAvailable(String baseId, boolean attachment) {
+    private static boolean isAvailable(String baseId, SkinDataModels.SkinTarget target) {
         if (!isEnabled()) {
             return true;
         }
-        Boolean cached = CACHE.get(baseId);
+        String cacheKey = target + "|" + baseId;
+        Boolean cached = CACHE.get(cacheKey);
         if (cached != null) {
             return cached;
         }
-        boolean available = lookUp(baseId, attachment);
-        CACHE.put(baseId, available);
+        boolean available = lookUp(baseId, target);
+        CACHE.put(cacheKey, available);
         return available;
     }
 
-    private static boolean lookUp(String baseId, boolean attachment) {
+    private static boolean lookUp(String baseId, SkinDataModels.SkinTarget target) {
         ResourceLocation id = ResourceLocation.tryParse(TACZSkinHelper.bareSkinId(baseId));
         if (id == null) {
             return false;
         }
+        SkinnableItemType type = SkinnableItemType.of(target);
+        if (type != null && !type.modPresent()) {
+            // The whole addon is missing, so none of its items can be there.
+            return false;
+        }
         try {
-            return attachment
-                    ? TimelessAPI.getCommonAttachmentIndex(id).isPresent()
-                    : TimelessAPI.getCommonGunIndex(id).isPresent();
+            return switch (target) {
+                case GUN -> TimelessAPI.getCommonGunIndex(id).isPresent();
+                case ATTACHMENT -> TimelessAPI.getCommonAttachmentIndex(id).isPresent();
+                case MELEE, THROWABLE, CONSUMABLE -> LrTacticalSupport.hasItem(target, id);
+            };
         } catch (RuntimeException e) {
             // Fail open: a broken lookup must not blank out every skin on the server.
-            MCPSkins.LOGGER.warn("[MCPSkins] Could not ask TACZ about '{}'; treating it as available.", baseId, e);
+            MCPSkins.LOGGER.warn("[MCPSkins] Could not check '{}'; treating it as available.", baseId, e);
             return true;
         }
     }

@@ -52,8 +52,10 @@ it paints, so granting it would hand out something the player could never see. S
 | `MCPSkins.getSkinsFor(baseId)` | list of `SkinInfo` |
 | `MCPSkins.getSkinsByRarity(rarityId)` | list of `SkinInfo` |
 
-A `SkinInfo` has `id`, `name`, `baseId`, `attachment`, `rarityId`, `collection`, `description`
-and `isNew`. `baseId` is the TACZ gun or attachment the skin belongs to, such as `tacz:m4a1`.
+A `SkinInfo` has `id`, `name`, `baseId`, `attachment`, `target`, `rarityId`, `collection`,
+`description` and `isNew`. `baseId` is the item the skin belongs to, such as `tacz:m4a1` or
+`lrtactical:karambit`, and `target` names its family: `GUN`, `ATTACHMENT`, `MELEE`, `THROWABLE`
+or `CONSUMABLE`.
 
 > **`SkinInfo` and `CollectionProgress` are Java records**, so read them with a call, not a
 > property: `skin.id()`, not `skin.id`. Event fields are normal getters, so `event.player` and

@@ -8,6 +8,7 @@ import org.minechestplate.mcpskins.MCPSkins;
 import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 import org.minechestplate.mcpskins.client.render.GunModelPatcher;
 import org.minechestplate.mcpskins.client.render.AttachmentSkinPatcher;
+import org.minechestplate.mcpskins.client.render.LrDisplayPatcher;
 import org.minechestplate.mcpskins.client.render.PatchedGunDisplayCache;
 import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
 import org.minechestplate.mcpskins.client.render.SkinFusionAnimator;
@@ -38,6 +39,7 @@ public final class ClientNetworkEvents {
         SkinAssetResolver.clearCache();
         PatchedGunDisplayCache.clear();
         AttachmentSkinPatcher.clear();
+        LrDisplayPatcher.clear();
         GunModelPatcher.clear();
         TaczGeoModelInjector.reset();
         ClientSkinAssetCache.clearAll();

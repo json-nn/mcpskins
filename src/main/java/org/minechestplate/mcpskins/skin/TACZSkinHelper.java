@@ -45,10 +45,14 @@ public class TACZSkinHelper {
         return createStack(TACZ_ATTACHMENT_ITEM, tag, baseId, skinId);
     }
 
+    /** Builds a stack of whatever family {@code target} names. */
     public static ItemStack createStack(String baseId, String skinId, SkinDataModels.SkinTarget target) {
-        return target == SkinDataModels.SkinTarget.ATTACHMENT
-                ? createAttachmentStack(baseId, skinId)
-                : createGunStack(baseId, skinId);
+        SkinnableItemType type = SkinnableItemType.of(target);
+        if (type == null) {
+            return ItemStack.EMPTY;
+        }
+        String bareId = bareSkinId(baseId);
+        return createStack(type.itemId(), type.writeTo(new CompoundTag(), bareId), bareId, skinId);
     }
 
     private static ItemStack createStack(ResourceLocation itemId, CompoundTag tag, String baseId, String skinId) {
@@ -90,10 +94,21 @@ public class TACZSkinHelper {
         return readCustomString(stack, ATTACHMENT_ID_TAG);
     }
 
-    /** The skinnable TACZ id on a stack, or null for anything else. */
+    /**
+     * The skinnable base id on a stack, whichever addon it belongs to, or null for anything else.
+     * Matched on the container item first so a stack is only ever read with its own family's tag.
+     */
     public static String getTaczId(ItemStack stack) {
-        String gunId = getGunId(stack);
-        return gunId != null ? gunId : getAttachmentId(stack);
+        if (stack == null || stack.isEmpty()) return null;
+        ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+        SkinnableItemType type = SkinnableItemType.byItemId(itemId);
+        return type == null ? null : readCustomString(stack, type.idTag());
+    }
+
+    /** The family a stack belongs to, or null if it is not skinnable. */
+    public static SkinnableItemType typeOf(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return null;
+        return SkinnableItemType.byItemId(BuiltInRegistries.ITEM.getKey(stack.getItem()));
     }
 
     /**

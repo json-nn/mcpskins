@@ -166,7 +166,7 @@ public class SkinArmoryScreen extends Screen {
 
         // Guns first, so attachments read as their own section rather than scattering by name.
         List<SkinDataModels.WeaponSkins> weapons = new ArrayList<>(SkinManager.INSTANCE.getRegistry().values());
-        weapons.sort(Comparator.comparing(SkinDataModels.WeaponSkins::isAttachment)
+        weapons.sort(Comparator.comparing(SkinDataModels.WeaponSkins::isAccessory)
                 .thenComparing(w -> weaponDisplayName(w.baseGun()), String.CASE_INSENSITIVE_ORDER));
 
         for (SkinDataModels.WeaponSkins weapon : weapons) {
@@ -1065,8 +1065,16 @@ public class SkinArmoryScreen extends Screen {
         return result;
     }
 
-    /** Where a skin's replacement geometry would have to sit, for either kind of base item. */
+    /**
+     * Where a skin's replacement geometry would have to sit. Null for anything that is not a TACZ
+     * item: geometry replacement goes through TACZ's model registry, which knows nothing about
+     * another addon's models, so those skins are texture and icon only.
+     */
     private ResourceLocation baseModelLocation(SkinDataModels.WeaponSkins weapon) {
+        if (weapon.target() != SkinDataModels.SkinTarget.GUN
+                && weapon.target() != SkinDataModels.SkinTarget.ATTACHMENT) {
+            return null;
+        }
         if (weapon.isAttachment()) {
             ResourceLocation id = ResourceLocation.tryParse(weapon.baseGun());
             return id == null ? null : TimelessAPI.getClientAttachmentIndex(id)

@@ -6,7 +6,8 @@
   "refmap": "mcpskins.refmap.json",
   "client": [
     "AttachmentIdAccessorMixin",
-    "TimelessAPIMixin"
+    "TimelessAPIMixin",
+    "LrTacticalAPIMixin"
   ],
   "injectors": {
     "defaultRequire": 1

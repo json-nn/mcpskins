@@ -189,7 +189,14 @@ public final class Item3DPodiumWidget {
             applyAttachmentCentering(pose);
 
             Lighting.setupFor3DItems();
-            RenderSystem.disableCull(); // the mirror above flips winding order
+
+            // Culling stays on, with the winding flipped to match the mirrored scale above.
+            // Turning culling off instead drew the back of every surface as well, and on thin
+            // geometry like a knife blade the two sides sit at the same depth and z-fight,
+            // shaded differently because their normals point opposite ways. That read as two
+            // models flickering through each other, worst at the thinnest point.
+            RenderSystem.enableCull();
+            GL11.glFrontFace(GL11.GL_CW);
 
             // Or TACZ serves the LOD model here: its high-poly check wants a recent GUI render
             // timestamp. GunSmithTableScreen does the same before its own preview.
@@ -208,6 +215,7 @@ public final class Item3DPodiumWidget {
                 guiGraphics.flush(); // avoids buffered draw calls surfacing over the next frame
             } finally {
                 closeHighPolyHint();
+                GL11.glFrontFace(GL11.GL_CCW);
                 RenderSystem.enableCull();
                 Lighting.setupForFlatItems();
             }

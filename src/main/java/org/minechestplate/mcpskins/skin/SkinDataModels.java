@@ -81,7 +81,11 @@ public class SkinDataModels {
         }
     }
 
-    public enum SkinTarget { GUN, ATTACHMENT }
+    /**
+     * Which family of item a skin paints. Serialized as a byte ordinal, so new values go on the
+     * end only. See {@link SkinnableItemType} for what each one maps to.
+     */
+    public enum SkinTarget { GUN, ATTACHMENT, MELEE, THROWABLE, CONSUMABLE }
 
     /** @param baseGun a GunId, or an AttachmentId when {@code target} is {@link SkinTarget#ATTACHMENT} */
     public record WeaponSkins(String baseGun, List<SkinEntry> skins, SkinTarget target) {
@@ -92,6 +96,11 @@ public class SkinDataModels {
 
         public boolean isAttachment() {
             return target == SkinTarget.ATTACHMENT;
+        }
+
+        /** True for anything that is not a gun, which is what the Armory sorts on. */
+        public boolean isAccessory() {
+            return target != SkinTarget.GUN;
         }
     }
 

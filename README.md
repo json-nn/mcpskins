@@ -102,8 +102,10 @@ Each pack has two halves, exactly like a normal resource pack + datapack, just m
 under one root:
 
 - **`data/<namespace>/skins/`**: JSON files that register skins per-weapon. A file targets one
-  TACZ item through either `base_gun` or `base_attachment` (setting both is an error and the
-  file is skipped), and lists its skins under `skins`. Each entry needs at minimum an `id`,
+  item through exactly one `base_*` key, and lists its skins under `skins`. TACZ provides
+  `base_gun` and `base_attachment`; with [LesRaisins Tactical Equipments](https://github.com/xjqsh/LesRaisins-Tactical-Equipements)
+  installed, `base_melee`, `base_throwable` and `base_consumable` work the same way. Setting
+  two of them in one file is an error and the file is skipped. Each entry needs at minimum an `id`,
   `name`, and `label_color`; `rarity`, `collection`, `description`, `is_new`, `weight`,
   `locked_text`, and `unlocked` are optional. See [`SkinManager`](src/main/java/org/minechestplate/mcpskins/skin/SkinManager.java)
   for the exact schema and the recommended `<base_gun>_<skin_name>` ID naming convention.
