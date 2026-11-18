@@ -19,7 +19,6 @@ public class SkinFusedKubeEvent implements KubeEvent {
         return event.getPlayer();
     }
 
-    /** One entry per item spent, so the same id can appear more than once. */
     public List<String> getConsumedSkinIds() {
         return event.getConsumedSkinIds();
     }

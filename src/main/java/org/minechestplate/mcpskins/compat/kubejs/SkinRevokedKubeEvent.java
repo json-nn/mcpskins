@@ -21,7 +21,6 @@ public class SkinRevokedKubeEvent implements KubeEvent {
         return event.getSkinId();
     }
 
-    /** COMMAND or API. */
     public String getSource() {
         return event.getSource().name();
     }

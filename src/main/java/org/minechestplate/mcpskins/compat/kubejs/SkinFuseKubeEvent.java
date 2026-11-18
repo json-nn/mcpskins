@@ -21,22 +21,18 @@ public class SkinFuseKubeEvent implements KubeEvent {
         return event.getPlayer();
     }
 
-    /** The rarity being spent. */
     public String getRarityId() {
         return event.getRarityId();
     }
 
-    /** The skin on the item the player was holding. */
     public String getHeldSkinId() {
         return event.getHeldSkinId();
     }
 
-    /** What the roll produced, whatever the override says. */
     public String getRolledSkinId() {
         return event.getRolledSkinId();
     }
 
-    /** What the player will get: the roll, or an accepted override. */
     public String getResultSkinId() {
         return event.getResultSkinId();
     }
