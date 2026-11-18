@@ -23,12 +23,11 @@ public class SkinUnlockKubeEvent implements KubeEvent {
         return event.getSkinId();
     }
 
-    /** One of COMMAND, UNLOCK_ITEM or API. Bulk grants never reach this event. */
     public String getSource() {
         return event.getSource().name();
     }
 
-    /** Null only if the pack was reloaded mid-tick. */
+    // Null only if the pack was reloaded mid-tick.
     public SkinInfo getSkin() {
         return MCPSkinsAPI.getSkin(event.getSkinId());
     }

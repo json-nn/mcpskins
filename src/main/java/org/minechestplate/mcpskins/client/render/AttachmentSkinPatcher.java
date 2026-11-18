@@ -8,10 +8,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Resolves an attachment skin's optional files into a patched index, cached because this runs
- * on every attachment render.
- */
+/** Attachment skin files to a patched index; cached, since it runs on every attachment render. */
 public final class AttachmentSkinPatcher {
 
     private record Overrides(ResourceLocation texture, ResourceLocation icon, ResourceLocation model,
@@ -30,9 +27,6 @@ public final class AttachmentSkinPatcher {
     private AttachmentSkinPatcher() {
     }
 
-    /**
-     * @return the skinned index, or null to leave the base one alone
-     */
     public static ClientAttachmentIndex patch(ClientAttachmentIndex base, String attachmentId, String skinId) {
         if (base == null || attachmentId == null || skinId == null || skinId.isBlank()) return null;
 
@@ -48,7 +42,7 @@ public final class AttachmentSkinPatcher {
         ClientAttachmentIndex patched = ClientAttachmentIndexPatcher.withOverrides(base, overrides.texture(),
                 overrides.icon(), overrides.model(), overrides.lodModel(), overrides.lodTexture());
         if (patched == null) {
-            // Base not loaded yet; retry next frame rather than caching a miss.
+            // Base not loaded yet: retry next frame, do not cache a miss.
             return null;
         }
         CACHE.put(cacheKey, new CacheEntry(overrides, patched));
@@ -81,7 +75,6 @@ public final class AttachmentSkinPatcher {
                 Objects.equals(lodTexture, baseLodTexture) ? null : lodTexture);
     }
 
-    /** Cleared on client resource reload, alongside the gun caches. */
     public static void clear() {
         CACHE.clear();
     }

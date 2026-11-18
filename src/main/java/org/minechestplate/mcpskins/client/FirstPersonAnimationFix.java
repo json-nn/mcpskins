@@ -15,14 +15,8 @@ import net.neoforged.neoforge.client.extensions.common.IClientItemExtensions;
 import org.minechestplate.mcpskins.MCPSkins;
 
 /**
- * Re-initializes the held weapon's animation state machine in first person after it has been
- * replaced underneath the renderer. Without this the weapon draws at its bind pose, the
- * "detached hands" look, until the player switches hotbar slots.
- * <p>
- * TACZ's own recovery is gated on <em>not</em> being in first person, and the only thing that
- * re-inits there latches after its first call. A skin swap deliberately changes neither GunId
- * nor GunDisplayId, so nothing else notices the new instance. F3+T leaves the same
- * uninitialized machine behind, and that case reproduces without this mod.
+ * Re-inits the first-person animation state machine after a skin swap replaced the display
+ * instance; otherwise the gun sits in bind pose until a slot switch. See docs/ai/tacz-integration.md.
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, value = Dist.CLIENT)
 public final class FirstPersonAnimationFix {
@@ -30,20 +24,19 @@ public final class FirstPersonAnimationFix {
     private FirstPersonAnimationFix() {
     }
 
-    /** LOWEST so a genuine {@code triggerDraw()} this frame runs first and leaves us a no-op. */
+    // LOWEST so a real triggerDraw() this frame runs first and leaves this a no-op.
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void recoverAnimationState(RenderFrameEvent.Pre event) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null || !mc.options.getCameraType().isFirstPerson()) {
-            return; // third person is TACZ's own tickAnimation(Post)
+            return; // TACZ's tickAnimation(Post) covers third person
         }
 
         IFPAnimationInstance instance = FirstPersonRenderHandler.getActiveAnimationInstance();
         if (instance == null) return;
 
-        // Not getMainHandItem(): mid put-away this is still the outgoing stack, whose
-        // exitingTime makes needReInit decline, leaving the sheathe animation alone.
+        // Not getMainHandItem(): mid put-away this is the outgoing stack, which needReInit declines.
         ItemStack stack = instance.currentItem();
         if (stack.isEmpty()) return;
 

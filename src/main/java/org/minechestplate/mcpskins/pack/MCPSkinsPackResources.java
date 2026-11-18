@@ -14,11 +14,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Set;
 
-/**
- * Wraps one folder/zip-backed {@link PackResources} found by {@link MCPSkinsPackFinder} and
- * supplies a synthetic pack.mcmeta, so individual skin packs don't need to ship their own.
- * All resource lookups delegate straight through to the real, disk-backed pack.
- */
+/** A skin pack with a synthetic pack.mcmeta; everything else delegates to the disk-backed pack. */
 final class MCPSkinsPackResources extends AbstractPackResources implements Pack.ResourcesSupplier {
     private final PackMetadataSection meta;
     private final PackResources delegate;
@@ -52,7 +48,6 @@ final class MCPSkinsPackResources extends AbstractPackResources implements Pack.
 
     @Override
     public IoSupplier<InputStream> getRootResource(String... paths) {
-        // pack.png etc. don't matter for a forced pack.
         return null;
     }
 

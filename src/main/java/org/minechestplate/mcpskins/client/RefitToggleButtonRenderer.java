@@ -6,12 +6,8 @@ import net.minecraft.resources.ResourceLocation;
 import org.minechestplate.mcpskins.MCPSkins;
 
 /**
- * Draws the skin-mode toggle button. Shared by {@link TACZRefitSkinOverlay} and the
- * button-position picker so both render the same button.
- * <p>
- * Uses TACZ's own {@code refit_slot.png} for the box instead of a custom texture, so the
- * button reads as one more slot in the attachment row and picks up resource pack retextures
- * automatically.
+ * The skin-mode toggle, shared by {@link TACZRefitSkinOverlay} and the position picker. Drawn on
+ * TACZ's {@code refit_slot.png} so it matches the attachment row and follows resource packs.
  */
 public final class RefitToggleButtonRenderer {
 
@@ -21,15 +17,14 @@ public final class RefitToggleButtonRenderer {
 
     private static final ResourceLocation TACZ_SLOT_TEXTURE =
             ResourceLocation.fromNamespaceAndPath("tacz", "textures/gui/refit_slot.png");
-    // Native size of refit_slot.png (== GunRefitScreen.SLOT_SIZE)
+    // == GunRefitScreen.SLOT_SIZE
     private static final int TACZ_SLOT_TEX_SIZE = 18;
 
     private RefitToggleButtonRenderer() {
     }
 
     public static void render(GuiGraphics guiGraphics, int x0, int y0, int size, boolean hovered, boolean active) {
-        // Lit state shows the full 18x18 box with its highlight ring; resting state is
-        // inset by 1px with no ring - matches GunAttachmentSlot's own two states
+        // Same two states as GunAttachmentSlot: lit shows the ring, resting is inset 1px without it.
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         boolean lit = hovered || active;

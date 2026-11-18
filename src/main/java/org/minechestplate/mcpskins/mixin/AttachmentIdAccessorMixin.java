@@ -9,10 +9,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * Notes which stack an attachment id was read from, so {@link TimelessAPIMixin} knows whose
- * skin to apply when TACZ looks the index up by id alone.
- */
+/** Records the stack an attachment id was read from, for {@link TimelessAPIMixin}'s id-only lookup. */
 @Mixin(AttachmentItemDataAccessor.class)
 public interface AttachmentIdAccessorMixin {
 

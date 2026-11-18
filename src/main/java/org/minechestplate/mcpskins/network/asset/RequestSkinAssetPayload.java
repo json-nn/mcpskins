@@ -9,22 +9,15 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.minechestplate.mcpskins.MCPSkins;
 
 /**
- * Client-to-server: "send me the raw bytes behind this asset path, if it exists."
- * <p>
- * path is the "namespace:relative/path" key a skin pack file would have under assets/,
- * e.g. {@code "mcpskins:textures/skins/rifle/cobra.png"}. Only ever used as a lookup key
- * into {@link ServerSkinAssetStore}'s index - never treated as a real filesystem path.
- * <p>
- * Handled on the network thread, which requires the registrar to opt into
- * {@code HandlerThread.NETWORK} - skipping {@link IPayloadContext#enqueueWork} does not get
- * you off the main thread by itself. {@link ServerSkinAssetStore#handleRequest} does blocking
- * file/zip I/O and Deflate; on the main thread that stalls the tick loop per first-time asset.
+ * Client to server: the bytes behind {@code path}, a {@code namespace:path} key under a pack's
+ * assets/ (e.g. {@code mcpskins:textures/skins/rifle/cobra.png}). Only ever an index key, never a
+ * filesystem path. Runs on the network thread (registrar {@code HandlerThread.NETWORK}), because
+ * {@link ServerSkinAssetStore#handleRequest} does blocking zip I/O and Deflate.
  */
 public record RequestSkinAssetPayload(String path) implements CustomPacketPayload {
     public static final Type<RequestSkinAssetPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "request_skin_asset"));
 
-    /** Bounded; real keys are short file paths. */
     private static final int MAX_PATH_LENGTH = 512;
 
     public static final StreamCodec<FriendlyByteBuf, RequestSkinAssetPayload> CODEC = StreamCodec.composite(

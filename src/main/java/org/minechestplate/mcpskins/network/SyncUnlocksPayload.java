@@ -15,10 +15,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Server-to-client packet that syncs a player's set of unlocked skin IDs.
- * Sent on login, respawn, and dimension change.
- */
+/** Server to client: the player's whole owned set, on login, respawn, dimension change and every change. */
 public record SyncUnlocksPayload(List<String> unlockedSkins) implements CustomPacketPayload {
     public static final Type<SyncUnlocksPayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "sync_unlocks"));
 
@@ -33,11 +30,7 @@ public record SyncUnlocksPayload(List<String> unlockedSkins) implements CustomPa
         this(readList(buffer));
     }
 
-    /**
-     * No {@code new ArrayList<>(size)} here, deliberately - pre-sizing from a wire value lets
-     * a 5-byte packet claiming {@code Integer.MAX_VALUE} entries OOM the client before it
-     * reads one.
-     */
+    // Never pre-size from the wire value: a 5-byte packet could claim a huge count and OOM the client.
     private static List<String> readList(FriendlyByteBuf buffer) {
         int size = buffer.readVarInt();
         if (size < 0 || size > MAX_UNLOCKS) {
@@ -66,7 +59,6 @@ public record SyncUnlocksPayload(List<String> unlockedSkins) implements CustomPa
         context.enqueueWork(() -> {
             Player clientPlayer = context.player();
             if (clientPlayer != null) {
-                // Update the local client player's attachment cache
                 Set<String> newUnlocks = new HashSet<>(unlockedSkins);
                 clientPlayer.setData(SkinAttachment.UNLOCKED_SKINS, newUnlocks);
             }

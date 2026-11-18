@@ -5,22 +5,18 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Translations for pack-authored text: skin names, descriptions, collections, unlock hints and
- * rarity tiers.
- * <p>
- * Skin packs never reach the client, so a {@code lang} folder in one would never be loaded. The
- * server loads every locale from {@code data/<namespace>/skin_lang/} and sends each client the
- * one table it needs. Keys are derived from ids, and anything missing falls back to the text in
- * the skin file, so a partial translation is a normal state rather than an error.
+ * Translations for pack-authored text. The server holds every locale and sends each client one
+ * merged table (packs never reach clients). Keys derive from ids; a missing key falls back to
+ * the skin file's literal, silently.
  */
 public final class SkinTranslations {
 
     public static final String DEFAULT_LOCALE = "en_us";
 
-    /** Every locale, held by the server. Empty on a client. */
+    // Every locale, held by the server. Empty on a client.
     private static volatile Map<String, Map<String, String>> tables = Map.of();
 
-    /** The one merged table a client was sent. Empty on a server. */
+    // The one merged table a client was sent. Empty on a server.
     private static volatile Map<String, String> clientTable = Map.of();
 
     private SkinTranslations() {
@@ -34,7 +30,6 @@ public final class SkinTranslations {
         return "rarity." + sanitize(rarityId);
     }
 
-    /** Collections are free text, so the key is a slug; one entry covers the whole set. */
     public static String collectionKey(String collection) {
         return "collection." + sanitize(collection);
     }
@@ -48,14 +43,13 @@ public final class SkinTranslations {
         return out.toString();
     }
 
-    /** Server side, on reload. */
     public static void load(Map<String, Map<String, String>> byLocale) {
         Map<String, Map<String, String>> copy = new HashMap<>();
         byLocale.forEach((locale, entries) -> copy.put(locale, Map.copyOf(entries)));
         tables = Map.copyOf(copy);
     }
 
-    /** The table to send a client: the default locale, overlaid with the requested one. */
+    // en_us overlaid with the requested locale.
     public static Map<String, String> tableFor(String locale) {
         Map<String, String> merged = new HashMap<>(tables.getOrDefault(DEFAULT_LOCALE, Map.of()));
         if (locale != null && !locale.equals(DEFAULT_LOCALE)) {
@@ -64,7 +58,6 @@ public final class SkinTranslations {
         return merged;
     }
 
-    /** Client side, when the server answers a request. */
     public static void acceptFromServer(Map<String, String> table) {
         clientTable = table == null ? Map.of() : Map.copyOf(table);
     }
@@ -73,13 +66,12 @@ public final class SkinTranslations {
         clientTable = Map.of();
     }
 
-    /** Uses the table this client was sent. Falls back to {@code literal}. */
     public static String text(String key, String literal) {
         String value = clientTable.get(key);
         return value == null || value.isBlank() ? literal : value;
     }
 
-    /** Server side, for text addressed to one player. Falls back to {@code literal}. */
+    // For text addressed to one player: locale, then en_us, then literal.
     public static String text(String locale, String key, String literal) {
         Map<String, String> table = tables.get(locale);
         String value = table == null ? null : table.get(key);
@@ -98,11 +90,15 @@ public final class SkinTranslations {
         return text(skinKey(entry.id(), "description"), entry.description());
     }
 
+    public static String subtitle(SkinDataModels.SkinEntry entry) {
+        return text(skinKey(entry.id(), "subtitle"), entry.subtitle());
+    }
+
     public static String lockedText(SkinDataModels.SkinEntry entry) {
         return text(skinKey(entry.id(), "locked_text"), entry.lockedText());
     }
 
-    /** Per-skin key first, then the shared collection key, then the literal. */
+    // Per-skin key first, then the shared collection key, then the literal.
     public static String collection(SkinDataModels.SkinEntry entry) {
         String perSkin = text(skinKey(entry.id(), "collection"), null);
         if (perSkin != null) return perSkin;

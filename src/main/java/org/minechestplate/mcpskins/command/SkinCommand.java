@@ -18,10 +18,7 @@ import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 
-/**
- * Registers the "/mcpskins" command tree for granting and revoking skins
- * (either as a direct unlock or as a physical unlock item).
- */
+/** Server admin tree {@code /mcpskins give|take}. {@code /mcpskins armory} is client side, in ArmoryClientCommand. */
 public class SkinCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("mcpskins")
@@ -52,8 +49,6 @@ public class SkinCommand {
                                                     context.getSource().sendSuccess(() -> Component.translatable("commands.mcpskins.give_skin.success", id, target.getName().getString()), true);
                                                     return 1;
                                                 }))))
-                        // Unlike "give skin" (which unlocks directly), this gives the physical
-                        // SkinUnlockItem with the correct NBT already set.
                         .then(Commands.literal("item")
                                 .then(Commands.argument("player", EntityArgument.player())
                                         .then(Commands.argument("skinId", StringArgumentType.string())
@@ -73,7 +68,6 @@ public class SkinCommand {
 
                                                     ItemStack unlockStack = SkinUnlockItem.create(skinId);
 
-                                                    // Same fallback as vanilla /give: drop at the player's feet if the inventory is full
                                                     boolean added = target.getInventory().add(unlockStack);
                                                     if (!added) {
                                                         target.drop(unlockStack, false);

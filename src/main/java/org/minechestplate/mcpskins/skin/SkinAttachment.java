@@ -20,17 +20,17 @@ import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * NeoForge data attachment tracking which skin IDs each player has unlocked.
- * Persists across death and syncs to the client whenever it changes.
- * <p>
- * Every mutation goes through this class, so validation, the sync packet and the
- * {@code api.event} notifications all live in one place.
+ * Per-player owned skin ids and leveling counters (data attachments, saved and copied on death).
+ * Every ownership change goes through here, which validates, syncs and posts the {@code api.event}s.
  */
 public class SkinAttachment {
     public static final DeferredRegister<AttachmentType<?>> ATTACHMENTS = DeferredRegister.create(NeoForgeRegistries.Keys.ATTACHMENT_TYPES, MCPSkins.MOD_ID);
@@ -43,33 +43,35 @@ public class SkinAttachment {
                     .build()
     );
 
-    /** Registry ids of a weapon's stock appearance, which nobody needs to unlock. */
+    // Counters per root skin id. Only SkinProgress writes; values are replaced, never mutated.
+    public static final DeferredHolder<AttachmentType<?>, AttachmentType<Map<String, SkinProgress.Counters>>> SKIN_PROGRESS = ATTACHMENTS.register(
+            "skin_progress",
+            () -> AttachmentType.builder(() -> (Map<String, SkinProgress.Counters>) new HashMap<String, SkinProgress.Counters>())
+                    .serialize(Codec.unboundedMap(Codec.STRING, SkinProgress.Counters.CODEC)
+                            .xmap(HashMap::new, map -> map))
+                    .copyOnDeath()
+                    .build()
+    );
+
     private static final String DEFAULT_PREFIX = "default:";
 
-    /** {@link SkinManager#apply} synthesizes one per weapon for "no skin". Never unlockable. */
+    // The stock entry SkinManager.apply synthesizes per item for "no skin". Never unlockable.
     public static boolean isDefaultEntry(String skinId) {
         return skinId != null && skinId.startsWith(DEFAULT_PREFIX);
     }
 
-    /**
-     * The <em>authorization</em> predicate. Must never grant on the shape of an id: special-casing
-     * {@code default:} here is what let any client equip any locked skin. For "should the UI show
-     * this as unlocked", use {@link #isOwnedOrDefault} instead.
-     */
+    // The authorization predicate. Never grant based on the shape of an id; grant only by adding
+    // ids to the owned set. For UI display use isOwnedOrDefault.
     public static boolean hasSkin(Player player, String skinId) {
         return skinId != null && player.getData(UNLOCKED_SKINS).contains(skinId);
     }
 
-    /** Display only - stock entries always read as available. Never gate an action on this. */
+    // Display only: stock entries read as owned. Never gate an action on this.
     public static boolean isOwnedOrDefault(Player player, String skinId) {
         return isDefaultEntry(skinId) || hasSkin(player, skinId);
     }
 
-    /**
-     * Grants one skin, refusing ids that are not in the loaded packs.
-     *
-     * @return what happened; only {@link UnlockResult#UNLOCKED} changed anything
-     */
+    // A root brings its unconditioned variants in the same commit, reported as VARIANT.
     public static UnlockResult unlockSkin(Player player, String skinId, UnlockSource source) {
         if (skinId == null || isDefaultEntry(skinId) || SkinManager.INSTANCE.findSkinRaw(skinId) == null) {
             return UnlockResult.UNKNOWN_SKIN;
@@ -86,19 +88,50 @@ public class SkinAttachment {
             return UnlockResult.CANCELLED;
         }
 
+        Map<String, UnlockSource> added = new LinkedHashMap<>();
+        added.put(skinId, source);
+        addVariants(added, owned);
+
         Set<String> updated = new HashSet<>(owned);
-        updated.add(skinId);
+        updated.addAll(added.keySet());
         commit(player, updated);
-        postUnlocked(player, List.of(skinId), source, owned);
+        postUnlocked(player, added, owned);
         return UnlockResult.UNLOCKED;
     }
 
-    /**
-     * Grants every skin a pack marked {@code "unlocked": true} that the player is missing.
-     * Writes and syncs only on an actual change, so a returning player costs no packet.
-     */
+    // Starter skins ("unlocked": true); syncs only on an actual change.
     public static void grantDefaultUnlocks(ServerPlayer player) {
         addAll(player, SkinManager.INSTANCE.getDefaultUnlockedIds(), UnlockSource.DEFAULT_GRANT);
+    }
+
+    // Adds missing unconditioned variants of owned roots (packs can add variants later). Never removes.
+    public static void reconcileVariants(ServerPlayer player) {
+        Set<String> owned = player.getData(UNLOCKED_SKINS);
+        Map<String, UnlockSource> added = new LinkedHashMap<>();
+        for (String skinId : owned) {
+            for (String variant : SkinManager.INSTANCE.unconditionedVariantsOf(skinId)) {
+                if (!owned.contains(variant) && SkinAvailability.isSkinAvailable(variant)) {
+                    added.putIfAbsent(variant, UnlockSource.VARIANT);
+                }
+            }
+        }
+        if (added.isEmpty()) {
+            return;
+        }
+        Set<String> updated = new HashSet<>(owned);
+        updated.addAll(added.keySet());
+        commit(player, updated);
+        postUnlocked(player, added, owned);
+    }
+
+    private static void addVariants(Map<String, UnlockSource> added, Set<String> owned) {
+        for (String skinId : List.copyOf(added.keySet())) {
+            for (String variant : SkinManager.INSTANCE.unconditionedVariantsOf(skinId)) {
+                if (!owned.contains(variant) && SkinAvailability.isSkinAvailable(variant)) {
+                    added.putIfAbsent(variant, UnlockSource.VARIANT);
+                }
+            }
+        }
     }
 
     public static void unlockAllSkins(Player player) {
@@ -111,34 +144,43 @@ public class SkinAttachment {
         addAll(player, everything, UnlockSource.UNLOCK_ALL);
     }
 
-    /** Bulk grant: no cancellable pre-event, one sync, one post-event per skin actually added. */
+    // Bulk: no pre-event, one sync, one post-event per skin added. Roots bring their unconditioned variants.
     private static void addAll(Player player, Collection<String> candidates, UnlockSource source) {
         Set<String> owned = player.getData(UNLOCKED_SKINS);
-        List<String> added = new ArrayList<>();
+        Map<String, UnlockSource> added = new LinkedHashMap<>();
         for (String skinId : candidates) {
             if (!owned.contains(skinId)) {
-                added.add(skinId);
+                added.put(skinId, source);
             }
         }
         if (added.isEmpty()) {
             return;
         }
+        addVariants(added, owned);
 
         Set<String> updated = new HashSet<>(owned);
-        updated.addAll(added);
+        updated.addAll(added.keySet());
         commit(player, updated);
-        postUnlocked(player, added, source, owned);
+        postUnlocked(player, added, owned);
     }
 
+    // Also takes a root's unconditioned variants; earned level variants stay.
     public static boolean revokeSkin(Player player, String skinId, RevokeSource source) {
         Set<String> owned = player.getData(UNLOCKED_SKINS);
         if (!owned.contains(skinId)) {
             return false;
         }
+        List<String> removed = new ArrayList<>();
+        removed.add(skinId);
+        for (String variant : SkinManager.INSTANCE.unconditionedVariantsOf(skinId)) {
+            if (owned.contains(variant) && !removed.contains(variant)) {
+                removed.add(variant);
+            }
+        }
         Set<String> updated = new HashSet<>(owned);
-        updated.remove(skinId);
+        updated.removeAll(removed);
         commit(player, updated);
-        postRevoked(player, List.of(skinId), source);
+        postRevoked(player, removed, source);
         return true;
     }
 
@@ -151,7 +193,7 @@ public class SkinAttachment {
         postRevoked(player, removed, source);
     }
 
-    /** The one place the set is written and pushed to the owning client. */
+    // The only write of the owned set; syncs to the owning client.
     private static void commit(Player player, Set<String> updated) {
         player.setData(UNLOCKED_SKINS, updated);
         if (player instanceof ServerPlayer serverPlayer) {
@@ -159,16 +201,13 @@ public class SkinAttachment {
         }
     }
 
-    /** @param ownedBefore the set as it was, for spotting collections that have just filled up */
-    private static void postUnlocked(Player player, List<String> added, UnlockSource source,
-                                     Set<String> ownedBefore) {
+    private static void postUnlocked(Player player, Map<String, UnlockSource> added, Set<String> ownedBefore) {
         if (!(player instanceof ServerPlayer serverPlayer)) {
             return;
         }
-        for (String skinId : added) {
-            NeoForge.EVENT_BUS.post(new SkinUnlockEvent.Post(serverPlayer, skinId, source));
-        }
-        for (String collection : completedCollections(added, ownedBefore)) {
+        added.forEach((skinId, source) ->
+                NeoForge.EVENT_BUS.post(new SkinUnlockEvent.Post(serverPlayer, skinId, source)));
+        for (String collection : completedCollections(List.copyOf(added.keySet()), ownedBefore)) {
             NeoForge.EVENT_BUS.post(new CollectionCompletedEvent(serverPlayer, collection));
         }
     }
@@ -182,10 +221,7 @@ public class SkinAttachment {
         }
     }
 
-    /**
-     * Collections the new skins just completed. Evaluated against {@code ownedBefore} so a
-     * collection that was already full stays quiet, and a bulk grant reports each one once.
-     */
+    // Only transitions from incomplete, each once per grant.
     private static Set<String> completedCollections(List<String> added, Set<String> ownedBefore) {
         Set<String> touched = new LinkedHashSet<>();
         for (String skinId : added) {

@@ -29,6 +29,7 @@ import org.minechestplate.mcpskins.network.ServerboundRateLimiter;
 import org.minechestplate.mcpskins.network.SkinFusionPayload;
 import org.minechestplate.mcpskins.network.Payloads;
 import org.minechestplate.mcpskins.network.SyncRegistryPayload;
+import org.minechestplate.mcpskins.network.SyncSkinProgressPayload;
 import org.minechestplate.mcpskins.network.SyncTranslationsPayload;
 import org.minechestplate.mcpskins.network.SyncUnlocksPayload;
 import org.minechestplate.mcpskins.network.asset.RequestSkinAssetPayload;
@@ -42,6 +43,8 @@ import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinAvailability;
 import org.minechestplate.mcpskins.skin.SkinComponents;
 import org.minechestplate.mcpskins.skin.SkinLangManager;
+import org.minechestplate.mcpskins.skin.SkinLeveling;
+import org.minechestplate.mcpskins.skin.SkinProgress;
 import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.SkinTranslations;
 import org.slf4j.Logger;
@@ -71,6 +74,7 @@ public class MCPSkins {
         NeoForge.EVENT_BUS.addListener(this::onPlayerRespawn);
         NeoForge.EVENT_BUS.addListener(this::onPlayerChangeDimension);
         NeoForge.EVENT_BUS.addListener(this::onPlayerLogOut);
+        NeoForge.EVENT_BUS.addListener(SkinLeveling::onGunKill);
 
         ModItems.ITEMS.register(modEventBus);
         SkinAttachment.ATTACHMENTS.register(modEventBus);
@@ -92,16 +96,12 @@ public class MCPSkins {
         event.addListener(ServerSkinAssetStore.INSTANCE);
     }
 
-    /**
-     * SERVER_DATA only - assets are streamed over the network by {@link ServerSkinAssetStore}
-     * instead, so clients never need a local copy of a skin pack.
-     */
+    // Skin packs register as data only; their assets are streamed by ServerSkinAssetStore.
     private void onAddPackFinders(AddPackFindersEvent event) {
         if (event.getPackType() == PackType.SERVER_DATA) {
             event.addRepositorySource(MCPSkinsPackFinder.INSTANCE);
         } else if (FMLEnvironment.dist.isClient()) {
-            // Memory-backed, so streamed assets a shader needs to look up by path are visible
-            // to the resource manager without any pack on the player's disk.
+            // Memory-backed, so shaders can look up streamed assets (PBR maps) by path.
             event.addRepositorySource(consumer -> {
                 net.minecraft.server.packs.repository.Pack pack =
                         org.minechestplate.mcpskins.client.pack.ClientSkinResourcePack.createPack();
@@ -137,7 +137,7 @@ public class MCPSkins {
         }
     }
 
-    /** Pushes the table for the player's own language, so a /reload lands without a round trip. */
+    // Pushed rather than requested, so a /reload lands without a client round trip.
     private void sendTranslations(ServerPlayer player) {
         Payloads.sendTo(player,
                 new SyncTranslationsPayload(SkinTranslations.tableFor(player.clientInformation().language())));
@@ -146,37 +146,35 @@ public class MCPSkins {
     private void syncSkinsToClient(ServerPlayer player) {
         java.util.Set<String> unlockedSkins = player.getData(SkinAttachment.UNLOCKED_SKINS);
         Payloads.sendTo(player, new SyncUnlocksPayload(new ArrayList<>(unlockedSkins)));
+        SkinProgress.sync(player);
     }
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // 1.10.0 added the translation request/sync pair; the registrar is not optional,
-        // so mismatched versions cannot connect.
-        PayloadRegistrar registrar = event.registrar("1.10.0");
+        // Bump on any wire-format change. The registrar is not optional, so mismatched versions cannot connect.
+        PayloadRegistrar registrar = event.registrar("1.11.0");
 
         registrar.playToClient(SyncRegistryPayload.TYPE, SyncRegistryPayload.CODEC, SyncRegistryPayload::handleData);
         registrar.playToClient(SyncUnlocksPayload.TYPE, SyncUnlocksPayload.CODEC, SyncUnlocksPayload::handleData);
         registrar.playToClient(SkinFusionPayload.TYPE, SkinFusionPayload.CODEC, SkinFusionPayload::handleData);
         registrar.playToClient(SyncTranslationsPayload.TYPE, SyncTranslationsPayload.CODEC, SyncTranslationsPayload::handleData);
+        registrar.playToClient(SyncSkinProgressPayload.TYPE, SyncSkinProgressPayload.CODEC, SyncSkinProgressPayload::handleData);
 
-        // Both serverbound handlers screen the request off the tick loop and hop back to MAIN
-        // only for work that touches game state. Asset requests also do blocking zip I/O plus
-        // Deflate, which would stall every tick.
+        // Serverbound handlers validate off the tick loop (asset requests do blocking zip I/O); MAIN only for game state.
         registrar = registrar.executesOn(HandlerThread.NETWORK);
         registrar.playToServer(ApplySkinPayload.TYPE, ApplySkinPayload.CODEC, ApplySkinPayload::handleData);
         registrar.playToServer(RequestSkinAssetPayload.TYPE, RequestSkinAssetPayload.CODEC, RequestSkinAssetPayload::handleData);
         registrar.playToServer(RequestTranslationsPayload.TYPE, RequestTranslationsPayload.CODEC, RequestTranslationsPayload::handleData);
 
-        // Back to MAIN: these register bytes with the client's GL texture manager.
+        // MAIN: these register bytes with the GL texture manager.
         registrar = registrar.executesOn(HandlerThread.MAIN);
         registrar.playToClient(SkinAssetChunkPayload.TYPE, SkinAssetChunkPayload.CODEC, SkinAssetChunkPayload::handleData);
         registrar.playToClient(SkinAssetMissingPayload.TYPE, SkinAssetMissingPayload.CODEC, SkinAssetMissingPayload::handleData);
         registrar.playToClient(SkinAssetThrottledPayload.TYPE, SkinAssetThrottledPayload.CODEC, SkinAssetThrottledPayload::handleData);
     }
 
-    /** Fires on join and per {@code /reload}, exactly when default-unlocked skins can change. */
+    // Join and every /reload: the points where starter skins and owned roots' variants can change.
     private void onDatapackSync(OnDatapackSyncEvent event) {
-        // Only safe here: TACZ swaps in an empty common index during AddReloadListenerEvent and
-        // fills it as its own listeners apply, so availability cannot be judged before this point.
+        // Not earlier: TACZ's common index is empty until its own reload listeners have applied.
         SkinAvailability.invalidate();
         SkinAvailability.report(SkinManager.INSTANCE.getRawRegistry());
 
@@ -185,11 +183,13 @@ public class MCPSkins {
             Payloads.sendTo(event.getPlayer(), skinPayload);
             sendTranslations(event.getPlayer());
             SkinAttachment.grantDefaultUnlocks(event.getPlayer());
+            SkinAttachment.reconcileVariants(event.getPlayer());
         } else {
             PacketDistributor.sendToAllPlayers(skinPayload);
             for (ServerPlayer player : event.getPlayerList().getPlayers()) {
                 sendTranslations(player);
                 SkinAttachment.grantDefaultUnlocks(player);
+                SkinAttachment.reconcileVariants(player);
             }
         }
     }

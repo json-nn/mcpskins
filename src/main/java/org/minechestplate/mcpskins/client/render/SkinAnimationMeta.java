@@ -10,15 +10,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The {@code animation} block of a vanilla {@code .png.mcmeta}, with vanilla's shape and
- * defaults: frames are a square grid of {@code min(width, height)} read left to right, top to
- * bottom, so the common vertical strip needs no fields at all.
- * <p>
- * Anything malformed logs one line and leaves the texture static rather than failing the skin.
+ * A vanilla {@code .png.mcmeta} {@code animation} block with vanilla defaults (square frames of
+ * {@code min(width, height)}, row by row). Anything malformed logs once and leaves the texture static.
  */
 public record SkinAnimationMeta(int frameWidth, int frameHeight, List<Frame> frames, boolean interpolate) {
 
-    /** @param time how many ticks this frame holds */
     public record Frame(int index, int time) {
     }
 
@@ -32,10 +28,6 @@ public record SkinAnimationMeta(int frameWidth, int frameHeight, List<Frame> fra
         return total;
     }
 
-    /**
-     * @return the parsed animation, or null when the file has no {@code animation} block, is
-     *         malformed, or does not fit the image
-     */
     public static SkinAnimationMeta parse(byte[] mcmetaBytes, int imageWidth, int imageHeight, String debugName) {
         try {
             JsonElement root = JsonParser.parseString(new String(mcmetaBytes, StandardCharsets.UTF_8));
@@ -47,7 +39,7 @@ public record SkinAnimationMeta(int frameWidth, int frameHeight, List<Frame> fra
             int defaultTime = Math.max(1, optInt(animation, "frametime", 1));
             boolean interpolate = animation.has("interpolate") && animation.get("interpolate").getAsBoolean();
 
-            // Vanilla's rule: an unset axis falls back to the image, and unset both means square.
+            // Vanilla: an unset axis takes the image's, both unset means square.
             int declaredW = optInt(animation, "width", -1);
             int declaredH = optInt(animation, "height", -1);
             int frameWidth;

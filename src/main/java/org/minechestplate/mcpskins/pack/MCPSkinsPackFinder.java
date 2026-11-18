@@ -21,20 +21,15 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
- * Scans {@code mcpskins/} in the game dir for skin packs and registers them as required
- * data packs. Folders or .zip files with a {@code data/} tree at the root, no
- * {@code pack.mcmeta} needed.
- * <p>
- * Server-side only - registered for SERVER_DATA, never CLIENT_RESOURCES. Asset bytes
- * (textures, models) get streamed to clients on demand instead, see
- * {@code ServerSkinAssetStore}/{@code ClientSkinAssetCache}.
+ * Registers every folder or .zip in {@code <gamedir>/mcpskins/} with a {@code data/} tree as a
+ * forced data pack, no {@code pack.mcmeta} needed. Never a client resource pack: assets are
+ * streamed ({@code ServerSkinAssetStore}).
  */
 public enum MCPSkinsPackFinder implements RepositorySource {
     INSTANCE;
 
     private static final String FOLDER_NAME = MCPSkins.MOD_ID;
 
-    /** Always SERVER_DATA, see class javadoc. */
     private static final PackType PACK_TYPE = PackType.SERVER_DATA;
 
     @Override
@@ -75,7 +70,6 @@ public enum MCPSkinsPackFinder implements RepositorySource {
         return result;
     }
 
-    /** Builds a Pack for one folder/zip entry under mcpskins/, or null if it's not usable. */
     private Pack tryCreatePack(Path entry) {
         String fileName = entry.getFileName().toString();
         boolean isZip = Files.isRegularFile(entry) && fileName.toLowerCase(Locale.ROOT).endsWith(".zip");
@@ -93,7 +87,6 @@ public enum MCPSkinsPackFinder implements RepositorySource {
                     : new FilePackResources.FileResourcesSupplier(entry);
             raw = rawSupplier.openPrimary(locationInfo);
 
-            // Skip packs with no data/ content - nothing here for SkinManager to load.
             boolean hasContent = !raw.getNamespaces(PackType.SERVER_DATA).isEmpty();
             if (!hasContent) {
                 raw.close();

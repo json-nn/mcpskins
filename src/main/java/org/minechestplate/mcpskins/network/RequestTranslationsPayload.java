@@ -11,18 +11,14 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.minechestplate.mcpskins.MCPSkins;
 import org.minechestplate.mcpskins.skin.SkinTranslations;
 
-/**
- * Client-to-server: send me the skin translations for this locale. The client asks rather than
- * the server guessing, because the language can change mid-session and the client is the only
- * side that knows immediately.
- */
+/** Client to server: the translation table for this locale. Client-driven, since only it sees a language switch. */
 public record RequestTranslationsPayload(String locale) implements CustomPacketPayload {
     public static final Type<RequestTranslationsPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "request_translations"));
 
     private static final int MAX_LOCALE_LENGTH = 32;
 
-    /** A language switch is a menu click, so anything above this is not a person. */
+    // A language switch is a menu click.
     private static final int MAX_PER_SECOND = 4;
 
     public static final StreamCodec<FriendlyByteBuf, RequestTranslationsPayload> CODEC = StreamCodec.composite(
@@ -35,7 +31,7 @@ public record RequestTranslationsPayload(String locale) implements CustomPacketP
         return TYPE;
     }
 
-    /** Runs on the network thread; reads an immutable snapshot and sends, touching no game state. */
+    // Network thread: reads an immutable snapshot and touches no game state.
     public void handleData(IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player)) return;
         if (!ServerboundRateLimiter.allow(player.getUUID(), MAX_PER_SECOND)) return;

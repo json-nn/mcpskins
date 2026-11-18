@@ -6,10 +6,7 @@ import org.minechestplate.mcpskins.MCPSkins;
 import org.minechestplate.mcpskins.network.RequestTranslationsPayload;
 import org.minechestplate.mcpskins.skin.SkinTranslations;
 
-/**
- * Asks the server for translations matching this client's language, on login and on every
- * resource reload, which is what switching language triggers.
- */
+/** Requests this client's locale table on login and on every resource reload (a language switch reloads). */
 public final class ClientTranslationSync {
 
     private static String requestedLocale;
@@ -17,7 +14,6 @@ public final class ClientTranslationSync {
     private ClientTranslationSync() {
     }
 
-    /** Sends only when the language actually changed, unless {@code force}. */
     public static void request(boolean force) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.getConnection() == null) return;

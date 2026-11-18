@@ -12,16 +12,15 @@ import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Server-to-client packet that syncs the rarity table and the full skin registry, so every
- * client sees the same skins regardless of datapack access.
- * <p>
- * Both travel in one packet on purpose: skins reference rarities by id, and splitting them
- * would leave a window where the client holds skins whose tiers it can't resolve.
+ * Server to client: rarity table plus the whole skin registry, in one packet so a client never
+ * holds skins whose tier it cannot resolve. Every read and write is bounded; bump the registrar
+ * version in {@code MCPSkins} on any layout change.
  */
 public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
                                   Map<String, SkinDataModels.WeaponSkins> registryData) implements CustomPacketPayload {
@@ -45,21 +44,20 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
     private static final int MAX_RARITY_LENGTH = 64;
     private static final int MAX_DESCRIPTION_LENGTH = 512;
     private static final int MAX_LOCKED_TEXT_LENGTH = 256;
+    private static final int MAX_AUTHOR_LENGTH = 128;
+    private static final int MAX_SUBTITLE_LENGTH = 256;
+    private static final int MAX_VARIANTS = 64;
+    private static final int MAX_LEVELS = 64;
+    private static final int MAX_LEVEL_CONDITIONS = 8;
+    private static final int MAX_COUNTER_KEY_LENGTH = 32;
 
-    /**
-     * NeoForge caps clientbound payloads at ~1 MiB. There's no chunking fallback here - past
-     * the cap this silently fails to send and every client gets an empty registry.
-     */
+    // NeoForge caps clientbound payloads near 1 MiB, with no chunking: past it clients get an empty registry.
     private static final int SIZE_WARNING_THRESHOLD = 768 * 1024;
 
     private static volatile boolean oversizeWarningLogged = false;
     private static volatile boolean truncationWarningLogged = false;
 
-    /**
-     * Writes a string the reader will accept. The read side is bounded, the write side is not,
-     * so an over-long pack field would otherwise produce a packet every client fails to decode
-     * and get them all dropped at join.
-     */
+    // Truncates to the reader's bound; an over-long pack field would otherwise disconnect every client at join.
     private static void writeBounded(FriendlyByteBuf buffer, String value, int max) {
         String text = value == null ? "" : value;
         if (text.length() > max) {
@@ -71,6 +69,18 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
             }
         }
         buffer.writeUtf(text, max);
+    }
+
+    private static <T> List<T> capped(List<T> values, int max) {
+        if (values.size() <= max) {
+            return values;
+        }
+        if (!truncationWarningLogged) {
+            truncationWarningLogged = true;
+            MCPSkins.LOGGER.warn("[MCPSkins] A skin lists more than {} variants or levels; "
+                    + "the rest were left out of the sync to clients.", max);
+        }
+        return values.subList(0, max);
     }
 
     private static List<SkinDataModels.Rarity> readRarities(FriendlyByteBuf buffer) {
@@ -139,22 +149,57 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
                 int weight = buffer.readVarInt();
                 String lockedText = buffer.readUtf(MAX_LOCKED_TEXT_LENGTH);
                 boolean unlockedByDefault = buffer.readBoolean();
+                String author = buffer.readUtf(MAX_AUTHOR_LENGTH);
+                String subtitle = buffer.readUtf(MAX_SUBTITLE_LENGTH);
+                boolean limited = buffer.readBoolean();
+                String rootId = buffer.readUtf(MAX_ID_LENGTH);
+
+                int variantCount = readBoundedSize(buffer, MAX_VARIANTS, "variant count");
+                List<String> variants = new ArrayList<>();
+                for (int k = 0; k < variantCount; k++) {
+                    variants.add(buffer.readUtf(MAX_ID_LENGTH));
+                }
+
+                int levelCount = readBoundedSize(buffer, MAX_LEVELS, "level count");
+                List<SkinDataModels.SkinLevel> levels = new ArrayList<>();
+                for (int k = 0; k < levelCount; k++) {
+                    String variant = buffer.readUtf(MAX_ID_LENGTH);
+                    int conditionCount = readBoundedSize(buffer, MAX_LEVEL_CONDITIONS, "level condition count");
+                    Map<SkinDataModels.LevelCounter, Integer> requires = new EnumMap<>(SkinDataModels.LevelCounter.class);
+                    boolean known = true;
+                    for (int c = 0; c < conditionCount; c++) {
+                        SkinDataModels.LevelCounter counter =
+                                SkinDataModels.LevelCounter.byKey(buffer.readUtf(MAX_COUNTER_KEY_LENGTH));
+                        int value = buffer.readVarInt();
+                        if (counter == null) {
+                            known = false;
+                        } else {
+                            requires.put(counter, value);
+                        }
+                    }
+                    // An unknown counter would make the level read as reached, so drop the level.
+                    if (known && !requires.isEmpty()) {
+                        levels.add(new SkinDataModels.SkinLevel(variant, requires));
+                    }
+                }
+
                 skins.add(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection,
-                        description, isNew, weight, lockedText, unlockedByDefault));
+                        description, isNew, weight, lockedText, unlockedByDefault,
+                        author, subtitle, limited, variants, rootId, levels));
             }
             map.put(key, new SkinDataModels.WeaponSkins(baseGun, skins, target));
         }
         return map;
     }
 
-    /** An ordinal from a newer sender falls back to GUN rather than failing the whole packet. */
+    // On the wire as an ordinal, so SkinTarget is append-only; an unknown one falls back to GUN.
     private static SkinDataModels.SkinTarget readTarget(FriendlyByteBuf buffer) {
         int ordinal = buffer.readByte();
         SkinDataModels.SkinTarget[] values = SkinDataModels.SkinTarget.values();
         return ordinal >= 0 && ordinal < values.length ? values[ordinal] : SkinDataModels.SkinTarget.GUN;
     }
 
-    /** Reads a collection size and rejects it before it can drive any allocation or loop. */
+    // Rejects a size before it can drive an allocation or loop.
     private static int readBoundedSize(FriendlyByteBuf buffer, int max, String what) {
         int size = buffer.readVarInt();
         if (size < 0 || size > max) {
@@ -183,6 +228,28 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
                 buffer.writeVarInt(skin.weight());
                 writeBounded(buffer, skin.lockedText(), MAX_LOCKED_TEXT_LENGTH);
                 buffer.writeBoolean(skin.unlockedByDefault());
+                writeBounded(buffer, skin.author(), MAX_AUTHOR_LENGTH);
+                writeBounded(buffer, skin.subtitle(), MAX_SUBTITLE_LENGTH);
+                buffer.writeBoolean(skin.limited());
+                writeBounded(buffer, skin.rootId(), MAX_ID_LENGTH);
+
+                List<String> variants = capped(skin.variants(), MAX_VARIANTS);
+                buffer.writeVarInt(variants.size());
+                for (String variant : variants) {
+                    writeBounded(buffer, variant, MAX_ID_LENGTH);
+                }
+
+                List<SkinDataModels.SkinLevel> levels = capped(skin.levels(), MAX_LEVELS);
+                buffer.writeVarInt(levels.size());
+                for (SkinDataModels.SkinLevel level : levels) {
+                    writeBounded(buffer, level.variant(), MAX_ID_LENGTH);
+                    // At most one per LevelCounter, under the cap.
+                    buffer.writeVarInt(level.requires().size());
+                    for (Map.Entry<SkinDataModels.LevelCounter, Integer> condition : level.requires().entrySet()) {
+                        writeBounded(buffer, condition.getKey().key(), MAX_COUNTER_KEY_LENGTH);
+                        buffer.writeVarInt(condition.getValue());
+                    }
+                }
             }
         }
 
@@ -204,7 +271,7 @@ public record SyncRegistryPayload(List<SkinDataModels.Rarity> rarities,
 
     public void handleData(IPayloadContext context) {
         context.enqueueWork(() -> {
-            // Rarities first - skins resolve their tier through RarityManager.
+            // Rarities first: skins resolve their tier through RarityManager.
             RarityManager.INSTANCE.syncFromNetwork(rarities);
             SkinManager.INSTANCE.syncFromNetwork(registryData);
         });

@@ -8,12 +8,7 @@ import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import org.minechestplate.mcpskins.MCPSkins;
 
-/**
- * Registers the custom {@code mcpskins:skin_id} data component, which stores the
- * currently applied skin ID on an item stack. It's persistent (saved to NBT) and
- * network-synchronized, so the value always comes from the server and can't be
- * spoofed by the client.
- */
+/** {@code mcpskins:skin_id}: the applied skin on a stack. Persistent and synced; GunId is never touched. */
 public class SkinComponents {
     public static final DeferredRegister<DataComponentType<?>> DATA_COMPONENTS =
             DeferredRegister.create(Registries.DATA_COMPONENT_TYPE, MCPSkins.MOD_ID);

@@ -1,23 +1,9 @@
-"""Generates the Armory GUI texture set.
+"""Generates the Armory GUI sprites. Run from the repository root: python tools/armory_textures.py
 
-Run from the repository root:  python tools/armory_textures.py
-
-Art direction is "gunmetal armory": dark oiled steel, a soft top-light bevel,
-fine brushed grain and light edge wear. Rarity colour is the only chroma on the
-screen, so every sprite here is neutral. The white ones (row, tile_ring,
-rule_fade, glow, the icons) are pure white with shaped alpha and get tinted at
-draw time through RenderSystem.setShaderColor.
-
-Two constraints come from how Minecraft 1.21.1 draws a nine-slice, and both are
-load-bearing:
-
-  * The inner region is always TILED, never stretched. Its content has to be
-    near-uniform or the repeat shows across a wide panel. No gradients here -
-    the screen draws those with fillGradient instead.
-  * Borders clamp to half the target size, so a 12px row with an 8px border
-    would crop its own art. Small controls use a 4px border.
-
-Both sprite sizes leave a 128px inner region: 144 - 8 - 8 and 136 - 4 - 4.
+Sprites are neutral steel (rarity colour is the only chroma); white ones are tinted at draw time.
+1.21.1 nine-slices tile their inner region, so interiors stay near-uniform (gradients are drawn
+with fillGradient), and borders clamp to half the target size, so small controls use a 4px border.
+Both sizes leave a 128px interior. See docs/ai/ui.md.
 """
 
 import json
@@ -51,11 +37,7 @@ def canvas(size):
 
 
 def grain(img, amount=4, seed=SEED):
-    """Brushed-steel streaks: strong along y, near-constant along x.
-
-    Constant along x means the inner region tiles horizontally with no seam,
-    which is the direction a wide panel repeats in.
-    """
+    """Brushed-steel streaks, constant along x so a wide panel tiles without a seam."""
     rng = np.random.default_rng(seed)
     a = np.array(img, dtype=np.int16)
     h, w = a.shape[:2]
@@ -68,8 +50,7 @@ def grain(img, amount=4, seed=SEED):
 
 
 def bevel(draw, size, radius, light, dark, recessed=False):
-    """One-pixel inner highlight and shadow. This is the whole read of raised
-    versus sunk, so it goes on last, over the grain."""
+    """One-pixel inner highlight and shadow; goes on last, over the grain."""
     top, bottom = (dark, light) if recessed else (light, dark)
     draw.line([(radius, 1), (size - radius - 1, 1)], fill=top + (150,))
     draw.line([(1, radius), (1, size - radius - 1)], fill=top + (110,))
@@ -78,8 +59,7 @@ def bevel(draw, size, radius, light, dark, recessed=False):
 
 
 def rivets(draw, size, inset=4):
-    """Corner bosses. A nine-slice draws each corner exactly once, so this is
-    the only place a distinctive mark can sit without repeating."""
+    """Corner bosses: corners are the only nine-slice part drawn exactly once."""
     corners = ((inset, inset), (size - 1 - inset, inset),
                (inset, size - 1 - inset), (size - 1 - inset, size - 1 - inset))
     for cx, cy in corners:
@@ -95,8 +75,7 @@ def plate(size, radius, base, alpha, recessed=False, grain_amount=4, seed=SEED):
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius,
                         outline=(6, 7, 9, 235), width=1)
-    # Snapshot before the bevel: ImageDraw replaces pixels instead of compositing, so its
-    # lines would punch their own alpha into a see-through plate. It may tint, not thin.
+    # ImageDraw replaces pixels rather than compositing, so keep the plate's alpha across the bevel.
     solid = img.getchannel("A")
     bevel(d, size, radius, STEEL_LIT, STEEL_DIM, recessed)
     img.putalpha(solid)
@@ -104,20 +83,14 @@ def plate(size, radius, base, alpha, recessed=False, grain_amount=4, seed=SEED):
 
 
 def tray_plate(size, radius, base, alpha, shadow=3):
-    """A plate with its drop shadow baked into the outer border.
-
-    The carousel sits over a live screen rather than a dimmed one, so its backing has to be
-    dark, see-through and self-contained: no code-side tint or shadow fill, which a resource
-    pack could not override.
-    """
+    """A plate with its drop shadow baked into the border, so a resource pack controls all of it."""
     img = canvas(size)
     d = ImageDraw.Draw(img)
-    # Filled rings, not nested outlines: consecutive 1px arcs miss each other on the corner
-    # diagonal and leave pinholes, which show as bright specks over a live screen.
+    # Filled rings, not nested 1px outlines, which leave pinholes on the corner diagonal.
     for i in range(shadow):
         d.rounded_rectangle([i, i, size - 1 - i, size - 1 - i],
                             radius=radius + shadow - i, fill=(0, 0, 0, 26 + i * 26))
-    # Clear the plate's footprint so the shadow never stacks up behind a see-through plate.
+    # Clear the plate's footprint so the shadow does not show through it.
     d.rounded_rectangle([shadow, shadow, size - 1 - shadow, size - 1 - shadow],
                         radius=radius, fill=(0, 0, 0, 0))
     inner = plate(size - shadow * 2, radius, base, alpha, grain_amount=3, seed=SEED + 5)

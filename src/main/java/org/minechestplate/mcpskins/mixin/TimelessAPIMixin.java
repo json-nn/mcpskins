@@ -22,9 +22,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.util.Optional;
 
 /**
- * Swaps a skin's texture, icon, HUD icons and geometry into TACZ's display lookups when the
- * stack carries a {@link SkinComponents#SKIN_ID}. The item's own id never changes, only what
- * renders for it. Every override is optional and falls back to the base asset.
+ * Swaps a skin's texture, icon, HUD icons, geometry and animations into TACZ's display lookups for
+ * stacks with {@link SkinComponents#SKIN_ID}. GunId never changes. Runs every frame; see
+ * docs/ai/tacz-integration.md.
  */
 @Mixin(TimelessAPI.class)
 public class TimelessAPIMixin {
@@ -54,7 +54,6 @@ public class TimelessAPIMixin {
         ResourceLocation model = baseModelLocation != null ? SkinAssetResolver.resolveModel(baseModelLocation, skinId) : null;
         boolean hasModel = model != null;
 
-        // Null when the fork isn't reflection-compatible or the weapon has no "lod" block.
         ResourceLocation baseLodModelLocation = GunModelPatcher.getBaseLodModelLocation(base);
         ResourceLocation lodModel = baseLodModelLocation != null ? SkinAssetResolver.resolveModel(baseLodModelLocation, skinId) : null;
         boolean hasLodModel = lodModel != null;
@@ -64,6 +63,13 @@ public class TimelessAPIMixin {
                 ? SkinAssetResolver.resolveLodTexture(MCPSkins.MOD_ID, baseGunId, skinId, baseLodTexture) : null;
         boolean hasLodTexture = lodTexture != null && !lodTexture.equals(baseLodTexture);
 
+        // A gun with no animation file of its own still takes a skin's.
+        ResourceLocation animation = GunModelPatcher.isAnimationOverrideSupported(base)
+                ? SkinAssetResolver.resolveAnimation(MCPSkins.MOD_ID, baseGunId, skinId,
+                        GunModelPatcher.getBaseAnimationLocation(base))
+                : null;
+        boolean hasAnimation = animation != null;
+
         ResourceLocation baseHud = GunDisplayInstancePatcher.getHud(base);
         ResourceLocation hud = SkinAssetResolver.resolveHud(MCPSkins.MOD_ID, baseGunId, skinId, baseHud);
         boolean hasHud = hud != null && !hud.equals(baseHud);
@@ -72,17 +78,18 @@ public class TimelessAPIMixin {
         ResourceLocation hudEmpty = SkinAssetResolver.resolveHudEmpty(MCPSkins.MOD_ID, baseGunId, skinId, baseHudEmpty);
         boolean hasHudEmpty = hudEmpty != null && !hudEmpty.equals(baseHudEmpty);
 
-        if (!hasTexture && !hasModel && !hasLodModel && !hasLodTexture && !hasHud && !hasHudEmpty) {
-            return; // nothing for this skin in any active resource pack
+        if (!hasTexture && !hasModel && !hasLodModel && !hasLodTexture && !hasAnimation && !hasHud && !hasHudEmpty) {
+            return;
         }
 
         String cacheKey = baseGunId + '\u0000' + skinId;
 
-        // Geometry first; texture/icon/HUD layer on top of whatever base that produced.
+        // Geometry and animations first; texture, icon and HUD layer on top of that.
         GunDisplayInstance patchBase = base;
-        if (hasModel || hasLodModel || hasLodTexture) {
+        if (hasModel || hasLodModel || hasLodTexture || hasAnimation) {
             GunDisplayInstance geoInstance = GunModelPatcher.getOrCreate(cacheKey, base, stack,
-                    hasModel ? model : null, hasLodModel ? lodModel : null, hasLodTexture ? lodTexture : null);
+                    hasModel ? model : null, hasLodModel ? lodModel : null, hasLodTexture ? lodTexture : null,
+                    animation);
             if (geoInstance != null) {
                 patchBase = geoInstance;
             }
@@ -96,29 +103,23 @@ public class TimelessAPIMixin {
         ResourceLocation hudEmptyOverride = hasHudEmpty ? hudEmpty : null;
 
         if (textureOverride == null && iconOverride == null && hudOverride == null && hudEmptyOverride == null) {
-            // Geometry only - patchBase is already the final result
             if (patchBase != base) {
                 cir.setReturnValue(Optional.of(patchBase));
             }
             return;
         }
 
-        // Cached since this runs on essentially every render frame
-        GunDisplayInstance patched = PatchedGunDisplayCache.getOrCreate(cacheKey, patchBase, textureOverride, iconOverride, hudOverride, hudEmptyOverride);
+        GunDisplayInstance patched = PatchedGunDisplayCache.getOrCreate(cacheKey, patchBase,
+                patchBase != base ? patchBase : null, textureOverride, iconOverride, hudOverride, hudEmptyOverride);
         if (patched != null) {
             cir.setReturnValue(Optional.of(patched));
         } else if (patchBase != base) {
-            // Patch not ready - show correct geometry on the base texture until it resolves.
+            // Texture patch not ready: show the new geometry on the base texture meanwhile.
             cir.setReturnValue(Optional.of(patchBase));
         }
-        // If both fall through, the original unskinned instance stands.
     }
 
-    /**
-     * The attachment lookup is keyed by id, not by stack, so the stack's skin arrives through
-     * {@link AttachmentSkinContext}. Always consumed, hit or miss, so nothing carries over to
-     * the next lookup.
-     */
+    // Keyed by id, so the skin arrives through AttachmentSkinContext; always consumed, hit or miss.
     @Inject(
             method = "getClientAttachmentIndex",
             at = @At("RETURN"),

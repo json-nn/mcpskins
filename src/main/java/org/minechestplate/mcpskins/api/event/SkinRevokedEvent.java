@@ -4,12 +4,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.Event;
 import org.minechestplate.mcpskins.api.RevokeSource;
 
-/**
- * Fired on {@code NeoForge.EVENT_BUS}, server side, once per skin actually removed from a
- * player. Clearing a player's whole set fires one of these per skin they had.
- * <p>
- * Not cancellable: it reports a change that already happened.
- */
+/** Server side, on {@code NeoForge.EVENT_BUS}, once per skin actually removed. Not cancellable. */
 public class SkinRevokedEvent extends Event {
 
     private final ServerPlayer player;

@@ -27,12 +27,9 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
- * Reads asset bytes (textures, geo-models) out of the server's mcpskins/ folder and ships
- * them to clients on request. Two-layer lookup: a small LRU {@link #hotCache} of already
- * compressed payloads, backed by {@link #index}, a path -&gt; source map built on scan.
- * <p>
- * Client-supplied paths are only ever used as a lookup key, never as a real filesystem
- * path - a bad key just gets a cache miss.
+ * Serves skin pack assets from the server's mcpskins/ folder on request: an LRU {@link #hotCache}
+ * of compressed bytes over {@link #index} (key to file or zip entry, built on reload). Client
+ * paths are only ever index keys, never filesystem paths.
  */
 public final class ServerSkinAssetStore implements PreparableReloadListener {
     public static final ServerSkinAssetStore INSTANCE = new ServerSkinAssetStore();
@@ -40,23 +37,19 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     private static final String FOLDER_NAME = MCPSkins.MOD_ID;
     private static final String ASSETS_PREFIX = "assets/";
 
-    /** Stays under NeoForge's ~1 MiB clientbound payload cap. */
+    // Under NeoForge's clientbound payload cap (about 1 MiB).
     public static final int CHUNK_SIZE = 256 * 1024;
 
-    /**
-     * Mainly for the receiving side: {@code totalChunks} is an unbounded VAR_INT that sizes the
-     * client's reassembly array. Enforced on send too, so an oversized pack file fails here.
-     */
+    // Bounds the client's reassembly array (totalChunks is a VAR_INT); enforced on send too.
     public static final int MAX_CHUNKS = 64;
 
     public static final int MAX_ASSET_BYTES = MAX_CHUNKS * CHUNK_SIZE;
 
     private static final int HOT_CACHE_CAPACITY = 512;
 
-    /** Per-player rate limit - way above normal usage, just here to blunt a spammy client. */
     private static final int MAX_REQUESTS_PER_SECOND = 200;
 
-    /** The request cap bounds no I/O: a cached asset re-requested still buffers out to netty. */
+    // The request cap alone bounds no I/O: re-requesting a cached asset still buffers out to netty.
     private static final long MAX_BYTES_PER_SECOND = 2L * 1024 * 1024;
 
     private record AssetSource(Path plainFile, Path zipFile, String zipEntryName) {
@@ -164,12 +157,6 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
         }
     }
 
-    /**
-     * Heuristic, so authors hear about an undeliverable asset at reload rather than at first
-     * render: this is the uncompressed size, while {@link #sendChunks} checks the compressed one.
-     *
-     * @param sizeBytes uncompressed size, or negative if unknown
-     */
     private static void warnIfOversized(String key, long sizeBytes) {
         if (sizeBytes > MAX_ASSET_BYTES) {
             MCPSkins.LOGGER.warn(
@@ -197,10 +184,7 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     }
 
 
-    /**
-     * Serves one asset request. Runs on a netty thread ({@code HandlerThread.NETWORK}), so
-     * nothing may escape - an exception here can take the connection with it.
-     */
+    // Netty thread (HandlerThread.NETWORK): nothing may escape, or it can take the connection down.
     public void handleRequest(ServerPlayer player, String path) {
         try {
             if (path == null || path.isBlank()) return;
@@ -222,7 +206,7 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
                 hotCache.put(path, compressed);
             }
 
-            // Charged once the size is known, so the budget tracks bytes, not requests.
+            // Charged once the size is known, so the budget tracks bytes.
             if (rate.bytes.addAndGet(compressed.length) > MAX_BYTES_PER_SECOND) {
                 sendThrottled(player, path);
                 return;
@@ -234,7 +218,6 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
         }
     }
 
-    /** This player's counters for the current one-second window, rolled over if stale. */
     private RateState rollingWindow(UUID player) {
         long nowSecond = System.currentTimeMillis() / 1000L;
         RateState state = rateLimits.computeIfAbsent(player, k -> new RateState());
@@ -250,21 +233,17 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
         return state;
     }
 
-    /** Always replies - silence here strands the client's request forever. */
+    // Always reply: silence strands the client's request.
     private static void sendThrottled(ServerPlayer player, String path) {
         long now = System.currentTimeMillis();
-        // Time left in this window, plus margin so the retry doesn't race the boundary.
         int retryAfter = (int) (1000L - (now % 1000L)) + 250;
         PacketDistributor.sendToPlayer(player, new SkinAssetThrottledPayload(path, retryAfter));
     }
 
     private final Map<Path, ZipFile> openZips = new HashMap<>();
 
-    /**
-     * Reads arrive on netty threads while {@link #closeOpenZips()} runs on the game executor.
-     * The lock spans the whole lookup-and-read: a handle closed mid-use throws
-     * {@link IllegalStateException}, which is not an {@link IOException} and escaped the catch.
-     */
+    // Netty-thread reads against closeOpenZips() on the game executor. Spans lookup and
+    // read: a handle closed mid-use throws IllegalStateException, which the IOException catch misses.
     private final ReadWriteLock zipLock = new ReentrantReadWriteLock();
 
     private byte[] readBytes(String key) {
@@ -285,8 +264,7 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     private byte[] readZipEntry(String key, AssetSource source) throws IOException {
         zipLock.readLock().lock();
         try {
-            // Kept open across requests: opening a ZipFile parses its whole central directory.
-            // Synchronized per handle, since ZipFile promises nothing about concurrent reads.
+            // Kept open (opening parses the central directory); synchronized per handle, as ZipFile promises no concurrent reads.
             ZipFile zip;
             synchronized (openZips) {
                 zip = openZips.computeIfAbsent(source.zipFile(), ServerSkinAssetStore::openZipQuietly);
@@ -305,13 +283,7 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
         }
     }
 
-    /**
-     * Stops {@code readAllBytes} pulling a runaway file into the heap before
-     * {@link #sendChunks} can reject it. Looser than {@link #MAX_ASSET_BYTES}, since JSON
-     * compresses well enough that a much larger raw file still fits.
-     *
-     * @param sizeBytes uncompressed size, or negative if unknown (read is allowed)
-     */
+    // Four times MAX_ASSET_BYTES, since JSON compresses well.
     private static boolean isTooLargeToRead(String key, long sizeBytes) {
         long limit = (long) MAX_ASSET_BYTES * 4;
         if (sizeBytes > limit) {
@@ -331,7 +303,7 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
         }
     }
 
-    /** On reload, so a stale handle never serves bytes from a pack that has changed. */
+    // On reload, so a stale handle never serves a changed pack.
     private void closeOpenZips() {
         zipLock.writeLock().lock();
         try {
@@ -366,7 +338,6 @@ public final class ServerSkinAssetStore implements PreparableReloadListener {
     private void sendChunks(ServerPlayer player, String path, byte[] compressed) {
         int totalChunks = Math.max(1, (compressed.length + CHUNK_SIZE - 1) / CHUNK_SIZE);
         if (totalChunks > MAX_CHUNKS) {
-            // A pack-authoring problem the admin needs to see, hence error level.
             MCPSkins.LOGGER.error(
                     "[MCPSkins] Skin asset '{}' is {} bytes compressed, over the {} byte limit - not sending. "
                             + "Shrink the file or raise MAX_CHUNKS.",

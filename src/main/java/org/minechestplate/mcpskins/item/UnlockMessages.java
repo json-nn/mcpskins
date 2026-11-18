@@ -13,14 +13,14 @@ import org.minechestplate.mcpskins.skin.SkinManager;
 import org.minechestplate.mcpskins.skin.SkinTranslations;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
-/** Chat feedback for unlocking and fusing, built in the recipient's own language. */
-final class UnlockMessages {
+/** Chat feedback for unlocking, fusing and leveling, built in the recipient's own language. */
+public final class UnlockMessages {
 
     private UnlockMessages() {
     }
 
-    /** The player's own language, so server-sent text matches what their Armory shows. */
-    static String localeOf(Player player) {
+    // The player's own language, so server-sent text matches what their Armory shows.
+    public static String localeOf(Player player) {
         return player instanceof ServerPlayer server
                 ? server.clientInformation().language()
                 : SkinTranslations.DEFAULT_LOCALE;
@@ -48,7 +48,13 @@ final class UnlockMessages {
                 : Component.translatable("message.mcpskins.fuse_success_for", from, skin, gun));
     }
 
-    /** Hoverable preview of the weapon wearing this skin, or null when TACZ has no such gun. */
+    public static Component levelUp(String locale, SkinDataModels.SkinEntry root, int level,
+                                    SkinDataModels.SkinEntry variant) {
+        return Component.translatable("message.mcpskins.level_up",
+                        skinName(locale, root), level, skinName(locale, variant))
+                .withStyle(ChatFormatting.GOLD);
+    }
+
     private static Component gunName(SkinDataModels.SkinLookupResult lookup) {
         ItemStack previewGun = TACZSkinHelper.createGunStack(lookup.weapon().baseGun(), lookup.skin().id());
         if (previewGun.isEmpty()) return null;
@@ -62,7 +68,7 @@ final class UnlockMessages {
         return message.withStyle(ChatFormatting.GREEN);
     }
 
-    /** Rarity-coloured and clickable, so the player can jump straight to it in the Armory. */
+    // Rarity coloured; clicking opens it in the Armory.
     static Component skinName(String locale, SkinDataModels.SkinEntry skin) {
         return Component.literal(SkinTranslations.text(locale, SkinTranslations.skinKey(skin.id(), "name"), skin.name()))
                 .withStyle(style -> style

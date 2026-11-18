@@ -7,9 +7,8 @@ public enum UnlockResult {
     /** No such skin in {@link org.minechestplate.mcpskins.skin.SkinManager}, or a {@code default:} entry. */
     UNKNOWN_SKIN,
     /**
-     * The skin exists, but TACZ has not loaded the gun or attachment it belongs to, so granting it
-     * would hand out something the player could never see. Install the matching gunpack, or turn
-     * off {@code hideUnavailableSkins} in the server config.
+     * The skin exists, but TACZ has not loaded its gun or attachment. Not returned while
+     * {@code hideUnavailableSkins} is off in the server config.
      */
     UNAVAILABLE,
     /** A listener cancelled {@code SkinUnlockEvent.Pre}. */

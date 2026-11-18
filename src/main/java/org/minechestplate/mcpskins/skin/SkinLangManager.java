@@ -16,12 +16,8 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Loads translations from {@code data/<namespace>/skin_lang/<locale>.json}, one flat
- * {@code key: value} object per locale, the same shape a resource pack's language file uses.
- * <p>
- * Every pack contributes to the same locale, so a translation pack can ship nothing but a
- * language file for someone else's skins. Packs are merged in a fixed order and a later one
- * wins a duplicate key, which is what lets a server override a pack's wording.
+ * Loads {@code data/<namespace>/skin_lang/<locale>.json} (flat key to string objects), merged
+ * across packs in sorted id order; a later file wins a duplicate key.
  */
 public class SkinLangManager extends SimpleJsonResourceReloadListener {
     public static final SkinLangManager INSTANCE = new SkinLangManager();
@@ -34,7 +30,6 @@ public class SkinLangManager extends SimpleJsonResourceReloadListener {
     protected void apply(Map<ResourceLocation, JsonElement> files, ResourceManager resourceManager, ProfilerFiller profiler) {
         Map<String, Map<String, String>> byLocale = new HashMap<>();
 
-        // Sorted so two packs defining the same key resolve the same way every reload.
         List<ResourceLocation> ordered = new ArrayList<>(files.keySet());
         ordered.sort(ResourceLocation::compareTo);
 
@@ -64,7 +59,6 @@ public class SkinLangManager extends SimpleJsonResourceReloadListener {
         }
     }
 
-    /** The file name is the locale, so {@code data/mypack/skin_lang/ru_ru.json} is ru_ru. */
     private static String localeOf(ResourceLocation location) {
         String path = location.getPath();
         int slash = path.lastIndexOf('/');

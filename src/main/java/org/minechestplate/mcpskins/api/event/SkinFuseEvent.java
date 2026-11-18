@@ -9,12 +9,7 @@ import org.minechestplate.mcpskins.skin.SkinManager;
 
 import java.util.List;
 
-/**
- * Fired on {@code NeoForge.EVENT_BUS}, server side, around a skin fusion.
- *
- * @see Pre
- * @see Post
- */
+/** Server side, on {@code NeoForge.EVENT_BUS}, around a skin fusion. */
 public abstract class SkinFuseEvent extends Event {
 
     private final ServerPlayer player;
@@ -28,10 +23,8 @@ public abstract class SkinFuseEvent extends Event {
     }
 
     /**
-     * After every check has passed and the result has been rolled, but before anything is
-     * consumed. This is the hook for pity rules and weighted overrides.
-     * <p>
-     * Cancelling consumes nothing, hands out nothing, and tells the player the fuse was blocked.
+     * After every check and the roll, before anything is consumed. Cancelling consumes and grants
+     * nothing and tells the player the fuse was blocked.
      */
     public static class Pre extends SkinFuseEvent implements ICancellableEvent {
 
@@ -48,12 +41,10 @@ public abstract class SkinFuseEvent extends Event {
             this.resultSkinId = rolledSkinId;
         }
 
-        /** The rarity being spent. */
         public String getRarityId() {
             return rarityId;
         }
 
-        /** The skin on the item the player was holding. */
         public String getHeldSkinId() {
             return heldSkinId;
         }
@@ -68,11 +59,7 @@ public abstract class SkinFuseEvent extends Event {
             return resultSkinId;
         }
 
-        /**
-         * Replaces the rolled skin. A null, unknown or {@code default:} id is refused with a
-         * warning in the log and the roll stands, so a bad script cannot hand out a skin that
-         * does not exist.
-         */
+        /** Replaces the rolled skin. A null, unknown or {@code default:} id is logged and ignored; the roll stands. */
         public void setResultSkinId(String skinId) {
             if (skinId == null || SkinAttachment.isDefaultEntry(skinId)
                     || SkinManager.INSTANCE.findSkin(skinId) == null) {

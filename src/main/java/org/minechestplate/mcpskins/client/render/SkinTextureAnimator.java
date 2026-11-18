@@ -18,13 +18,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Animates skin textures by uploading frames into a texture the game already owns.
- * <p>
- * Deliberately does not wrap or subclass the texture. A skin texture must stay a plain
- * {@code SimpleTexture} for a shader mod to attach PBR maps to it: a subclass was tried and
- * measured, and Iris stopped requesting the maps altogether.
- * <p>
- * One shared counter drives every animation, so they stay in step and none drift after a stall.
+ * Animates skin textures by uploading frames to the registered texture's GL id. Never wrap or
+ * subclass it: a skin texture must stay a plain {@code SimpleTexture} or shaders stop loading PBR
+ * maps. One shared tick counter keeps every animation in step.
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, value = Dist.CLIENT)
 public final class SkinTextureAnimator {
@@ -47,12 +43,7 @@ public final class SkinTextureAnimator {
     private SkinTextureAnimator() {
     }
 
-    /**
-     * Takes over an already registered texture: resizes it to one frame and draws the first.
-     *
-     * @param pngBytes the full frame strip, as delivered
-     * @param meta     null for a static texture, which just clears any previous animation
-     */
+    // pngBytes is the full frame strip; a null meta just clears any previous animation.
     public static void register(ResourceLocation location, byte[] pngBytes, SkinAnimationMeta meta) {
         forget(location);
         if (meta == null) return;
@@ -95,7 +86,6 @@ public final class SkinTextureAnimator {
             try {
                 advance(entry.getKey(), entry.getValue());
             } catch (RuntimeException e) {
-                // One bad texture must not take the render thread down with it.
                 forget(entry.getKey());
                 MCPSkins.LOGGER.warn("[MCPSkins] Dropping animated texture '{}' after an upload failure.",
                         entry.getKey(), e);
@@ -118,7 +108,7 @@ public final class SkinTextureAnimator {
             elapsed += time;
         }
 
-        // Quantised, so a still frame costs no upload and interpolation costs at most one a tick.
+        // Quantised: a still frame costs no upload, interpolation at most one a tick.
         int blend = meta.interpolate()
                 ? (position - elapsed) * 100 / Math.max(1, meta.frames().get(frameIndex).time())
                 : 0;
@@ -132,7 +122,6 @@ public final class SkinTextureAnimator {
                 blend / 100.0f);
     }
 
-    /** Writes a scratch frame and uploads it; the strip stays the source of truth. */
     private static void upload(ResourceLocation location, Animation animation, int from, int to, float progress) {
         SkinAnimationMeta meta = animation.meta;
         int fw = meta.frameWidth();
@@ -168,7 +157,7 @@ public final class SkinTextureAnimator {
         return texture.getId();
     }
 
-    /** NativeImage packs pixels as ABGR, so every channel interpolates the same way. */
+    // Per byte, so the ABGR channel order does not matter.
     private static int lerp(int from, int to, float progress) {
         int out = 0;
         for (int shift = 0; shift < 32; shift += 8) {

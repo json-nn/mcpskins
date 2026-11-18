@@ -20,12 +20,8 @@ import java.io.InputStream;
 import java.util.Optional;
 
 /**
- * Lets the player drag the refit toggle button anywhere on screen before saving.
- * <p>
- * The backdrop is whatever the player drops in as
- * {@code assets/mcpskins/textures/gui/setting.png}, a screenshot of TACZ's refit screen being the
- * obvious choice. The attachment slot row on top comes from TACZ's real textures at its real
- * position (see {@link TACZAttachmentRowPreview}), and that is what the button lines up against.
+ * Drag-to-place picker for the refit toggle. The optional backdrop is a resource pack's
+ * {@code assets/mcpskins/textures/gui/setting.png}; the real alignment reference is {@link TACZAttachmentRowPreview}.
  */
 public class RefitButtonPositionScreen extends Screen {
 
@@ -37,10 +33,9 @@ public class RefitButtonPositionScreen extends Screen {
     private static final int DEFAULT_OFFSET_X = 120;
     private static final int DEFAULT_OFFSET_Y = 10;
 
-    // Mirrors TACZRefitSkinOverlay.LABEL_Y_NUDGE
+    // Keep equal to TACZRefitSkinOverlay.LABEL_Y_NUDGE.
     private static final int LABEL_Y_NUDGE = -2;
 
-    // Native pixel size of setting.png, resolved once. -1 = not resolved yet, 0 = missing.
     private static int backgroundWidth = -1;
     private static int backgroundHeight = -1;
 
@@ -139,7 +134,7 @@ public class RefitButtonPositionScreen extends Screen {
 
         boolean hovered = !dragging && mouseX >= workingX0 && mouseX <= workingX0 + workingSize
                 && mouseY >= workingY0 && mouseY <= workingY0 + workingSize;
-        // active=false: no "skin mode on" here, so the lit state follows hover and drag only.
+        // No skin mode here: lit follows hover and drag only.
         RefitToggleButtonRenderer.render(guiGraphics, workingX0, workingY0, workingSize, hovered || dragging, false);
 
         if ((hovered || dragging) && MCPSkinsClientConfig.refitButtonTooltip()) {
@@ -156,10 +151,6 @@ public class RefitButtonPositionScreen extends Screen {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
     }
 
-    /**
-     * Live readout of the button's current position and the anchor/offset pair that
-     * {@link #save()} would write right now.
-     */
     private void drawCoordinateReadout(GuiGraphics guiGraphics) {
         ScreenAnchor liveAnchor = ScreenAnchor.nearest(workingX0, workingY0, workingSize, workingSize, this.width, this.height);
         int liveOffsetX = liveAnchor.offsetXFor(this.width, workingSize, workingX0);
@@ -181,7 +172,7 @@ public class RefitButtonPositionScreen extends Screen {
         }
     }
 
-    /** Called on resource reload so a changed setting.png is picked up without a restart. */
+    // Resource reload hook, so a changed setting.png is picked up.
     public static void clearBackgroundCache() {
         backgroundWidth = -1;
         backgroundHeight = -1;
@@ -204,7 +195,7 @@ public class RefitButtonPositionScreen extends Screen {
         }
     }
 
-    /** No-op: the vanilla blur would sit under our own opaque fill. */
+    // No-op: skips the vanilla blur under our opaque fill.
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
     }

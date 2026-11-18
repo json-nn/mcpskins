@@ -18,6 +18,7 @@ import org.minechestplate.mcpskins.client.render.GunModelPatcher;
 import org.minechestplate.mcpskins.client.render.AttachmentSkinPatcher;
 import org.minechestplate.mcpskins.client.render.LrDisplayPatcher;
 import org.minechestplate.mcpskins.client.render.PatchedGunDisplayCache;
+import org.minechestplate.mcpskins.client.render.SkinAnimationInjector;
 import org.minechestplate.mcpskins.client.render.SkinAssetResolver;
 import org.minechestplate.mcpskins.client.render.TaczGeoModelInjector;
 import org.minechestplate.mcpskins.item.ModItems;
@@ -27,14 +28,10 @@ import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
 import java.util.concurrent.CompletableFuture;
 
-/**
- * Client-side setup: resource reload listeners, item tint handlers, key mapping
- * registration, and the mod list "Config" button.
- */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, bus = EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public class ClientModEvents {
 
-    /** Clears client-side skin caches on every resource reload so a resource pack change can't leave stale data behind. */
+    // Clears skin caches on every resource reload. Keep in step with ClientNetworkEvents.
     @SubscribeEvent
     public static void registerReloadListeners(RegisterClientReloadListenersEvent event) {
         event.registerReloadListener((PreparableReloadListener) (preparationBarrier, resourceManager,
@@ -42,9 +39,7 @@ public class ClientModEvents {
                                                                  backgroundExecutor, gameExecutor) ->
                 CompletableFuture.completedFuture((Void) null)
                         .thenCompose(preparationBarrier::wait)
-                        // All on gameExecutor. Closing a DynamicTexture is a GL call, and the
-                        // render thread touches these caches every frame - clearing them off
-                        // the background executor raced it. None of this is worth a hop.
+                        // gameExecutor: texture release is a GL call and the render thread reads these caches every frame.
                         .thenRunAsync(() -> {
                             SkinAssetResolver.clearCache();
                             PatchedGunDisplayCache.clear();
@@ -52,9 +47,10 @@ public class ClientModEvents {
                             LrDisplayPatcher.clear();
                             GunModelPatcher.clear();
                             TaczGeoModelInjector.reset();
+                            SkinAnimationInjector.reset();
                             RefitButtonPositionScreen.clearBackgroundCache();
                             ClientSkinAssetCache.clearAll();
-                            // A language switch reloads resources, so this is where it is noticed.
+                            // A language switch reloads resources; this is where it is noticed.
                             ClientTranslationSync.request(false);
                             MCPSkins.LOGGER.info("[MCPSkins] Client resources reloaded - skin caches cleared.");
                         }, gameExecutor));
@@ -63,29 +59,26 @@ public class ClientModEvents {
     @SubscribeEvent
     public static void registerItemColors(RegisterColorHandlersEvent.Item event) {
         event.register((stack, tintIndex) -> {
-            // tintIndex 0 is "layer0" (the item's background) in the model JSON
+            // layer0 takes the rarity colour; runs per item render, so the lookup must stay indexed.
             if (tintIndex == 0) {
                 String skinId = TACZSkinHelper.readCustomString(stack, "SkinToUnlock");
                 if (skinId != null) {
-                    // Indexed lookup - this runs per tint query, i.e. per item render.
                     SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkin(skinId);
                     if (lookup != null) {
-                        return lookup.skin().labelColor() | 0xFF000000; // force opaque alpha
+                        return lookup.skin().labelColor() | 0xFF000000;
                     }
                 }
             }
-            return 0xFFFFFFFF; // opaque white fallback (unknown skin, or tintIndex 1)
+            return 0xFFFFFFFF;
 
         }, ModItems.SKIN_UNLOCK_ITEM.get());
     }
 
-    /** Registers the {@link ArmoryKeybinds#OPEN_ARMORY} key mapping (must happen on the MOD bus). */
     @SubscribeEvent
     public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(ArmoryKeybinds.OPEN_ARMORY);
     }
 
-    /** Registers the mod list "Config" button - opens {@link MCPSkinsConfigScreen}. */
     @SubscribeEvent
     public static void registerConfigScreen(FMLClientSetupEvent event) {
         ModList.get().getModContainerById(MCPSkins.MOD_ID).ifPresent(container ->

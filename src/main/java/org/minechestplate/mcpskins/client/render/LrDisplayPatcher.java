@@ -10,18 +10,13 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Copies a LesRaisins display instance with its texture and inventory icon swapped for a skin's.
- * <p>
- * Reflective throughout: the addon is not on a public maven, so there is nothing to compile
- * against, and everything here is reached only from a mixin that is itself inert when the mod is
- * absent. The instances are plain data holders with a private no-arg constructor, so a copy plus
- * two field writes is enough; nothing needs re-running their loader.
- * <p>
- * Results are cached because the display lookup sits on the per-frame render path.
+ * Copies a LesRaisins display instance with a skin's texture and icon. Fully reflective (no
+ * public maven) and only reached from an optional mixin. The instances are plain data holders,
+ * so a copy plus two field writes suffices. Cached: this is on the per-frame render path.
  */
 public final class LrDisplayPatcher {
 
-    /** Field names on MeleeDisplayInstance, ThrowableDisplayInstance and ConsumableDisplayInstance. */
+    // Field names on MeleeDisplayInstance, ThrowableDisplayInstance and ConsumableDisplayInstance.
     private static final String TEXTURE_FIELD = "texture";
     private static final String SLOT_TEXTURE_FIELD = "slotTexture";
 
@@ -40,7 +35,6 @@ public final class LrDisplayPatcher {
         CACHE.clear();
     }
 
-    /** The texture this display currently renders with, or null if it cannot be read. */
     public static ResourceLocation getTexture(Object display) {
         return read(display, TEXTURE_FIELD);
     }
@@ -49,11 +43,6 @@ public final class LrDisplayPatcher {
         return read(display, SLOT_TEXTURE_FIELD);
     }
 
-    /**
-     * @param texture     replacement model texture, or null to keep the base one
-     * @param slotTexture replacement inventory icon, or null to keep the base one
-     * @return the patched copy, or null if nothing could be patched
-     */
     public static Object patch(Object display, String baseId, String skinId,
                                ResourceLocation texture, ResourceLocation slotTexture) {
         if (display == null || (texture == null && slotTexture == null)) {
@@ -77,15 +66,12 @@ public final class LrDisplayPatcher {
         return copy;
     }
 
-    /**
-     * Shallow copy through {@code allocateInstance}, since the constructor is private and running
-     * the real loader again would re-read assets this has no business touching.
-     */
+    // allocateInstance: the constructor is private and the real loader re-reads assets.
     private static Object copyOf(Object display) {
         try {
             Unsafe theUnsafe = unsafe();
             Object copy = theUnsafe.allocateInstance(display.getClass());
-            // Superclasses included: allocateInstance leaves every field at its default.
+            // Superclasses too: allocateInstance leaves every field at its default.
             for (Class<?> current = display.getClass(); current != null && current != Object.class;
                  current = current.getSuperclass()) {
                 for (Field field : current.getDeclaredFields()) {
@@ -135,7 +121,6 @@ public final class LrDisplayPatcher {
                     found.setAccessible(true);
                     return found;
                 } catch (NoSuchFieldException ignored) {
-                    // keep walking up
                 }
             }
             warnOnce("no field '" + name + "' on " + owner.getName(), null);

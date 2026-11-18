@@ -7,31 +7,24 @@ import org.minechestplate.mcpskins.item.SkinUnlockItem;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
+import org.minechestplate.mcpskins.skin.SkinProgress;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The stable entry point into MCPSkins for other mods and for KubeJS scripts.
+ * Stable entry point for other mods and KubeJS. Writes go through the same paths as commands and
+ * fire the same {@code api.event} events.
  * <p>
- * Everything here reads or writes through the same paths the mod's own UIs use, so an unlock made
- * from a script fires the same {@code api.event} notifications as one made from a command.
- * <p>
- * <b>Registry data only exists after a datapack load.</b> Before the first reload, and on a client
- * that has not yet received the registry sync, the lookup methods report an empty world: no skins,
- * no collections. Query them from gameplay code rather than from mod construction.
- * <p>
- * <b>Threading.</b> The methods that change a player require a {@link ServerPlayer} and must run on
- * the server thread; they throw {@link IllegalStateException} otherwise. The read-only methods are
- * safe from either side.
+ * Lookups return nothing until a datapack load (or, on a client, the registry sync) has happened.
+ * Methods that change a player need a {@link ServerPlayer} on the server thread and throw
+ * {@link IllegalStateException} otherwise; reads work on either side.
  */
 public final class MCPSkinsAPI {
 
     private MCPSkinsAPI() {
     }
-
-    // Ownership
 
     /** Whether {@code player} owns this exact skin. Stock {@code default:} entries are never owned. */
     public static boolean has(Player player, String skinId) {
@@ -40,7 +33,7 @@ public final class MCPSkinsAPI {
 
     /**
      * Grants a skin, firing {@code SkinUnlockEvent.Pre} and, if that is not cancelled,
-     * {@code SkinUnlockEvent.Post}.
+     * {@code SkinUnlockEvent.Post}. A root brings its unconditioned variants along.
      *
      * @return why nothing happened, or {@link UnlockResult#UNLOCKED}
      */
@@ -49,7 +42,8 @@ public final class MCPSkinsAPI {
     }
 
     /**
-     * Takes a skin away, firing {@code SkinRevokedEvent} if the player had it.
+     * Takes a skin away, firing {@code SkinRevokedEvent} if the player had it. A root takes its
+     * unconditioned variants with it; level variants stay.
      *
      * @return true if something was removed
      */
@@ -61,8 +55,6 @@ public final class MCPSkinsAPI {
     public static List<String> getUnlocked(Player player) {
         return List.copyOf(player.getData(SkinAttachment.UNLOCKED_SKINS));
     }
-
-    // Registry
 
     /** Whether a skin with this id is loaded. False for {@code default:} entries. */
     public static boolean exists(String skinId) {
@@ -78,7 +70,7 @@ public final class MCPSkinsAPI {
         return lookup == null ? null : SkinInfo.of(lookup);
     }
 
-    /** Every real skin id. Stock {@code default:} entries are left out: they cannot be unlocked. */
+    /** Every skin id except stock {@code default:} entries. */
     public static List<String> getAllSkinIds() {
         List<String> ids = new ArrayList<>();
         for (String id : SkinManager.INSTANCE.getAllSkinIds()) {
@@ -117,9 +109,7 @@ public final class MCPSkinsAPI {
         return result;
     }
 
-    // Collections
-
-    /** Every collection name any loaded skin declares. Matched exactly: they are free text. */
+    /** Every collection name any loaded skin declares. Names are free text and matched exactly. */
     public static List<String> getCollections() {
         return SkinManager.INSTANCE.getCollections();
     }
@@ -147,7 +137,31 @@ public final class MCPSkinsAPI {
         return new CollectionProgress(collection, owned, members.size());
     }
 
-    // Stacks
+    /**
+     * Kill counters and level on a skin's family; a variant reports its root's progress. A skin
+     * without levels reads as level 1 of 1. On a client this reads the local player's synced copy.
+     *
+     * @return null when no loaded pack defines {@code skinId}
+     */
+    public static SkinProgressInfo getProgress(Player player, String skinId) {
+        if (SkinAttachment.isDefaultEntry(skinId)) {
+            return null;
+        }
+        SkinDataModels.SkinLookupResult root = SkinManager.INSTANCE.findRoot(skinId);
+        if (root == null) {
+            return null;
+        }
+        SkinProgress.Counters counters = SkinProgress.get(player, root.skin().id());
+        return new SkinProgressInfo(root.skin().id(), counters.kills(), counters.headshots(),
+                counters.playerKills(), SkinProgress.levelFor(root.skin(), counters),
+                SkinProgress.maxLevel(root.skin()));
+    }
+
+    /** The level a player has reached on a skin's family; 0 for an unknown id, 1 before any level. */
+    public static int getLevel(Player player, String skinId) {
+        SkinProgressInfo progress = getProgress(player, skinId);
+        return progress == null ? 0 : progress.level();
+    }
 
     /** The skin worn by a TACZ item, or null if it is stock or not a TACZ item at all. */
     public static String getSkinOn(ItemStack stack) {
@@ -155,11 +169,8 @@ public final class MCPSkinsAPI {
     }
 
     /**
-     * A copy of {@code stack} wearing {@code skinId}, or stripped bare when it is null.
-     * <p>
-     * Purely a stack operation: no ownership check, no owner lore, and no events. Use it for
-     * loot, kits and shop rewards. To change what a player is holding as if they had done it
-     * themselves, let them equip it through the UI instead.
+     * A copy of {@code stack} wearing {@code skinId}, or stock when it is null. No ownership check,
+     * owner lore or events.
      *
      * @return the new stack, or {@code stack} unchanged if it is not a skinnable TACZ item
      */
@@ -173,8 +184,6 @@ public final class MCPSkinsAPI {
     }
 
     /**
-     * Builds a TACZ gun already wearing a skin.
-     *
      * @param skinId may be null for a stock gun
      * @return an empty stack when {@code gunId} names no registered TACZ item
      */

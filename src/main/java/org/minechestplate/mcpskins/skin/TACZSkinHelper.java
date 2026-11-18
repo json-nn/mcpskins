@@ -10,11 +10,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 
 /**
- * Creates and re-skins TACZ item stacks, guns and attachments alike.
- * <p>
- * An item's own {@code GunId} / {@code AttachmentId} is never swapped. Which skin is shown comes
- * entirely from the separate {@link SkinComponents#SKIN_ID} component, which
- * {@link org.minechestplate.mcpskins.mixin.TimelessAPIMixin} reads to swap in the matching assets.
+ * Builds and re-skins stacks of every skinnable family. The item's own id tag is never changed;
+ * the skin lives only in {@link SkinComponents#SKIN_ID}, stored bare and absent for stock.
  */
 public class TACZSkinHelper {
 
@@ -29,7 +26,7 @@ public class TACZSkinHelper {
         return createGunStack(gunId, null);
     }
 
-    /** @param skinId registry id; a {@code default:} prefix or null means no skin */
+    // A default: prefix or null skinId means no skin.
     public static ItemStack createGunStack(String gunId, String skinId) {
         String baseId = bareSkinId(gunId);
         CompoundTag tag = new CompoundTag();
@@ -45,7 +42,6 @@ public class TACZSkinHelper {
         return createStack(TACZ_ATTACHMENT_ITEM, tag, baseId, skinId);
     }
 
-    /** Builds a stack of whatever family {@code target} names. */
     public static ItemStack createStack(String baseId, String skinId, SkinDataModels.SkinTarget target) {
         SkinnableItemType type = SkinnableItemType.of(target);
         if (type == null) {
@@ -65,7 +61,7 @@ public class TACZSkinHelper {
         return stack;
     }
 
-    /** Preserves attachments, ammo and every other component; only the skin component changes. */
+    // Returns original if it is not skinnable.
     public static ItemStack applySkin(ItemStack original, String newSkinId) {
         if (original.isEmpty()) return original;
 
@@ -94,10 +90,6 @@ public class TACZSkinHelper {
         return readCustomString(stack, ATTACHMENT_ID_TAG);
     }
 
-    /**
-     * The skinnable base id on a stack, whichever addon it belongs to, or null for anything else.
-     * Matched on the container item first so a stack is only ever read with its own family's tag.
-     */
     public static String getTaczId(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return null;
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
@@ -105,16 +97,12 @@ public class TACZSkinHelper {
         return type == null ? null : readCustomString(stack, type.idTag());
     }
 
-    /** The family a stack belongs to, or null if it is not skinnable. */
     public static SkinnableItemType typeOf(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return null;
         return SkinnableItemType.byItemId(BuiltInRegistries.ITEM.getKey(stack.getItem()));
     }
 
-    /**
-     * Reads the tag directly rather than through {@link CustomData#copyTag()}, which deep-copies
-     * the whole compound to read one string. Callers run per item render and per inventory slot.
-     */
+    // Avoids CustomData.copyTag()'s deep copy; callers run per item render.
     @SuppressWarnings("deprecation")
     public static String readCustomString(ItemStack stack, String key) {
         if (stack == null || stack.isEmpty()) return null;
@@ -122,7 +110,6 @@ public class TACZSkinHelper {
         return data.contains(key) ? data.getUnsafe().getString(key) : null;
     }
 
-    /** Null when the item is stock. */
     public static String getSkinId(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return null;
         String value = stack.get(SkinComponents.SKIN_ID.get());
@@ -134,10 +121,7 @@ public class TACZSkinHelper {
         return id.startsWith(DEFAULT_PREFIX) ? id.substring(DEFAULT_PREFIX.length()) : id;
     }
 
-    /**
-     * Safe server-side, unlike {@code ItemStack#getHoverName()}, which needs client-only gun-pack
-     * display data. Assumes TACZ's {@code <namespace>.gun.<path>} key convention.
-     */
+    // Server-safe, unlike getHoverName() (client-only gun pack data). Assumes TACZ's <ns>.gun.<path> keys.
     public static Component gunDisplayName(String gunId) {
         String bare = bareSkinId(gunId);
         if (bare == null || bare.isBlank()) {

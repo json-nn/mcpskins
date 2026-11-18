@@ -4,13 +4,10 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Per-player, per-second cap for serverbound payload handlers. A modified client can send any
- * registered payload as fast as it likes, so a handler doing real work per packet needs one.
- */
+/** Per-player, per-second cap for serverbound handlers that do real work per packet. */
 public final class ServerboundRateLimiter {
 
-    // [0] = window second, [1] = count in that window.
+    // [0] window second, [1] count in it.
     private static final Map<UUID, long[]> WINDOWS = new ConcurrentHashMap<>();
 
     private ServerboundRateLimiter() {

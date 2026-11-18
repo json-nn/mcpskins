@@ -10,11 +10,8 @@ import org.minechestplate.mcpskins.MCPSkins;
 
 /**
  * Sprites, colours and text scaling shared by {@link SkinArmoryScreen} and the refit carousel.
- * <p>
- * Anything with a corner is a nine-slice sprite under {@code textures/gui/sprites/armory/}, so
- * a resource pack can reskin both without touching layout. Straight edges stay {@code fill}
- * calls, which batch and take a colour directly. The white sprites carry shape in their alpha
- * and are tinted at draw, so one sprite covers every rarity including datapack-defined ones.
+ * Corners are nine-slice sprites under {@code textures/gui/sprites/armory/}; straight edges are
+ * {@code fill}s. White sprites are tinted at draw, so one covers every rarity.
  */
 public final class ArmoryTheme {
 
@@ -40,20 +37,23 @@ public final class ArmoryTheme {
     public static final int TEXT_35 = 0x59E6E8EA;
     public static final int TEXT_28 = 0x47E6E8EA;
 
-    /** Matches the accent baked into inset_focus and chip_on, so lit edges agree. */
+    // Must match the accent baked into inset_focus and chip_on.
     public static final int ACCENT = 0xFF78AAC8;
     public static final int ACCENT_LIFT = 0xFF9CC8E0;
 
     public static final int RULE = 0x29E6E8EA;
     public static final int ROW_HOVER = 0x2EFFFFFF;
     public static final int ROW_SELECTED = 0x4478AAC8;
-    /** Drawn through the ROW sprite, so the dim takes the tile's corner shape. */
     public static final int LOCKED_DIM = 0x8C0A0A0C;
+
+    // Gold, so the Limited tag never reads as the blue NEW tag.
+    public static final int LIMITED = 0xFFE3B341;
+    public static final int LIMITED_PLATE = 0x59E3B341;
 
     public static final float SMALL = 0.75f;
     public static final float BASE = 1.0f;
 
-    /** A nine-slice tiles its interior, so an absurd size turns into millions of quads. */
+    // A nine-slice tiles its interior, so a bogus size means millions of quads.
     private static final int MAX_SPRITE_DIM = 4096;
 
     private static boolean oversizeWarned = false;
@@ -65,13 +65,8 @@ public final class ArmoryTheme {
         return ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "armory/" + name);
     }
 
-    /**
-     * Draws a sprite at its own colours. Not overloaded with a tinted form on purpose:
-     * {@code blitSprite}'s six-int signature ends in {@code width, height} and takes no tint, so
-     * a colour passed as an extra argument binds to {@code height} and hangs the client.
-     * <p>
-     * Blend is enabled explicitly, since batched text leaves it off when it flushes.
-     */
+    // No tint overload on purpose: blitSprite takes no tint, and an extra int binds to height and
+    // hangs the client. Blend is set because flushed text leaves it off.
     public static void sprite(GuiGraphics graphics, ResourceLocation sprite, int x, int y, int width, int height) {
         if (drawable(sprite, width, height)) {
             RenderSystem.enableBlend();
@@ -79,11 +74,7 @@ public final class ArmoryTheme {
         }
     }
 
-    /**
-     * 1.21.1 has no tinted blit, so the colour goes through the shader; {@code innerBlit} draws
-     * immediately, so it applies to this call alone. Reset in a {@code finally}, because a
-     * leaked shader colour tints the rest of the frame.
-     */
+    // 1.21.1 has no tinted blit, so this tints the shader colour; reset in finally or the whole frame is tinted.
     public static void spriteTinted(GuiGraphics graphics, ResourceLocation sprite,
                                     int x, int y, int width, int height, int argb) {
         if (!drawable(sprite, width, height)) {
@@ -122,10 +113,6 @@ public final class ArmoryTheme {
         return 0xFF000000 | (rgb & 0xFFFFFF);
     }
 
-    /**
-     * Lifts a rarity colour to a readable luminance. A pack can declare any {@code label_color},
-     * and a near-black one would vanish against the dark ground.
-     */
     public static int readable(int rgb) {
         int r = (rgb >> 16) & 0xFF;
         int g = (rgb >> 8) & 0xFF;
@@ -167,7 +154,6 @@ public final class ArmoryTheme {
         text(graphics, font, value, rightX - scaledWidth(font, value, scale), y, scale, color);
     }
 
-    /** Cuts to fit with an ellipsis rather than clipping mid-glyph. */
     public static String truncate(Font font, String value, int maxWidth, float scale) {
         if (value == null || value.isEmpty() || scaledWidth(font, value, scale) <= maxWidth) {
             return value == null ? "" : value;

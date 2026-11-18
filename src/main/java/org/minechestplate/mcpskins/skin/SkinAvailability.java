@@ -13,39 +13,28 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Hides skins whose base gun or attachment no gunpack actually provides, so a skin for a weapon
- * that is not installed never reaches a UI, a fuse pool, or {@code /mcpskins give all}.
- * <p>
- * <b>Why this is lazy rather than done at load.</b> TACZ rebuilds its common index through
- * {@code AddReloadListenerEvent}, and that handler swaps {@code CommonAssetsManager.INSTANCE} for a
- * brand new empty manager <em>before</em> registering the listeners that fill it. Every gun
- * therefore reads as missing for the whole reload, whatever order the listeners run in, so asking
- * during {@link SkinManager}'s own apply would hide the entire registry every time. By the first
- * query after a reload the index is populated, so the answer is computed then and memoized.
- * <p>
- * Server side only. A remote client has no common index of its own worth trusting, and the
- * registry it was sent was already filtered, so the check there always answers "available".
+ * Hides skins whose base item is not loaded, from every UI, fuse pool and {@code /mcpskins give all}.
+ * Lazy and memoized, never at load: TACZ's common index is empty during the whole reload. Server
+ * side only; a client's registry arrives already filtered. See docs/ai/data-and-ownership.md.
  */
 public final class SkinAvailability {
 
     private static final Map<String, Boolean> CACHE = new ConcurrentHashMap<>();
 
-    /** Base ids reported hidden last time, so a repeat reload with the same result stays quiet. */
+    // Last reported hidden ids, so an identical result stays quiet.
     private static volatile List<String> lastReported = List.of();
 
-    /** Bumped on every invalidate, so cached filtered views know to rebuild. */
     private static volatile int generation;
 
     private SkinAvailability() {
     }
 
-    /** Called when the skin registry or the gunpack set may have changed. */
     public static void invalidate() {
         CACHE.clear();
         generation++;
     }
 
-    /** Cache key for anything holding a filtered view of the registry. */
+    // Bumped on every invalidate; key filtered views on it.
     public static int generation() {
         return generation;
     }
@@ -54,12 +43,10 @@ public final class SkinAvailability {
         return MCPSkinsServerConfig.hideUnavailableSkins() && ServerLifecycleHooks.getCurrentServer() != null;
     }
 
-    /** Whether the owning mod has actually loaded the item this skin set is painted on. */
     public static boolean isAvailable(SkinDataModels.WeaponSkins weapon) {
         return weapon != null && isAvailable(weapon.baseGun(), weapon.target());
     }
 
-    /** Whether the item a skin id belongs to is loaded. Unknown skin ids read as unavailable. */
     public static boolean isSkinAvailable(String skinId) {
         SkinDataModels.SkinLookupResult lookup = SkinManager.INSTANCE.findSkinRaw(skinId);
         return lookup != null && isAvailable(lookup.weapon());
@@ -86,7 +73,6 @@ public final class SkinAvailability {
         }
         SkinnableItemType type = SkinnableItemType.of(target);
         if (type != null && !type.modPresent()) {
-            // The whole addon is missing, so none of its items can be there.
             return false;
         }
         try {
@@ -96,17 +82,13 @@ public final class SkinAvailability {
                 case MELEE, THROWABLE, CONSUMABLE -> LrTacticalSupport.hasItem(target, id);
             };
         } catch (RuntimeException e) {
-            // Fail open: a broken lookup must not blank out every skin on the server.
+            // Fail open: a broken lookup must not hide every skin.
             MCPSkins.LOGGER.warn("[MCPSkins] Could not check '{}'; treating it as available.", baseId, e);
             return true;
         }
     }
 
-    /**
-     * Logs one line naming the base ids being hidden, and nothing at all when the answer is the
-     * same as last time. The dedup is required, not just tidy: the only safe place to call this is
-     * the datapack sync hook, which also fires once per player login.
-     */
+    // Logs hidden ids only when they changed: the datapack sync hook also fires per login.
     public static void report(Map<String, SkinDataModels.WeaponSkins> registry) {
         if (!isEnabled()) {
             lastReported = List.of();

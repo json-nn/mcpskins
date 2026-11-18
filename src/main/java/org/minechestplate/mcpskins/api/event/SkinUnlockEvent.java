@@ -5,12 +5,7 @@ import net.neoforged.bus.api.Event;
 import net.neoforged.bus.api.ICancellableEvent;
 import org.minechestplate.mcpskins.api.UnlockSource;
 
-/**
- * Fired on {@code NeoForge.EVENT_BUS}, server side, when a player gains a skin.
- *
- * @see Pre
- * @see Post
- */
+/** Server side, on {@code NeoForge.EVENT_BUS}, when a player gains a skin. */
 public abstract class SkinUnlockEvent extends Event {
 
     private final ServerPlayer player;
@@ -36,13 +31,10 @@ public abstract class SkinUnlockEvent extends Event {
     }
 
     /**
-     * Before the skin is added, for single unlocks only ({@link UnlockSource#COMMAND},
-     * {@link UnlockSource#UNLOCK_ITEM}, {@link UnlockSource#API}). The skin is known to exist and
-     * to not already be owned by the time this fires.
-     * <p>
-     * Cancelling leaves the player's set untouched, makes the unlock report
-     * {@link org.minechestplate.mcpskins.api.UnlockResult#CANCELLED}, and does not consume the
-     * unlock item that triggered it.
+     * Before a single unlock ({@link UnlockSource#COMMAND}, {@link UnlockSource#UNLOCK_ITEM},
+     * {@link UnlockSource#API}, {@link UnlockSource#LEVEL_UP}) of a known, not yet owned skin.
+     * Cancelling adds nothing (variants included), reports
+     * {@link org.minechestplate.mcpskins.api.UnlockResult#CANCELLED} and keeps the unlock item.
      */
     public static class Pre extends SkinUnlockEvent implements ICancellableEvent {
         public Pre(ServerPlayer player, String skinId, UnlockSource source) {
@@ -51,9 +43,9 @@ public abstract class SkinUnlockEvent extends Event {
     }
 
     /**
-     * After the skin was added and the client was synced. Fires once per skin actually gained,
-     * including for the bulk sources {@link UnlockSource#UNLOCK_ALL} and
-     * {@link UnlockSource#DEFAULT_GRANT}, which have no {@link Pre}.
+     * After the skin was added and the client synced, once per skin gained. Also fires for the bulk
+     * sources {@link UnlockSource#UNLOCK_ALL}, {@link UnlockSource#DEFAULT_GRANT} and
+     * {@link UnlockSource#VARIANT}, which have no {@link Pre}.
      */
     public static class Post extends SkinUnlockEvent {
         public Post(ServerPlayer player, String skinId, UnlockSource source) {

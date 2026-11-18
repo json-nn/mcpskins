@@ -12,7 +12,7 @@ import org.minechestplate.mcpskins.skin.SkinTranslations;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Server-to-client: the merged translation table for the locale the client asked for. */
+/** Server to client: the merged translation table for one locale. */
 public record SyncTranslationsPayload(Map<String, String> entries) implements CustomPacketPayload {
     public static final Type<SyncTranslationsPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "sync_translations"));
@@ -46,8 +46,7 @@ public record SyncTranslationsPayload(Map<String, String> entries) implements Cu
         buffer.writeVarInt(Math.min(entries.size(), MAX_ENTRIES));
         for (Map.Entry<String, String> entry : entries.entrySet()) {
             if (written++ >= MAX_ENTRIES) break;
-            // Truncated rather than refused: the reader is bounded, and an over-long key would
-            // otherwise make the whole packet undecodable and drop the client.
+            // Truncate to the reader's bounds, or the packet fails to decode and drops the client.
             buffer.writeUtf(clamp(entry.getKey(), MAX_KEY_LENGTH), MAX_KEY_LENGTH);
             buffer.writeUtf(clamp(entry.getValue(), MAX_VALUE_LENGTH), MAX_VALUE_LENGTH);
         }

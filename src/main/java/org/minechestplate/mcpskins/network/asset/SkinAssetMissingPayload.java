@@ -9,10 +9,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.minechestplate.mcpskins.MCPSkins;
 import org.minechestplate.mcpskins.client.render.ClientSkinAssetCache;
 
-/**
- * Server-to-client: "the path you asked about doesn't exist." Cached client-side as a
- * terminal negative result for the rest of the session.
- */
+/** Server to client: no such asset. Terminal on the client for the session. */
 public record SkinAssetMissingPayload(String path) implements CustomPacketPayload {
     public static final Type<SkinAssetMissingPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "skin_asset_missing"));

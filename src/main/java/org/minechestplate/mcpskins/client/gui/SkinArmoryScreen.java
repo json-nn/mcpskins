@@ -26,6 +26,7 @@ import org.minechestplate.mcpskins.skin.RarityManager;
 import org.minechestplate.mcpskins.skin.SkinAttachment;
 import org.minechestplate.mcpskins.skin.SkinDataModels;
 import org.minechestplate.mcpskins.skin.SkinManager;
+import org.minechestplate.mcpskins.skin.SkinProgress;
 import org.minechestplate.mcpskins.skin.SkinTranslations;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
@@ -39,41 +40,31 @@ import java.util.Optional;
 
 import static org.minechestplate.mcpskins.client.gui.ArmoryLayout.*;
 
-/**
- * Standalone skin catalog and inspector, independent of what is in the player's hand. Opened
- * by hotkey or {@code /mcpskins armory}.
- * <pre>
- * ┌ search ──────────────────┐ [All][Owned][Locked][Custom] [Sort]
- * ├───────────┬──────────────────────────┬──────────────────┐
- * │ Arsenal   │        3D stage          │  skin tiles      │
- * │  gun      │                          ├──────────────────┤
- * │   skin    │  name, rarity, lore      │  set / unlock    │
- * │   skin    │                          │  [ Equip ]       │
- * └───────────┴──────────────────────────┴──────────────────┘
- * </pre>
- * The panel is centred and capped, picking one of three tiers from its own width so a high
- * GUI scale drops a tier rather than crushing the columns.
- */
+/** The Armory: skin catalog and inspector, independent of the held item. Layout in docs/ai/ui.md. */
 public class SkinArmoryScreen extends Screen {
 
     private enum FocusPane { RAIL, TILES }
 
-    /** A pipe cannot occur in a gun or skin id, so composite keys never collide. */
+    // Cannot occur in a gun or skin id, so composite keys never collide.
     private static final char SEPARATOR = '|';
 
-    /** One line in the rail. A null {@code skinId} means the gun row itself. */
+    // A null skinId is the gun row itself.
     private record RailRow(String gunId, String skinId, int top, int height) {
     }
 
     private record GunGroup(SkinDataModels.WeaponSkins weapon, List<SkinDataModels.SkinEntry> skins) {
     }
 
-    /** Tagged with the asset generation it was computed at. */
     private record CustomModelResult(int generation, boolean hasModel) {
     }
 
+    private static final int MAX_INFO_ROWS = 4;
+    private static final int MAX_VARIANT_DOTS = 6;
+    private static final int MAX_LEVEL_PIPS = 10;
+    // Above the item layer, so overlays are not hidden behind icons.
+    private static final float OVERLAY_Z = 200f;
+
     private final Map<String, String> weaponNameCache = new HashMap<>();
-    /** Preview stacks, built once per gun/skin pair instead of per frame. */
     private final Map<String, ItemStack> stackCache = new HashMap<>();
     private final Map<String, CustomModelResult> customModelCache = new HashMap<>();
     private final Item3DPodiumWidget podium = new Item3DPodiumWidget();
@@ -82,7 +73,10 @@ public class SkinArmoryScreen extends Screen {
     private final List<RailRow> railRows = new ArrayList<>();
 
     private String selectedGun;
+    // The tile: a plain skin or a variant root, never a variant.
     private String selectedSkinId;
+    // A variant of the selected tile being previewed, or null for the tile itself.
+    private String selectedVariantId;
     private EditBox searchBox;
     private StatusFilter statusFilter = StatusFilter.ALL;
     private boolean customModelOnly = false;
@@ -92,30 +86,23 @@ public class SkinArmoryScreen extends Screen {
     private int tileScroll = 0;
     private String statusMessage;
 
-    /** Skin id to select and scroll to on open, or null for the normal default. */
     private final String focusSkinId;
 
     public SkinArmoryScreen() {
         this(null);
     }
 
-    /**
-     * Opens on {@code focusSkinId} instead of the held weapon, for the clickable skin name in
-     * unlock and fuse chat messages.
-     */
     public SkinArmoryScreen(String focusSkinId) {
         super(Component.translatable("gui.mcpskins.armory.title"));
         this.focusSkinId = focusSkinId;
     }
-
-    // Init / layout
 
     @Override
     protected void init() {
         podium.resetView();
         podium.setChrome(false);
 
-        Layout layout = compute(this.width, this.height, this.font, sortMode);
+        Layout layout = layout();
         String previous = searchBox != null ? searchBox.getValue() : "";
 
         int textX = layout.search().x0() + PAD + ICON + GAP_TIGHT;
@@ -133,29 +120,28 @@ public class SkinArmoryScreen extends Screen {
             tileScroll = 0;
             rebuild();
         });
-        // Drawn in renderHeader inside a scissor instead: EditBox draws its hint and value
-        // unclipped, so a long translated hint would run out over the buttons beside it.
+        // Not renderable: renderHeader draws it in a scissor, since EditBox draws its hint unclipped.
         this.addWidget(searchBox);
 
         SkinDataModels.SkinLookupResult focus = focusSkinId != null
                 ? SkinManager.INSTANCE.findSkin(focusSkinId) : null;
         if (focus != null) {
             selectedGun = focus.weapon().baseGun();
-            selectedSkinId = focus.skin().id();
+            if (focus.skin().isVariant()) {
+                selectedSkinId = focus.skin().rootId();
+                selectedVariantId = focus.skin().id();
+            } else {
+                selectedSkinId = focus.skin().id();
+            }
         } else if (selectedGun == null) {
             selectedGun = defaultWeaponSelection();
         }
 
         rebuild();
-        scrollRailToSelection(compute(this.width, this.height, this.font, sortMode));
+        scrollRailToSelection(layout());
     }
 
-    // Data
-
-    /**
-     * Rebuilds the rail from the current search, filters and sort. A non-empty search is global,
-     * so every matching gun expands rather than only the selected one.
-     */
+    // A non-empty search is global: every matching gun expands, not only the selected one.
     private void rebuild() {
         groups.clear();
         railRows.clear();
@@ -164,7 +150,7 @@ public class SkinArmoryScreen extends Screen {
         String query = searchBox != null ? searchBox.getValue().trim().toLowerCase(Locale.ROOT) : "";
         boolean searching = !query.isEmpty();
 
-        // Guns first, so attachments read as their own section rather than scattering by name.
+        // Guns first, so attachments form their own section.
         List<SkinDataModels.WeaponSkins> weapons = new ArrayList<>(SkinManager.INSTANCE.getRegistry().values());
         weapons.sort(Comparator.comparing(SkinDataModels.WeaponSkins::isAccessory)
                 .thenComparing(w -> weaponDisplayName(w.baseGun()), String.CASE_INSENSITIVE_ORDER));
@@ -174,12 +160,13 @@ public class SkinArmoryScreen extends Screen {
                     || weaponDisplayName(weapon.baseGun()).toLowerCase(Locale.ROOT).contains(query);
             List<SkinDataModels.SkinEntry> matched = new ArrayList<>();
             for (SkinDataModels.SkinEntry entry : weapon.skins()) {
+                // Variants have no tile: their root stands for the whole family.
+                if (isTiledVariant(weapon, entry)) continue;
                 boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
                 if (statusFilter == StatusFilter.OWNED && !unlocked) continue;
                 if (statusFilter == StatusFilter.LOCKED && unlocked) continue;
-                if (customModelOnly && !hasCustomModel(weapon, entry)) continue;
-                if (searching && !weaponMatches
-                        && !SkinTranslations.name(entry).toLowerCase(Locale.ROOT).contains(query)) {
+                if (customModelOnly && !familyHasCustomModel(weapon, entry)) continue;
+                if (searching && !weaponMatches && !familyMatches(weapon, entry, query)) {
                     continue;
                 }
                 matched.add(entry);
@@ -204,6 +191,10 @@ public class SkinArmoryScreen extends Screen {
         if (selectedSkinId == null || indexOfSkin(selected, selectedSkinId) < 0) {
             selectedSkinId = selected.skins().get(0).id();
         }
+        SkinDataModels.SkinEntry tile = selectedSkin();
+        if (selectedVariantId != null && (tile == null || !tile.variants().contains(selectedVariantId))) {
+            selectedVariantId = null;
+        }
 
         int top = 0;
         for (GunGroup group : groups) {
@@ -222,7 +213,6 @@ public class SkinArmoryScreen extends Screen {
         updatePodiumStack();
     }
 
-    /** The weapon's stock skin pins first, whatever the sort mode. */
     private Comparator<SkinDataModels.SkinEntry> skinComparator(SkinDataModels.WeaponSkins weapon) {
         Comparator<SkinDataModels.SkinEntry> byName =
                 Comparator.comparing(SkinDataModels.SkinEntry::name, String.CASE_INSENSITIVE_ORDER);
@@ -258,9 +248,89 @@ public class SkinArmoryScreen extends Screen {
         return index < 0 ? null : group.skins().get(index);
     }
 
+    private SkinDataModels.SkinEntry displayedSkin() {
+        SkinDataModels.SkinEntry tile = selectedSkin();
+        if (tile == null || selectedVariantId == null) return tile;
+        SkinDataModels.SkinEntry variant = entryInWeapon(findGroup(selectedGun).weapon(), selectedVariantId);
+        return variant != null ? variant : tile;
+    }
+
+    private List<SkinDataModels.SkinEntry> family(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry tile) {
+        List<SkinDataModels.SkinEntry> family = new ArrayList<>();
+        family.add(tile);
+        for (String variantId : tile.variants()) {
+            SkinDataModels.SkinEntry variant = entryInWeapon(weapon, variantId);
+            if (variant != null) family.add(variant);
+        }
+        return family;
+    }
+
+    // A variant whose root is on this weapon, and so is reached through the root's tile.
+    private boolean isTiledVariant(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
+        return entry.isVariant() && entryInWeapon(weapon, entry.rootId()) != null;
+    }
+
+    private boolean familyMatches(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry tile, String query) {
+        for (SkinDataModels.SkinEntry member : family(weapon, tile)) {
+            if (SkinTranslations.name(member).toLowerCase(Locale.ROOT).contains(query)
+                    || member.author().toLowerCase(Locale.ROOT).contains(query)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean familyHasCustomModel(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry tile) {
+        for (SkinDataModels.SkinEntry member : family(weapon, tile)) {
+            if (hasCustomModel(weapon, member)) return true;
+        }
+        return false;
+    }
+
+    private static SkinDataModels.SkinEntry entryInWeapon(SkinDataModels.WeaponSkins weapon, String skinId) {
+        if (skinId == null) return null;
+        for (SkinDataModels.SkinEntry entry : weapon.skins()) {
+            if (entry.id().equals(skinId)) return entry;
+        }
+        return null;
+    }
+
     private void updatePodiumStack() {
-        SkinDataModels.SkinEntry entry = selectedSkin();
+        SkinDataModels.SkinEntry entry = displayedSkin();
         podium.setStack(entry == null ? ItemStack.EMPTY : previewStack(selectedGun, entry.id()));
+    }
+
+    private Layout layout() {
+        return compute(this.width, this.height, this.font, sortMode, detailContent());
+    }
+
+    private DetailContent detailContent() {
+        SkinDataModels.SkinEntry tile = selectedSkin();
+        GunGroup group = findGroup(selectedGun);
+        if (tile == null || group == null) return DetailContent.PLAIN;
+        List<SkinDataModels.SkinEntry> family = family(group.weapon(), tile);
+        int swatches = tile.hasVariants() ? family.size() : 0;
+        int progressRows = 0;
+        if (!tile.levels().isEmpty()) {
+            SkinDataModels.SkinLevel next = nextLevel(tile);
+            progressRows = 1 + (next == null ? 0 : next.requires().size());
+        }
+        // Sized for the tallest member, so flipping between swatches never moves the column.
+        int infoRows = 0;
+        for (SkinDataModels.SkinEntry member : family) {
+            infoRows = Math.max(infoRows, infoRows(member).size());
+        }
+        return new DetailContent(Math.min(MAX_INFO_ROWS, infoRows), swatches, progressRows);
+    }
+
+    private SkinDataModels.SkinLevel nextLevel(SkinDataModels.SkinEntry root) {
+        int index = SkinProgress.levelFor(root, progressOf(root)) - 1;
+        return index < root.levels().size() ? root.levels().get(index) : null;
+    }
+
+    private SkinProgress.Counters progressOf(SkinDataModels.SkinEntry root) {
+        Player player = Minecraft.getInstance().player;
+        return player == null ? SkinProgress.Counters.ZERO : SkinProgress.get(player, root.id());
     }
 
     private String defaultWeaponSelection() {
@@ -275,13 +345,11 @@ public class SkinArmoryScreen extends Screen {
         return registry.isEmpty() ? null : registry.keySet().iterator().next();
     }
 
-    // Rendering
-
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         guiGraphics.fillGradient(0, 0, this.width, this.height, 0xC00A0A0C, 0xE0050506);
 
-        Layout layout = compute(this.width, this.height, this.font, sortMode);
+        Layout layout = layout();
         Rect panel = layout.panel();
 
         ArmoryTheme.sprite(guiGraphics, ArmoryTheme.PANEL, panel.x0(), panel.y0(), panel.width(), panel.height());
@@ -290,6 +358,8 @@ public class SkinArmoryScreen extends Screen {
         renderRail(guiGraphics, layout, mouseX, mouseY);
         renderStage(guiGraphics, layout);
         renderTiles(guiGraphics, layout, mouseX, mouseY);
+        renderVariants(guiGraphics, layout, mouseX, mouseY);
+        renderProgress(guiGraphics, layout);
         renderInfo(guiGraphics, layout);
         renderEquip(guiGraphics, layout, mouseX, mouseY);
 
@@ -298,7 +368,7 @@ public class SkinArmoryScreen extends Screen {
         renderTooltips(guiGraphics, layout, mouseX, mouseY);
     }
 
-    /** No-op: skips vanilla's background blur, which {@code Screen#render} always triggers. */
+    // No-op: skips vanilla's background blur.
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
     }
@@ -416,7 +486,7 @@ public class SkinArmoryScreen extends Screen {
                     list.x1() - x0, row.height(), ArmoryTheme.ROW_HOVER);
         }
 
-        // A spine rather than a coloured label, so a dim datapack colour costs no legibility.
+        // A colour spine, not coloured text, so a dim pack colour stays legible.
         guiGraphics.fill(x0, y + 1, x0 + 2, y + row.height() - 1, ArmoryTheme.readable(entry.labelColor()));
 
         Player player = Minecraft.getInstance().player;
@@ -437,7 +507,7 @@ public class SkinArmoryScreen extends Screen {
         Rect stage = layout.stage();
         ArmoryTheme.sprite(guiGraphics, ArmoryTheme.STAGE, stage.x0(), stage.y0(), stage.width(), stage.height());
 
-        SkinDataModels.SkinEntry entry = selectedSkin();
+        SkinDataModels.SkinEntry entry = displayedSkin();
         if (entry == null) {
             ArmoryTheme.text(guiGraphics, this.font,
                     Component.translatable("gui.mcpskins.armory.no_matches").getString(),
@@ -452,7 +522,6 @@ public class SkinArmoryScreen extends Screen {
         int textBlockH = Math.round(8f * layout.tier().nameScale) + 12 + (layout.tier().lore ? 20 : 0);
         int podiumH = Math.max(40, stage.height() - textBlockH - PAD * 2);
 
-        // Floor pool, tinted by rarity, so the model does not read as floating.
         int glowW = Math.min(stage.width() - 2, 160);
         ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.GLOW,
                 stage.x0() + (stage.width() - glowW) / 2, stage.y0() + podiumH - 18, glowW, 24,
@@ -512,6 +581,8 @@ public class SkinArmoryScreen extends Screen {
         Rect tiles = layout.tiles();
         int tileW = (tiles.width() - GAP_TIGHT) / 2;
         Player player = Minecraft.getInstance().player;
+        // The tile area shrinks when a skin with variants or levels is selected.
+        tileScroll = Mth.clamp(tileScroll, 0, maxTileScroll(layout));
 
         guiGraphics.enableScissor(tiles.x0(), tiles.y0(), tiles.x1(), tiles.y1());
         try {
@@ -526,7 +597,7 @@ public class SkinArmoryScreen extends Screen {
                 SkinDataModels.SkinEntry entry = skins.get(i);
                 boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
                 boolean selected = entry.id().equals(selectedSkinId);
-                boolean equipped = isSkinCurrentlyEquipped(group.weapon(), entry);
+                boolean equipped = isFamilyCurrentlyEquipped(group.weapon(), entry);
                 boolean hovered = mouseX >= x && mouseX < x + tileW && mouseY >= y && mouseY < y + TILE_H;
 
                 ArmoryTheme.sprite(guiGraphics, ArmoryTheme.TILE, x, y, tileW, TILE_H);
@@ -555,6 +626,12 @@ public class SkinArmoryScreen extends Screen {
                             Component.translatable("gui.mcpskins.armory.badge_new").getString(),
                             x + 3, y + 4, ArmoryTheme.SMALL, ArmoryTheme.ACCENT_LIFT);
                 }
+                if (entry.limited()) {
+                    renderLimitedBadge(guiGraphics, x + 3, y + (entry.isNew() ? 12 : 4));
+                }
+                if (entry.hasVariants()) {
+                    renderVariantDots(guiGraphics, group.weapon(), entry, player, x + tileW / 2, y + TILE_H - 4);
+                }
                 if (hasCustomModel(group.weapon(), entry)) {
                     ArmoryTheme.textRight(guiGraphics, this.font,
                             Component.translatable("gui.mcpskins.armory.badge_model").getString(),
@@ -566,45 +643,221 @@ public class SkinArmoryScreen extends Screen {
         }
     }
 
+    private void renderLimitedBadge(GuiGraphics guiGraphics, int x, int y) {
+        String label = Component.translatable("gui.mcpskins.armory.badge_limited").getString();
+        int w = ArmoryTheme.scaledWidth(this.font, label, ArmoryTheme.SMALL);
+        guiGraphics.pose().pushPose();
+        try {
+            guiGraphics.pose().translate(0f, 0f, OVERLAY_Z);
+            ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW, x - 1, y - 1, w + 3, 8, ArmoryTheme.LIMITED_PLATE);
+            ArmoryTheme.text(guiGraphics, this.font, label, x + 1, y + 1, ArmoryTheme.SMALL, ArmoryTheme.LIMITED);
+        } finally {
+            guiGraphics.pose().popPose();
+        }
+    }
+
+    private void renderVariantDots(GuiGraphics guiGraphics, SkinDataModels.WeaponSkins weapon,
+                                   SkinDataModels.SkinEntry tile, Player player, int centerX, int y) {
+        List<SkinDataModels.SkinEntry> family = family(weapon, tile);
+        int count = Math.min(MAX_VARIANT_DOTS, family.size() - 1);
+        if (count <= 0) return;
+        int x = centerX - (count * 4 - 2) / 2;
+        for (int i = 0; i < count; i++) {
+            boolean owned = player != null && SkinAttachment.hasSkin(player, family.get(i + 1).id());
+            guiGraphics.fill(x + i * 4, y, x + i * 4 + 2, y + 2, owned ? ArmoryTheme.TEXT_72 : ArmoryTheme.TEXT_28);
+        }
+    }
+
+    private void renderVariants(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
+        Rect strip = layout.variants();
+        SkinDataModels.SkinEntry tile = selectedSkin();
+        GunGroup group = findGroup(selectedGun);
+        if (strip.height() <= 0 || tile == null || group == null) return;
+
+        ArmoryTheme.text(guiGraphics, this.font,
+                Component.translatable("gui.mcpskins.armory.variants").getString(),
+                strip.x0(), strip.y0() + 2, ArmoryTheme.SMALL, ArmoryTheme.TEXT_35);
+        ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.RULE_FADE, strip.x0(), strip.y0() + SECTION_H - 3,
+                strip.width(), 1, ArmoryTheme.RULE);
+
+        Player player = Minecraft.getInstance().player;
+        SkinDataModels.SkinEntry shown = displayedSkin();
+        List<SkinDataModels.SkinEntry> family = family(group.weapon(), tile);
+        int level = tile.levels().isEmpty() ? 1 : SkinProgress.levelFor(tile, progressOf(tile));
+        for (int i = 0; i < family.size(); i++) {
+            Rect swatch = swatchRect(layout, i);
+            if (swatch == null) break;
+            SkinDataModels.SkinEntry member = family.get(i);
+            boolean owned = player != null && SkinAttachment.isOwnedOrDefault(player, member.id());
+            boolean selected = shown != null && member.id().equals(shown.id());
+            boolean equipped = isSkinCurrentlyEquipped(group.weapon(), member);
+            boolean hovered = swatch.contains(mouseX, mouseY);
+
+            ArmoryTheme.sprite(guiGraphics, ArmoryTheme.TILE, swatch.x0(), swatch.y0(), swatch.width(), swatch.height());
+            guiGraphics.renderItem(previewStack(group.weapon().baseGun(), member.id()), swatch.x0() + 1, swatch.y0() + 1);
+
+            guiGraphics.pose().pushPose();
+            try {
+                guiGraphics.pose().translate(0f, 0f, OVERLAY_Z);
+                if (!owned) {
+                    ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.ROW, swatch.x0() + 1, swatch.y0() + 1,
+                            swatch.width() - 2, swatch.height() - 2, ArmoryTheme.LOCKED_DIM);
+                }
+                int ring = selected ? ArmoryTheme.TEXT
+                        : equipped ? ArmoryTheme.ACCENT
+                        : hovered ? ArmoryTheme.TEXT_50
+                        : ArmoryTheme.withAlpha(ArmoryTheme.readable(member.labelColor()), 0.45f);
+                ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.TILE_RING, swatch.x0(), swatch.y0(),
+                        swatch.width(), swatch.height(), ring);
+                int memberLevel = tile.levelOf(member.id());
+                if (memberLevel > 0) {
+                    ArmoryTheme.text(guiGraphics, this.font, String.valueOf(memberLevel), swatch.x0() + 2,
+                            swatch.y0() + 2, ArmoryTheme.SMALL,
+                            memberLevel <= level ? ArmoryTheme.ACCENT_LIFT : ArmoryTheme.TEXT_50);
+                }
+            } finally {
+                guiGraphics.pose().popPose();
+            }
+        }
+    }
+
+    // Null past the rows the strip has room for.
+    private Rect swatchRect(Layout layout, int index) {
+        Rect strip = layout.variants();
+        int perRow = swatchesPerRow(strip.width());
+        int row = index / perRow;
+        if (row >= MAX_SWATCH_ROWS) return null;
+        int x = strip.x0() + (index % perRow) * (SWATCH + SWATCH_GAP);
+        int y = strip.y0() + SECTION_H + row * (SWATCH + SWATCH_GAP);
+        if (y + SWATCH > strip.y1()) return null;
+        return new Rect(x, y, x + SWATCH, y + SWATCH);
+    }
+
+    private SkinDataModels.SkinEntry swatchAt(Layout layout, double mouseX, double mouseY) {
+        SkinDataModels.SkinEntry tile = selectedSkin();
+        GunGroup group = findGroup(selectedGun);
+        if (tile == null || group == null || layout.variants().height() <= 0
+                || !layout.variants().contains(mouseX, mouseY)) {
+            return null;
+        }
+        List<SkinDataModels.SkinEntry> family = family(group.weapon(), tile);
+        for (int i = 0; i < family.size(); i++) {
+            Rect swatch = swatchRect(layout, i);
+            if (swatch == null) break;
+            if (swatch.contains(mouseX, mouseY)) return family.get(i);
+        }
+        return null;
+    }
+
+    private void renderProgress(GuiGraphics guiGraphics, Layout layout) {
+        Rect block = layout.progress();
+        SkinDataModels.SkinEntry tile = selectedSkin();
+        if (block.height() <= 0 || tile == null || tile.levels().isEmpty()) return;
+        ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.RULE_FADE, block.x0(), block.y0() - 3,
+                block.width(), 1, ArmoryTheme.RULE);
+
+        SkinProgress.Counters counters = progressOf(tile);
+        int level = SkinProgress.levelFor(tile, counters);
+        int max = SkinProgress.maxLevel(tile);
+        String caption = (level >= max
+                ? Component.translatable("gui.mcpskins.armory.level_max", level)
+                : Component.translatable("gui.mcpskins.armory.level", level, max)).getString().toUpperCase(Locale.ROOT);
+
+        int pipsW = max <= MAX_LEVEL_PIPS ? max * 5 - 1 : 0;
+        ArmoryTheme.text(guiGraphics, this.font,
+                ArmoryTheme.truncate(this.font, caption, block.width() - pipsW - GAP_TIGHT, ArmoryTheme.SMALL),
+                block.x0(), block.y0(), ArmoryTheme.SMALL, level >= max ? ArmoryTheme.ACCENT_LIFT : ArmoryTheme.TEXT_72);
+        if (pipsW > 0) {
+            int x = block.x1() - pipsW;
+            for (int i = 1; i <= max; i++) {
+                guiGraphics.fill(x, block.y0() + 1, x + 4, block.y0() + 5,
+                        i <= level ? ArmoryTheme.ACCENT : ArmoryTheme.TEXT_28);
+                x += 5;
+            }
+        }
+
+        SkinDataModels.SkinLevel next = nextLevel(tile);
+        if (next == null) return;
+        int row = 1;
+        for (Map.Entry<SkinDataModels.LevelCounter, Integer> condition : next.requires().entrySet()) {
+            if (row >= layout.progressRows()) break;
+            int y = block.y0() + row * PROGRESS_ROW_H;
+            int have = Math.min(counters.get(condition.getKey()), condition.getValue());
+            String value = have + " / " + condition.getValue();
+            int valueW = ArmoryTheme.scaledWidth(this.font, value, ArmoryTheme.SMALL);
+            String label = Component.translatable("gui.mcpskins.armory.counter." + condition.getKey().key())
+                    .getString().toUpperCase(Locale.ROOT);
+            ArmoryTheme.text(guiGraphics, this.font,
+                    ArmoryTheme.truncate(this.font, label, block.width() - valueW - GAP_TIGHT, ArmoryTheme.SMALL),
+                    block.x0(), y, ArmoryTheme.SMALL, ArmoryTheme.TEXT_28);
+            ArmoryTheme.textRight(guiGraphics, this.font, value, block.x1(), y, ArmoryTheme.SMALL, ArmoryTheme.TEXT_72);
+
+            int barY = y + 7;
+            guiGraphics.fill(block.x0(), barY, block.x1(), barY + 1, ArmoryTheme.RULE);
+            int fill = Math.round(block.width() * (have / (float) condition.getValue()));
+            if (fill > 0) {
+                guiGraphics.fill(block.x0(), barY, block.x0() + fill, barY + 1, ArmoryTheme.ACCENT);
+            }
+            row++;
+        }
+    }
+
     private void renderInfo(GuiGraphics guiGraphics, Layout layout) {
-        SkinDataModels.SkinEntry entry = selectedSkin();
+        SkinDataModels.SkinEntry entry = displayedSkin();
         if (entry == null) return;
         Rect info = layout.info();
         ArmoryTheme.spriteTinted(guiGraphics, ArmoryTheme.RULE_FADE, info.x0(), info.y0() - 3,
                 info.width(), 1, ArmoryTheme.RULE);
 
-        Player player = Minecraft.getInstance().player;
-        boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
+        List<String[]> rows = infoRows(entry);
 
-        // Built, not fixed, so a skin with no collection leaves no placeholder row.
-        List<String[]> rows = new ArrayList<>();
-        if (!unlocked && entry.hasLockedText()) {
-            rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_unlock").getString(),
-                    SkinTranslations.lockedText(entry)});
-        }
-        if (entry.hasCollection()) {
-            rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_set").getString(),
-                    SkinTranslations.collection(entry)});
-        }
-        rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_rarity").getString(),
-                RarityManager.INSTANCE.get(entry.rarityId()).label().getString()});
-
-        // One column for every caption on show, so the values line up instead of stepping.
-        int shown = Math.min(2, rows.size());
+        int shown = Math.min(layout.infoRows(), rows.size());
         int labelW = 0;
         for (int i = 0; i < shown; i++) {
+            if (rows.get(i)[0] == null) continue;
             labelW = Math.max(labelW, ArmoryTheme.scaledWidth(this.font,
                     rows.get(i)[0].toUpperCase(Locale.ROOT), ArmoryTheme.SMALL));
         }
         labelW = Math.min(labelW + GAP_TIGHT, info.width() / 2);
 
         for (int i = 0; i < shown; i++) {
-            infoRow(guiGraphics, info, i, labelW, rows.get(i)[0], rows.get(i)[1]);
+            if (rows.get(i)[0] == null) {
+                ArmoryTheme.text(guiGraphics, this.font,
+                        ArmoryTheme.truncate(this.font, rows.get(i)[1], info.width(), ArmoryTheme.SMALL),
+                        info.x0(), info.y0() + i * INFO_ROW_H, ArmoryTheme.SMALL, ArmoryTheme.TEXT_50);
+            } else {
+                infoRow(guiGraphics, info, i, labelW, rows.get(i)[0], rows.get(i)[1]);
+            }
         }
     }
 
-    /** {@code labelW} is measured across the whole block, so a longer caption in one language
-     *  widens the column rather than running into its own value. */
+    // In priority order: a short column cuts the tail. A null caption marks the subtitle.
+    private List<String[]> infoRows(SkinDataModels.SkinEntry entry) {
+        List<String[]> rows = new ArrayList<>();
+        if (entry == null) return rows;
+        Player player = Minecraft.getInstance().player;
+        boolean unlocked = player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
+        if (!unlocked && entry.hasLockedText()) {
+            rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_unlock").getString(),
+                    SkinTranslations.lockedText(entry)});
+        }
+        if (entry.hasSubtitle()) {
+            rows.add(new String[]{null, SkinTranslations.subtitle(entry)});
+        }
+        if (entry.hasCollection()) {
+            rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_set").getString(),
+                    SkinTranslations.collection(entry)});
+        }
+        if (entry.hasAuthor()) {
+            rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_author").getString(),
+                    entry.author()});
+        }
+        rows.add(new String[]{Component.translatable("gui.mcpskins.armory.info_rarity").getString(),
+                RarityManager.INSTANCE.get(entry.rarityId()).label().getString()});
+        return rows;
+    }
+
+    // labelW spans the whole block, so a long caption widens the column instead of overlapping.
     private void infoRow(GuiGraphics guiGraphics, Rect info, int index, int labelW, String label, String value) {
         int y = info.y0() + index * INFO_ROW_H;
         ArmoryTheme.text(guiGraphics, this.font,
@@ -617,7 +870,7 @@ public class SkinArmoryScreen extends Screen {
 
     private void renderEquip(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
         Rect equip = layout.equip();
-        SkinDataModels.SkinEntry entry = selectedSkin();
+        SkinDataModels.SkinEntry entry = displayedSkin();
         Player player = Minecraft.getInstance().player;
         boolean unlocked = entry != null && player != null && SkinAttachment.isOwnedOrDefault(player, entry.id());
         boolean equipped = entry != null && isSkinCurrentlyEquipped(findGroup(selectedGun).weapon(), entry);
@@ -653,7 +906,7 @@ public class SkinArmoryScreen extends Screen {
     private void renderTooltips(GuiGraphics guiGraphics, Layout layout, int mouseX, int mouseY) {
         RailRow row = railRowAt(layout, mouseX, mouseY);
         if (row != null && row.skinId() == null) {
-            // Every row, not only truncated ones: a conditional tooltip reads as arbitrary.
+            // Every row, not only truncated ones: a conditional tooltip feels arbitrary.
             GunGroup group = findGroup(row.gunId());
             List<Component> lines = new ArrayList<>();
             lines.add(Component.literal(weaponDisplayName(row.gunId())));
@@ -665,6 +918,12 @@ public class SkinArmoryScreen extends Screen {
             return;
         }
 
+        SkinDataModels.SkinEntry swatch = swatchAt(layout, mouseX, mouseY);
+        if (swatch != null) {
+            renderSwatchTooltip(guiGraphics, swatch, mouseX, mouseY);
+            return;
+        }
+
         SkinDataModels.SkinEntry hovered = tileAt(layout, mouseX, mouseY);
         if (hovered == null) return;
         Player player = Minecraft.getInstance().player;
@@ -673,6 +932,20 @@ public class SkinArmoryScreen extends Screen {
         List<Component> lines = new ArrayList<>();
         lines.add(Component.literal(SkinTranslations.name(hovered)).withStyle(s -> s.withColor(hovered.labelColor())));
         lines.add(RarityManager.INSTANCE.get(hovered.rarityId()).label());
+        if (hovered.limited()) {
+            lines.add(Component.translatable("gui.mcpskins.armory.limited_edition")
+                    .withStyle(s -> s.withColor(ArmoryTheme.LIMITED & 0xFFFFFF)));
+        }
+        if (hovered.hasAuthor()) {
+            lines.add(Component.translatable("gui.mcpskins.armory.tooltip_author", hovered.author())
+                    .withStyle(ChatFormatting.GRAY));
+        }
+        if (hovered.hasVariants()) {
+            GunGroup group = findGroup(selectedGun);
+            int variants = group == null ? hovered.variants().size() : family(group.weapon(), hovered).size() - 1;
+            lines.add(Component.translatable("gui.mcpskins.armory.variant_count", variants)
+                    .withStyle(ChatFormatting.GRAY));
+        }
         if (!unlocked) {
             lines.add(hovered.hasLockedText()
                     ? Component.literal(SkinTranslations.lockedText(hovered)).withStyle(ChatFormatting.GRAY)
@@ -681,7 +954,29 @@ public class SkinArmoryScreen extends Screen {
         guiGraphics.renderTooltip(this.font, lines, Optional.empty(), mouseX, mouseY);
     }
 
-    // Mouse input
+    private void renderSwatchTooltip(GuiGraphics guiGraphics, SkinDataModels.SkinEntry member, int mouseX, int mouseY) {
+        SkinDataModels.SkinEntry tile = selectedSkin();
+        Player player = Minecraft.getInstance().player;
+        boolean owned = player != null && SkinAttachment.isOwnedOrDefault(player, member.id());
+
+        List<Component> lines = new ArrayList<>();
+        lines.add(Component.literal(SkinTranslations.name(member)).withStyle(s -> s.withColor(member.labelColor())));
+        int memberLevel = tile == null ? 0 : tile.levelOf(member.id());
+        if (tile != null && member.id().equals(tile.id())) {
+            lines.add(Component.translatable("gui.mcpskins.armory.variant_base").withStyle(ChatFormatting.GRAY));
+        } else if (memberLevel > 0) {
+            boolean reached = SkinProgress.levelFor(tile, progressOf(tile)) >= memberLevel;
+            lines.add(Component.translatable(reached
+                            ? "gui.mcpskins.armory.level_reached" : "gui.mcpskins.armory.level_requires", memberLevel)
+                    .withStyle(reached ? ChatFormatting.AQUA : ChatFormatting.GRAY));
+        }
+        if (!owned) {
+            lines.add(member.hasLockedText()
+                    ? Component.literal(SkinTranslations.lockedText(member)).withStyle(ChatFormatting.GRAY)
+                    : Component.translatable("gui.mcpskins.armory.status_locked").withStyle(ChatFormatting.RED));
+        }
+        guiGraphics.renderTooltip(this.font, lines, Optional.empty(), mouseX, mouseY);
+    }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
@@ -690,7 +985,7 @@ public class SkinArmoryScreen extends Screen {
         }
         if (button != 0) return false;
 
-        Layout layout = compute(this.width, this.height, this.font, sortMode);
+        Layout layout = layout();
 
         for (StatusFilter filter : StatusFilter.values()) {
             if (layout.filters()[filter.ordinal()].contains(mouseX, mouseY)) {
@@ -739,6 +1034,16 @@ public class SkinArmoryScreen extends Screen {
             return true;
         }
 
+        SkinDataModels.SkinEntry swatch = swatchAt(layout, mouseX, mouseY);
+        if (swatch != null) {
+            focusPane = FocusPane.TILES;
+            selectedVariantId = swatch.id().equals(selectedSkinId) ? null : swatch.id();
+            statusMessage = null;
+            updatePodiumStack();
+            playClick();
+            return true;
+        }
+
         SkinDataModels.SkinEntry tile = tileAt(layout, mouseX, mouseY);
         if (tile != null) {
             focusPane = FocusPane.TILES;
@@ -776,7 +1081,7 @@ public class SkinArmoryScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        Layout layout = compute(this.width, this.height, this.font, sortMode);
+        Layout layout = layout();
         if (podium.isInBounds(mouseX, mouseY)) {
             podium.onMouseScrolled(scrollY);
             return true;
@@ -873,8 +1178,6 @@ public class SkinArmoryScreen extends Screen {
         tileScroll = Mth.clamp(tileScroll, 0, maxTileScroll(layout));
     }
 
-    // Keyboard input
-
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (searchBox != null && searchBox.isFocused() && keyCode != GLFW.GLFW_KEY_ESCAPE) {
@@ -901,7 +1204,7 @@ public class SkinArmoryScreen extends Screen {
     }
 
     private void handleNavigation(int keyCode) {
-        Layout layout = compute(this.width, this.height, this.font, sortMode);
+        Layout layout = layout();
         if (focusPane == FocusPane.RAIL) {
             if (groups.isEmpty()) return;
             int index = 0;
@@ -914,7 +1217,7 @@ public class SkinArmoryScreen extends Screen {
             if (keyCode == GLFW.GLFW_KEY_UP) index = Math.max(0, index - 1);
             else if (keyCode == GLFW.GLFW_KEY_DOWN) index = Math.min(groups.size() - 1, index + 1);
             selectGun(groups.get(index).weapon().baseGun());
-            scrollRailToSelection(compute(this.width, this.height, this.font, sortMode));
+            scrollRailToSelection(layout());
             return;
         }
 
@@ -938,14 +1241,9 @@ public class SkinArmoryScreen extends Screen {
         return true;
     }
 
-    // Equipping
-
-    /**
-     * Browsing needs no weapon in hand; the stage is a synthetic preview. Equipping does, since
-     * the server applies the skin to whichever hand holds the gun.
-     */
+    // Needs the gun in hand: the server applies the skin to whichever hand holds it.
     private void equipSelected() {
-        SkinDataModels.SkinEntry entry = selectedSkin();
+        SkinDataModels.SkinEntry entry = displayedSkin();
         GunGroup group = findGroup(selectedGun);
         Player player = Minecraft.getInstance().player;
         if (entry == null || group == null || player == null) return;
@@ -966,7 +1264,7 @@ public class SkinArmoryScreen extends Screen {
             return;
         }
 
-        // Optimistic: set the component locally rather than waiting for the server echo.
+        // Optimistic local set; the server's echo confirms it.
         ItemStack held = player.getItemInHand(hand);
         ItemStack optimistic = TACZSkinHelper.applySkin(held, entry.id());
         if (!optimistic.isEmpty()) {
@@ -980,7 +1278,7 @@ public class SkinArmoryScreen extends Screen {
     }
 
     private boolean canEquipSelected() {
-        SkinDataModels.SkinEntry entry = selectedSkin();
+        SkinDataModels.SkinEntry entry = displayedSkin();
         GunGroup group = findGroup(selectedGun);
         Player player = Minecraft.getInstance().player;
         if (entry == null || group == null || player == null) return false;
@@ -1009,7 +1307,14 @@ public class SkinArmoryScreen extends Screen {
         return normalized.equals(TACZSkinHelper.bareSkinId(entry.id()));
     }
 
-    // Helpers
+    private boolean isFamilyCurrentlyEquipped(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry tile) {
+        if (isSkinCurrentlyEquipped(weapon, tile)) return true;
+        for (String variantId : tile.variants()) {
+            SkinDataModels.SkinEntry variant = entryInWeapon(weapon, variantId);
+            if (variant != null && isSkinCurrentlyEquipped(weapon, variant)) return true;
+        }
+        return false;
+    }
 
     private SkinDataModels.SkinEntry skinById(String gunId, String skinId) {
         GunGroup group = findGroup(gunId);
@@ -1017,10 +1322,7 @@ public class SkinArmoryScreen extends Screen {
         return index < 0 ? null : group.skins().get(index);
     }
 
-    /**
-     * Cached for the life of the screen. The stack depends only on the two ids, not on whether
-     * the skin's assets have streamed in, so it never goes stale.
-     */
+    // Cached for the screen's life: the stack depends only on the two ids, never on streamed assets.
     private ItemStack previewStack(String baseGun, String skinId) {
         String key = baseGun + SEPARATOR + (skinId == null ? "" : skinId);
         return stackCache.computeIfAbsent(key, ignored ->
@@ -1034,16 +1336,11 @@ public class SkinArmoryScreen extends Screen {
         });
     }
 
-    /** The weapon's default skin - {@code bareSkinId(id)} equals the weapon's own baseGun. */
     private boolean isDefaultSkin(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
         return TACZSkinHelper.bareSkinId(entry.id()).equals(weapon.baseGun());
     }
 
-    /**
-     * Resolved through the real render path so the badge cannot disagree with it. Keyed on
-     * {@link ClientSkinAssetCache#generation()}: the first check usually runs while the
-     * geo-model is still in flight, and pinning that {@code false} would stick.
-     */
+    // Uses the real render path so the badge cannot disagree; keyed on generation() since the geo-model usually arrives late.
     private boolean hasCustomModel(SkinDataModels.WeaponSkins weapon, SkinDataModels.SkinEntry entry) {
         String bare = TACZSkinHelper.bareSkinId(entry.id());
         if (bare.equals(weapon.baseGun())) return false;
@@ -1058,18 +1355,14 @@ public class SkinArmoryScreen extends Screen {
             ResourceLocation baseModelLocation = baseModelLocation(weapon);
             result = baseModelLocation != null && SkinAssetResolver.resolveModel(baseModelLocation, bare) != null;
         } catch (RuntimeException e) {
-            // Badge just doesn't show. Debug level - this runs per visible tile.
+            // Debug level: this runs per visible tile.
             MCPSkins.LOGGER.debug("[MCPSkins] Custom-model badge check failed for '{}'.", cacheKey, e);
         }
         customModelCache.put(cacheKey, new CustomModelResult(generation, result));
         return result;
     }
 
-    /**
-     * Where a skin's replacement geometry would have to sit. Null for anything that is not a TACZ
-     * item: geometry replacement goes through TACZ's model registry, which knows nothing about
-     * another addon's models, so those skins are texture and icon only.
-     */
+    // Null for non-TACZ items: geometry replacement only works through TACZ's model registry.
     private ResourceLocation baseModelLocation(SkinDataModels.WeaponSkins weapon) {
         if (weapon.target() != SkinDataModels.SkinTarget.GUN
                 && weapon.target() != SkinDataModels.SkinTarget.ATTACHMENT) {

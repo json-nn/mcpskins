@@ -21,12 +21,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Loads rarity tiers from {@code data/<namespace>/skin_rarities/} and exposes them by id. The
- * five built-ins are registered in code, so the mod runs with no rarity datapack at all; a file
- * named after one replaces it, any other name adds a tier.
- * <p>
- * Ids stay unresolved until read, because this and {@link SkinManager} are two reload listeners
- * with no guaranteed order between them.
+ * Rarity tiers from {@code data/<namespace>/skin_rarities/<id>.json} over five built-ins (a file
+ * named like one replaces it). Skins resolve tiers on read: this and {@link SkinManager} reload unordered.
  */
 public class RarityManager extends SimpleJsonResourceReloadListener {
     private static final List<SkinDataModels.Rarity> BUILT_INS = List.of(
@@ -36,12 +32,6 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
             builtIn("epic", "Epic", 0xB47FFF, 300),
             builtIn("legendary", "Legendary", 0xFFB347, 400));
 
-    /**
-     * @param byId   every known tier
-     * @param sorted ascending by {@code order}; the Armory sorts and the default fuse ladder
-     *               both read this
-     * @param lowest fallback for unknown ids, never null
-     */
     private record Snapshot(Map<String, SkinDataModels.Rarity> byId,
                             List<SkinDataModels.Rarity> sorted,
                             SkinDataModels.Rarity lowest) {}
@@ -50,7 +40,7 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
 
     private static final Set<String> WARNED_UNKNOWN = ConcurrentHashMap.newKeySet();
 
-    /** Must stay below BUILT_INS: the constructor reads it, and initializers run in order. */
+    // Must stay below BUILT_INS: the constructor reads it, and initializers run in order.
     public static final RarityManager INSTANCE = new RarityManager();
 
     public RarityManager() {
@@ -58,7 +48,7 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
     }
 
     private static SkinDataModels.Rarity builtIn(String id, String name, int color, int order) {
-        // Keeps the existing gui.mcpskins.armory.rarity_* keys, so en/ru/uk still localize.
+        // The mod's own lang files localize these.
         return new SkinDataModels.Rarity(id, name, "gui.mcpskins.armory.rarity_" + id,
                 color, order, true, null, List.of());
     }
@@ -104,7 +94,7 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
                 parseTargets(json.get("fuses_into")));
     }
 
-    /** Accepts a bare id, or an array of {@code {rarity, weight}} objects. */
+    // Accepts a bare id, or an array of {rarity, weight} objects.
     private static List<SkinDataModels.FuseTarget> parseTargets(JsonElement element) {
         if (element == null || element.isJsonNull()) return List.of();
 
@@ -127,7 +117,7 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
         return targets;
     }
 
-    /** Drops fuse targets naming a tier that doesn't exist, then publishes atomically. */
+    // Drops fuse targets naming unknown tiers, then publishes atomically.
     private void publish(Map<String, SkinDataModels.Rarity> byId) {
         snapshot = build(validate(byId));
     }
@@ -162,7 +152,7 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
         return new Snapshot(Map.copyOf(byId), List.copyOf(sorted), lowest);
     }
 
-    /** Never null: an unknown id warns once and falls back, so a typo costs sorting, not the skin. */
+    // Never null: an unknown id warns once and falls back to the lowest tier.
     public SkinDataModels.Rarity get(String rarityId) {
         Snapshot current = snapshot;
         if (rarityId == null || rarityId.isBlank()) return current.lowest();
@@ -185,7 +175,6 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
         return snapshot.byId().values();
     }
 
-    /** The next fusable tier above {@code from}, or null at the top of the ladder. */
     public SkinDataModels.Rarity nextByOrder(SkinDataModels.Rarity from) {
         for (SkinDataModels.Rarity candidate : snapshot.sorted()) {
             if (candidate.order() > from.order() && candidate.fusable()) {
@@ -200,7 +189,7 @@ public class RarityManager extends SimpleJsonResourceReloadListener {
         for (SkinDataModels.Rarity rarity : rarities) {
             byId.put(rarity.id(), rarity);
         }
-        // Server is authoritative, but never leave the client with nothing to resolve against.
+        // Never leave the client with nothing to resolve against.
         if (byId.isEmpty()) byId = defaults();
         WARNED_UNKNOWN.clear();
         publish(byId);

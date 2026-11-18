@@ -9,17 +9,19 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.minechestplate.mcpskins.MCPSkins;
 import sun.misc.Unsafe;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
- * The attachment-side counterpart of {@link GunDisplayInstancePatcher}. Simpler, because an
- * attachment model carries no animation state machine: the replacement loads through TACZ's own
- * {@code getOrLoadAttachmentModel} and drops into a field.
- * <p>
- * Reads go through fields rather than getters, which would force the lazy model load.
+ * Attachment counterpart of {@link GunDisplayInstancePatcher}; models load through TACZ's
+ * {@code getOrLoadAttachmentModel} (no state machine). Reads fields, not getters, which would
+ * force the lazy load. Must work on both TACZ ports.
  */
 public final class ClientAttachmentIndexPatcher {
 
@@ -38,7 +40,6 @@ public final class ClientAttachmentIndexPatcher {
         return read(index, "slotTexture", ResourceLocation.class);
     }
 
-    /** Collapsed model location from the attachment's display config, or null. */
     public static ResourceLocation getBaseModelLocation(ClientAttachmentIndex index) {
         AttachmentDisplay display = read(index, "display", AttachmentDisplay.class);
         return display == null ? null : display.getModel();
@@ -59,18 +60,15 @@ public final class ClientAttachmentIndexPatcher {
         return display == null ? null : display.getAttachmentLod();
     }
 
-    /** False until TACZ has loaded the base model, so a copy can't freeze a half-loaded state. */
+    // False until TACZ has loaded the base model, so a copy never freezes a half-loaded state.
     public static boolean isReadyToPatch(ClientAttachmentIndex index) {
         Boolean loaded = read(index, "modelsLoaded", Boolean.class);
-        if (loaded == null) return true; // field gone on this fork, patch anyway
+        if (loaded == null) return true; // field missing on this build: patch anyway
         if (!loaded) return false;
         Boolean failed = read(index, "modelsLoadFailed", Boolean.class);
         return failed == null || !failed;
     }
 
-    /**
-     * @return a patched copy, or null if the base isn't loaded yet or the copy failed
-     */
     public static ClientAttachmentIndex withOverrides(ClientAttachmentIndex index, ResourceLocation texture,
                                                       ResourceLocation icon, ResourceLocation modelLocation,
                                                       ResourceLocation lodModelLocation, ResourceLocation lodTexture) {
@@ -97,19 +95,91 @@ public final class ClientAttachmentIndexPatcher {
                 write(copy, "lodModel", Pair.of(lodModel, resolvedLodTexture));
             }
         }
+
+        if (texture != null || modelLocation != null || lodModelLocation != null || lodTexture != null) {
+            detachExternalModels(copy);
+        }
         return copy;
     }
 
-    /**
-     * Scope and sight flags live on the model, not the index, so a replacement has to be told
-     * what it is or an aimed-down scope stops behaving like one.
-     */
+    private static final String EXTERNAL_ASSETS_CLASS = "com.tacz.guns.client.resource.ExternalModelAssets";
+    private static final String LOAD_TASK_CLASS = "com.tacz.guns.client.resource.ClientAssetLoadTask";
+    private static volatile boolean externalSearched = false;
+    private static volatile Constructor<?> externalAssetsConstructor;
+    private static volatile Method externalAssetsAdd;
+
+    // Official port only: its baked external meshes have no room for a skin, so empty them and let the
+    // per-frame renderer read this copy.
+    private static void detachExternalModels(ClientAttachmentIndex copy) {
+        if (!externalSearched) {
+            try {
+                Class<?> assetsClass = Class.forName(EXTERNAL_ASSETS_CLASS);
+                Method add = assetsClass.getMethod("add", Supplier.class, Supplier.class, Consumer.class);
+                Constructor<?> constructor = assetsClass.getDeclaredConstructor();
+                constructor.setAccessible(true);
+                externalAssetsAdd = add;
+                externalAssetsConstructor = constructor;
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+            }
+            externalSearched = true;
+        }
+        if (externalAssetsConstructor == null) return;
+
+        try {
+            for (Field field : ClientAttachmentIndex.class.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())) continue;
+                String type = field.getType().getName();
+                Object replacement;
+                if (type.equals(EXTERNAL_ASSETS_CLASS)) {
+                    replacement = externalAssetsConstructor.newInstance();
+                } else if (type.equals(LOAD_TASK_CLASS)) {
+                    // A never-yielding task from a throwaway owner, so the copy's list stays empty, not pending.
+                    Supplier<Object> none = () -> null;
+                    Consumer<Throwable> ignore = failure -> { };
+                    replacement = externalAssetsAdd.invoke(externalAssetsConstructor.newInstance(), none, none, ignore);
+                } else {
+                    continue;
+                }
+                field.setAccessible(true);
+                field.set(copy, replacement);
+            }
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            warnOnce("externalModels");
+        }
+    }
+
+    // Scope and sight flags live on the model, so a replacement must inherit them.
     private static BedrockAttachmentModel loadModel(ResourceLocation location, ClientAttachmentIndex base) {
         BedrockAttachmentModel model = ClientAttachmentIndex.getOrLoadAttachmentModel(location);
         if (model == null) return null;
         model.setIsScope(base.isScope());
         model.setIsSight(base.isSight());
+        copyScopeLens(base, model);
         return model;
+    }
+
+    // Official port only: lens config lives on the model too. Both stay null on MUKSC.
+    private static volatile boolean scopeLensSearched = false;
+    private static volatile Method getScopeLens; // ClientAttachmentIndex
+    private static volatile Method setScopeLens; // BedrockAttachmentModel
+
+    private static void copyScopeLens(ClientAttachmentIndex base, BedrockAttachmentModel model) {
+        if (!scopeLensSearched) {
+            try {
+                Method getter = ClientAttachmentIndex.class.getMethod("getScopeLens");
+                setScopeLens = BedrockAttachmentModel.class.getMethod("setScopeLens", getter.getReturnType());
+                getScopeLens = getter;
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+            }
+            scopeLensSearched = true;
+        }
+        if (getScopeLens == null || setScopeLens == null) return;
+        try {
+            Object lens = getScopeLens.invoke(base);
+            if (lens != null) setScopeLens.invoke(model, lens);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            warnOnce("scopeLens");
+        }
     }
 
     private static <T> T read(ClientAttachmentIndex index, String name, Class<T> type) {

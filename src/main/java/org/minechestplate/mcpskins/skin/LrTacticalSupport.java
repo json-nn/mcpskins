@@ -10,12 +10,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Asks LesRaisins Tactical Equipments whether it has actually loaded a given melee, throwable or
- * consumable, so skins for items it does not provide stay hidden the same way missing TACZ guns do.
- * <p>
- * Reflective on purpose. The addon is not on any public maven, so compiling against it would mean
- * committing its jar; and it is optional anyway, so nothing here may be touched unless the mod is
- * present. Every failure degrades to "available", which shows a skin rather than silently eating it.
+ * Whether LesRaisins Tactical Equipments loaded a given melee, throwable or consumable, for
+ * {@link SkinAvailability}. Reflective (optional mod, no public maven); every failure reads as
+ * "available", so a skin is shown rather than silently hidden.
  */
 public final class LrTacticalSupport {
 
@@ -23,7 +20,6 @@ public final class LrTacticalSupport {
 
     private static final String API_CLASS = "me.xjqsh.lrtactical.api.LrTacticalAPI";
 
-    /** Index accessor per family, matching {@link SkinDataModels.SkinTarget}. */
     private static final Map<SkinDataModels.SkinTarget, String> INDEX_METHODS = Map.of(
             SkinDataModels.SkinTarget.MELEE, "getMeleeIndexes",
             SkinDataModels.SkinTarget.THROWABLE, "getThrowableIndexes",
@@ -45,7 +41,6 @@ public final class LrTacticalSupport {
         return cached;
     }
 
-    /** Whether the addon declares an item with this id in the given family. */
     public static boolean hasItem(SkinDataModels.SkinTarget target, ResourceLocation id) {
         Method accessor = accessor(target);
         if (accessor == null) {

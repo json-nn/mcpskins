@@ -30,17 +30,15 @@ import java.util.List;
 import java.util.function.ToIntFunction;
 
 /**
- * Trades several {@link SkinUnlockItem}s of one rarity for a single random item of a higher
- * one. Both sides run the same checks, so only the roll and the grant are server-only.
+ * Trades several {@link SkinUnlockItem}s of one rarity for one random item of a higher tier.
+ * Both sides run the checks; only the roll and the grant are server side.
  */
 final class SkinFusion {
 
     private SkinFusion() {
     }
 
-    /**
-     * @param consumesItems false in creative, where the checks still run but nothing is spent
-     */
+    // consumesItems is false in creative, where the checks still run but nothing is spent.
     static InteractionResultHolder<ItemStack> attempt(Item unlockItem, Level level, Player player,
                                                       InteractionHand hand, ItemStack stack,
                                                       String heldSkinId, boolean consumesItems) {
@@ -67,10 +65,9 @@ final class SkinFusion {
                     Component.translatable("message.mcpskins.fuse_max_rarity"));
         }
 
-        // Targets with nothing to hand out are dropped before the weighted pick, so a spread
-        // can't roll into an empty tier and fail on luck alone.
+        // Drop empty tiers before the weighted pick, so a fuse never fails on luck alone.
         List<SkinDataModels.FuseTarget> viable = targets.stream()
-                .filter(target -> !SkinManager.INSTANCE.getSkinsByRarity(target.rarityId()).isEmpty())
+                .filter(target -> !fusionPool(target.rarityId()).isEmpty())
                 .toList();
         if (viable.isEmpty()) {
             SkinDataModels.Rarity named = RarityManager.INSTANCE.get(targets.get(0).rarityId());
@@ -88,14 +85,12 @@ final class SkinFusion {
         }
 
         if (level.isClientSide()) {
-            // Feedback rides on SkinFusionPayload instead, so it only fires for a fuse the
-            // server actually accepted rather than every optimistic client-side pass.
+            // Feedback comes from SkinFusionPayload, so only server-accepted fuses animate.
             return InteractionResultHolder.success(stack);
         }
 
         SkinDataModels.SkinLookupResult rolled = roll(player, viable);
 
-        // Everything is validated and rolled, but nothing is spent yet: the hook for pity rules.
         SkinDataModels.SkinLookupResult result = rolled;
         if (player instanceof ServerPlayer serverPlayer) {
             SkinFuseEvent.Pre event =
@@ -110,7 +105,7 @@ final class SkinFusion {
             }
         }
 
-        // Read before consuming, since consumeSlots empties the stacks it takes from.
+        // Before consumeSlots, which empties these stacks.
         List<String> fusedSkinIds = collectFusedSkins(player, matchingSlots, fuseCost, heldSkinId);
         if (consumesItems) {
             consumeSlots(player, matchingSlots, fuseCost);
@@ -123,17 +118,12 @@ final class SkinFusion {
             NeoForge.EVENT_BUS.post(new SkinFuseEvent.Post(serverPlayer, fusedSkinIds, result.skin().id()));
         }
 
-        // Re-fetched, because grantUnlockItem may have replaced the hand's contents outright.
+        // grantUnlockItem may have replaced the hand's stack.
         return InteractionResultHolder.success(player.getItemInHand(hand));
     }
 
-    /**
-     * This rarity's declared fuse targets, or the next fusable tier by order when it declares
-     * none. Empty means the top of the ladder.
-     */
     static List<SkinDataModels.FuseTarget> targetsOf(SkinDataModels.Rarity rarity) {
         if (!rarity.fuseTargets().isEmpty()) {
-            // A target that has since been made unfusable stops being a valid outcome.
             return rarity.fuseTargets().stream()
                     .filter(target -> RarityManager.INSTANCE.get(target.rarityId()).fusable())
                     .toList();
@@ -146,15 +136,22 @@ final class SkinFusion {
         return rarity.fuseCost() != null ? rarity.fuseCost() : MCPSkinsServerConfig.fuseCost();
     }
 
-    /** Prefers a skin the player doesn't own, falling back once the whole tier is unlocked. */
+    // Prefers skins the player does not own yet.
     private static SkinDataModels.SkinLookupResult roll(Player player, List<SkinDataModels.FuseTarget> viable) {
         String targetRarityId = weightedPick(viable, SkinDataModels.FuseTarget::weight, player.getRandom()).rarityId();
-        List<SkinDataModels.SkinLookupResult> pool = SkinManager.INSTANCE.getSkinsByRarity(targetRarityId);
+        List<SkinDataModels.SkinLookupResult> pool = fusionPool(targetRarityId);
         List<SkinDataModels.SkinLookupResult> unowned = pool.stream()
                 .filter(entry -> !SkinAttachment.hasSkin(player, entry.skin().id()))
                 .toList();
         return weightedPick(unowned.isEmpty() ? pool : unowned,
                 entry -> entry.skin().weight(), player.getRandom());
+    }
+
+    // Variants are excluded: they only arrive with their root or through levels.
+    private static List<SkinDataModels.SkinLookupResult> fusionPool(String rarityId) {
+        return SkinManager.INSTANCE.getSkinsByRarity(rarityId).stream()
+                .filter(entry -> !entry.skin().isVariant())
+                .toList();
     }
 
     private static InteractionResultHolder<ItemStack> refuse(Level level, Player player, ItemStack stack,
@@ -163,14 +160,14 @@ final class SkinFusion {
         return InteractionResultHolder.fail(stack);
     }
 
-    /** Both sides run the checks, so only the server side of a shared refusal speaks. */
+    // Server only, so a refusal both sides reach is said once.
     private static void tell(Level level, Player player, ChatFormatting color, Component message) {
         if (!level.isClientSide()) {
             player.sendSystemMessage(message.copy().withStyle(color));
         }
     }
 
-    /** Distinct slots, not a count: several unlock items of one skin share a slot. */
+    // Distinct slots, not a count: several unlock items of one skin share a slot.
     private static List<Integer> findMatchingSlots(Item unlockItem, Player player, String rarityId) {
         List<Integer> slots = new ArrayList<>();
         Inventory inventory = player.getInventory();
@@ -187,7 +184,7 @@ final class SkinFusion {
         return slots;
     }
 
-    /** Weights are clamped to at least 1, so a zero-weight entry stays reachable. */
+    // Weights below 1 count as 1.
     private static <T> T weightedPick(List<T> items, ToIntFunction<T> weightOf, RandomSource random) {
         int total = 0;
         for (T item : items) {
@@ -210,11 +207,7 @@ final class SkinFusion {
         return total;
     }
 
-    /**
-     * Skin ids of the items {@link #consumeSlots} is about to take, one per item and in the same
-     * order, so the fuse effect can tint each orbiting item. Falls back to the held skin, since a
-     * creative fuse consumes nothing yet still animates.
-     */
+    // One id per item consumeSlots will take, for the animation; the held skin when a creative fuse takes nothing.
     private static List<String> collectFusedSkins(Player player, List<Integer> slots, int amount, String heldSkinId) {
         List<String> skinIds = new ArrayList<>();
         Inventory inventory = player.getInventory();
@@ -235,7 +228,6 @@ final class SkinFusion {
         return skinIds;
     }
 
-    /** Takes as many as needed from each stack in turn, so {@code amount} may exceed the slot count. */
     private static void consumeSlots(Player player, List<Integer> slots, int amount) {
         Inventory inventory = player.getInventory();
         int remaining = amount;
@@ -248,11 +240,7 @@ final class SkinFusion {
         }
     }
 
-    /**
-     * A fully consumed hand gets the reward back directly: {@link Inventory#add} could merge it
-     * into an unrelated stack or a slot the player isn't watching, making a successful fuse look
-     * like it took the items and gave nothing back.
-     */
+    // An emptied hand gets the reward directly, so the result appears where the player is looking.
     private static void grantUnlockItem(Item unlockItem, Player player, InteractionHand hand,
                                         ItemStack heldStack, String skinId) {
         ItemStack resultStack = new ItemStack(unlockItem);

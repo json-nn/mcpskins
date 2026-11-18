@@ -17,10 +17,7 @@ public record TextureCompanion(String id, String suffix, boolean afterExtension,
 
     private static final String PNG = ".png";
 
-    /**
-     * Animation metadata blocks because it decides the frame size; the LabPBR maps block
-     * because a shader looks them up the moment the texture first binds and caches a miss.
-     */
+    // All block: the mcmeta sets the frame size, and a shader caches a PBR miss on first bind.
     public static final List<TextureCompanion> ALL = List.of(
             new TextureCompanion("animation", ".mcmeta", true, () -> true, true),
             new TextureCompanion("normal", "_n", false, PbrSupport::wanted, true),
@@ -30,7 +27,6 @@ public record TextureCompanion(String id, String suffix, boolean afterExtension,
         return wanted.getAsBoolean();
     }
 
-    /** Null if the texture path is not a png. */
     public ResourceLocation pathFor(ResourceLocation texture) {
         String path = texture.getPath();
         if (afterExtension) {
@@ -45,7 +41,6 @@ public record TextureCompanion(String id, String suffix, boolean afterExtension,
         return afterExtension ? path.endsWith(suffix) : path.endsWith(suffix + PNG);
     }
 
-    /** The texture a companion path belongs to. */
     public String textureOf(String companionPath) {
         if (afterExtension) {
             return companionPath.substring(0, companionPath.length() - suffix.length());

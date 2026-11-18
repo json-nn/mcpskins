@@ -23,7 +23,6 @@ public class SkinUnlockedKubeEvent implements KubeEvent {
         return event.getSkinId();
     }
 
-    /** COMMAND, UNLOCK_ITEM, API, UNLOCK_ALL or DEFAULT_GRANT. */
     public String getSource() {
         return event.getSource().name();
     }

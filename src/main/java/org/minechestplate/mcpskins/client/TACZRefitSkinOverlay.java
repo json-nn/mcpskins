@@ -32,13 +32,9 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Embeds a skin carousel into TACZ's weapon refit screen. The displayed skin is purely a
- * function of {@link SkinComponents#SKIN_ID}; the GunId is never touched, and previewing a
- * locked skin is a local component edit with no packet and no effect on ownership.
- * <p>
- * Drawn rather than added as widgets: switching attachment tabs rebuilds
- * {@code GunRefitScreen}'s widget list without a full {@code init()}, so widgets would vanish.
- * Uses {@link ArmoryTheme}'s sprites, so it reskins with the Armory.
+ * Skin carousel on TACZ's refit screen. Previewing a locked skin is a local {@link SkinComponents#SKIN_ID}
+ * edit: no packet, no ownership change. Drawn, not widgets, because a tab switch rebuilds
+ * {@code GunRefitScreen}'s widgets without {@code init()}. Shares {@link ArmoryTheme}'s sprites.
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, value = Dist.CLIENT)
 public class TACZRefitSkinOverlay {
@@ -46,18 +42,17 @@ public class TACZRefitSkinOverlay {
     private static final String GUN_REFIT_SCREEN_CLASS = "com.tacz.guns.client.gui.GunRefitScreen";
 
     private static final int PANEL_BOTTOM_MARGIN = 14;
-    /** Extra grab room above the tray, so a click just over it still counts. */
     private static final int TRAY_CLICK_MARGIN = 24;
     private static final int TRAY_MARGIN = 8;
     private static final int TRAY_PAD = 12;
     private static final float SLOT_MAX_SCALE = 1.35f;
 
-    /** Shorter than the cull in {@link #computeSlots}: slot alpha hits zero at 3 anyway. */
+    // Shorter than the cull in computeSlots: slot alpha hits zero at 3 anyway.
     private static final float SLOT_TRAY_REACH = 2.5f;
 
     private static final int TRAY_SHADOW = 3;
 
-    /** Amber for a previewed but unowned skin, the one colour outside the theme. */
+    // Amber for a previewed but unowned skin, the one colour outside the theme.
     private static final int PREVIEW_ACCENT = 0xFFB347;
 
     // Lines the tooltip up with TACZ's own attachment-name label.
@@ -74,7 +69,7 @@ public class TACZRefitSkinOverlay {
     private static String lastSeenSkinId = null;
 
     private static boolean previewActive = false;
-    // The real (server-authoritative) bare skin id before we overwrote SKIN_ID for preview
+    // Server-authoritative skin id from before the preview overwrote SKIN_ID.
     private static String previewOriginalSkinId = null;
     private static String previewedSkinId = null;
     private static InteractionHand previewHand = null;
@@ -92,17 +87,17 @@ public class TACZRefitSkinOverlay {
         syncFocusedSkinToEquipped();
     }
 
-    /** Tied to closing, not init: init fires on every attachment tab switch. */
+    // Tied to closing, not init: init fires on every attachment tab switch.
     @SubscribeEvent
     public static void onScreenClosing(ScreenEvent.Closing event) {
         if (!isGunRefitScreen(event.getScreen())) return;
         restorePreviewIfActive();
-        // Or the toggle button's "lit" look survives into the next session.
+        // Or the toggle stays lit next time.
         skinModeActive = false;
     }
 
 
-    // LOWEST so we draw after TACZ's own Render.Post work, which would otherwise cover us.
+    // LOWEST: draw after TACZ's own Render.Post work.
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void onScreenRenderPost(ScreenEvent.Render.Post event) {
         Screen screen = event.getScreen();
@@ -135,7 +130,7 @@ public class TACZRefitSkinOverlay {
         renderPanel(guiGraphics, screen, weapon, equippedSkinId, mouseX, mouseY);
     }
 
-    /** @return {x0, y0, size}, shared by rendering and hit-testing so the two can't diverge */
+    // {x0, y0, size}, shared by rendering and hit-testing so the two can't diverge.
     private static int[] toggleButtonBounds(Screen screen) {
         int size = MCPSkinsClientConfig.refitButtonSize();
         ScreenAnchor anchor = MCPSkinsClientConfig.refitButtonAnchor();
@@ -163,7 +158,7 @@ public class TACZRefitSkinOverlay {
         }
     }
 
-    /** Read off the live widget bounds, so it survives TACZ moving its own buttons. */
+    // Read off the live widget bounds, so it survives TACZ moving its own buttons.
     private static int computeToastTop(Screen screen, int toastX0, int boxWidth, int boxHeight) {
         int candidateY = 8;
         int toastX1 = toastX0 + boxWidth;
@@ -254,8 +249,7 @@ public class TACZRefitSkinOverlay {
         List<CarouselSlot> slots = computeSlots(weapon, centerX, centerY);
         Minecraft mc = Minecraft.getInstance();
 
-        // Width comes from the skin count rather than the live slot positions, so the tray
-        // stays put while the carousel scrolls under it.
+        // Width from the skin count, not live slot positions, so the tray stays put while the carousel scrolls.
         int slotSize = MCPSkinsClientConfig.carouselSlotSize();
         int centreSlotHalf = Math.round(slotSize * SLOT_MAX_SCALE) / 2;
         int halfSpan = Math.round(Math.min(SLOT_TRAY_REACH, weapon.skins().size() - 1)
@@ -265,8 +259,7 @@ public class TACZRefitSkinOverlay {
         int trayX0 = Math.max(TRAY_MARGIN, centerX - halfSpan - TRAY_PAD);
         int trayX1 = Math.min(width - TRAY_MARGIN, centerX + halfSpan + TRAY_PAD);
 
-        // Drawn past the content bounds: the sprite carries its own shadow in its border. No
-        // tint or fill behind it, so a resource pack replacing tray.png gets what it authored.
+        // Past the content bounds: the sprite's border holds its shadow. No tint, so a replaced tray.png shows as authored.
         ArmoryTheme.sprite(guiGraphics, ArmoryTheme.TRAY, trayX0 - TRAY_SHADOW, trayTop - TRAY_SHADOW,
                 (trayX1 - trayX0) + TRAY_SHADOW * 2, trayHeight + TRAY_SHADOW * 2);
 
@@ -438,7 +431,6 @@ public class TACZRefitSkinOverlay {
             }
         }
 
-        // Anywhere left or right of the cluster switches skins, not just the arrow glyph.
         if (mouseX < centerX) {
             if (focusedSkinIndex > 0) {
                 focusedSkinIndex--;
@@ -478,12 +470,7 @@ public class TACZRefitSkinOverlay {
     }
 
 
-    /**
-     * Client-side only, down the same path as a real application. Ownership doesn't change, and
-     * the real value comes back in {@link #restorePreviewIfActive()}.
-     *
-     * @param skinIdBare bare skin id to preview, or the weapon's baseGun to preview "no skin"
-     */
+    // Local only; restorePreviewIfActive() puts the real skin back. Passing baseGun previews "no skin".
     private static void previewLockedSkin(String skinIdBare) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
@@ -529,10 +516,7 @@ public class TACZRefitSkinOverlay {
         previewHand = null;
     }
 
-    /**
-     * {@link #restorePreviewIfActive()} runs from {@code ScreenEvent.Closing}, which never fires
-     * on a kick or a timeout, leaving a stale hand and skin id set for the next world.
-     */
+    // On disconnect: ScreenEvent.Closing never fires on a kick or timeout.
     public static void resetSessionState() {
         clearPreviewState();
         skinModeActive = false;
@@ -543,13 +527,13 @@ public class TACZRefitSkinOverlay {
         toastStartTime = 0L;
     }
 
-    /** Unaffected by an active preview. Null means no skin. */
+    // Unaffected by an active preview. Null means no skin.
     private static String getRealSkinId() {
         if (previewActive) return previewOriginalSkinId;
         return TACZSkinHelper.getSkinId(getViewedGunStack());
     }
 
-    /** "No skin" compares equal to the default entry's bare id, which is the baseGun. */
+    // "No skin" compares equal to the default entry's bare id, which is the baseGun.
     private static String normalizeEquipped(String skinIdOrNull, String baseGun) {
         return skinIdOrNull == null ? baseGun : skinIdOrNull;
     }
@@ -601,8 +585,6 @@ public class TACZRefitSkinOverlay {
         return skinId.startsWith("default:") ? skinId.substring(8) : skinId;
     }
 
-    // Carousel geometry (same "coverflow" approach as SkinHubScreen)
-
     private record CarouselSlot(int skinIndex, int centerX, int centerY, int size, float alpha, float distance) {
     }
 
@@ -616,8 +598,7 @@ public class TACZRefitSkinOverlay {
             float offset = i - animatedSkinIndex;
             float dist = Math.abs(offset);
             float alpha = Mth.clamp(1.2f - dist * 0.4f, 0f, 1f);
-            // Cull on alpha, not distance: renderItem ignores it, so a fully faded slot would
-            // still draw its icon with no tile behind it.
+            // Cull on alpha: renderItem ignores alpha, so a faded slot would still draw its icon.
             if (alpha <= 0.02f) continue;
 
             float scale = Mth.clamp(SLOT_MAX_SCALE - dist * 0.3f, 0.4f, SLOT_MAX_SCALE);

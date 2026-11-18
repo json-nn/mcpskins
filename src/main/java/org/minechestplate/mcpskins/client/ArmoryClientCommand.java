@@ -13,12 +13,8 @@ import org.minechestplate.mcpskins.MCPSkins;
 import org.minechestplate.mcpskins.client.gui.SkinArmoryScreen;
 
 /**
- * Registers the client-side "/mcpskins armory" command that opens {@link SkinArmoryScreen}
- * - a purely client-side alternative to the {@link ArmoryKeybinds} hotkey, no server
- * round-trip or permission needed.
- * <p>
- * The optional "skin" argument opens the Armory focused on that skin - used by the
- * clickable skin name in unlock/fuse chat messages, not meant to be typed by hand.
+ * Client-only {@code /mcpskins armory [skin]}; no permission needed. The skin argument is what the
+ * clickable names in unlock, fuse and level-up chat lines run.
  */
 @EventBusSubscriber(modid = MCPSkins.MOD_ID, value = Dist.CLIENT)
 public final class ArmoryClientCommand {
@@ -32,7 +28,6 @@ public final class ArmoryClientCommand {
         dispatcher.register(Commands.literal("mcpskins")
                 .then(Commands.literal("armory")
                         .executes(context -> {
-                            // A typed command is explicit intent - no "screen == null" guard needed
                             Minecraft.getInstance().setScreen(new SkinArmoryScreen());
                             return 1;
                         })

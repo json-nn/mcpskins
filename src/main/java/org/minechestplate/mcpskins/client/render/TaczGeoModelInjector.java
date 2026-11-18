@@ -13,44 +13,30 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Injects a skin's geo-model JSON straight into TACZ's {@code ClientAssetsManager} via
- * reflection - the same {@code bedrockModel}/{@code dataMap} a normal resource-pack reload
- * populates, so {@link GunModelPatcher} picks up injected models with no changes on its end.
- * <p>
- * Must parse with TACZ's own Gson instance, not a fresh one - geo-model JSON relies on a
- * custom TypeAdapter for cube UV data that a plain Gson would mangle.
- * <p>
- * Every discovery step fails soft (log once, return false): a missing geo skin just falls
- * back to the base weapon shape instead of crashing the client.
+ * Puts streamed geo-model JSON into {@code ClientAssetsManager.bedrockModel}'s {@code dataMap},
+ * where a resource reload would have put it. Must parse with TACZ's own Gson (custom cube UV
+ * adapter). Discovery fails soft: log once, keep the base shape.
  */
 public final class TaczGeoModelInjector {
 
-    private static volatile int supportState = -1; // -1 unchecked, 0 failed, 1 ok
+    private static volatile int supportState = -1;
     private static volatile boolean warningLogged = false;
 
     private static volatile Object clientAssetsManagerInstance;
     private static volatile Gson taczGson;
     private static volatile Class<?> bedrockModelPojoClass;
     private static volatile Map<ResourceLocation, Object> dataMap;
-    private static volatile Set<ResourceLocation> failedDataSet; // best-effort, may stay null
+    private static volatile Set<ResourceLocation> failedDataSet;
 
     private static final Set<String> WARNED_PARSE_FAILURES = ConcurrentHashMap.newKeySet();
 
-    /**
-     * Keys we added, so {@link #reset()} removes exactly those: otherwise a model from one
-     * server survives into the next session and {@code putIfAbsent} keeps the stale entry.
-     */
+    // Keys we added, so reset() removes exactly those and no server's model leaks into the next.
     private static final Set<ResourceLocation> INJECTED = ConcurrentHashMap.newKeySet();
 
     private TaczGeoModelInjector() {
     }
 
-    /**
-     * Parses jsonBytes as a BedrockModelPOJO and makes it available under collapsedIdentity.
-     * Overwrites our own previous entry; leaves a pack-provided one alone.
-     *
-     * @return true if a model is available under collapsedIdentity
-     */
+    // Overwrites our own earlier entry, never a pack-provided one.
     public static boolean inject(ResourceLocation collapsedIdentity, byte[] jsonBytes) {
         if (!ensureSupported()) return false;
         try {
@@ -148,7 +134,7 @@ public final class TaczGeoModelInjector {
         }
     }
 
-    /** By name first, then by generic type in case a fork renames the field. */
+    // By name, then by generic type in case a port renames it.
     private static Field findLazyManagerField(Class<?> owner, Class<?> lazyManagerClass, Class<?> pojoClass)
             throws ReflectiveOperationException {
         try {
@@ -189,11 +175,7 @@ public final class TaczGeoModelInjector {
                         + "Texture/icon/HUD re-skinning is unaffected.");
     }
 
-    /**
-     * Drops our entries and every cached handle, forcing rediscovery on the next
-     * {@link #inject}: {@link #dataMap} is a live reference, and TACZ replacing rather than
-     * clearing it would leave injections landing in an orphaned map forever.
-     */
+    // Drops our entries and all handles: TACZ may replace dataMap, so rediscover next time.
     public static void reset() {
         synchronized (TaczGeoModelInjector.class) {
             Map<ResourceLocation, Object> map = dataMap;

@@ -4,12 +4,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.Event;
 
 /**
- * Fired on {@code NeoForge.EVENT_BUS}, server side, when an unlock leaves a player owning every
- * skin of a named collection they did not already own in full.
- * <p>
- * Only the transition fires it, so further unlocks within an already complete collection stay
- * quiet. A bulk grant is evaluated once after the whole batch. Stock {@code default:} entries
- * carry no collection and never count toward one.
+ * Server side, on {@code NeoForge.EVENT_BUS}: an unlock completed a collection. Fires only on the
+ * transition to complete, once per bulk grant. Stock {@code default:} entries never count.
  */
 public class CollectionCompletedEvent extends Event {
 

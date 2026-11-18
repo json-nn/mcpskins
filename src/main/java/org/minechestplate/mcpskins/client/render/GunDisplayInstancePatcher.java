@@ -5,28 +5,32 @@ import net.minecraft.resources.ResourceLocation;
 import org.minechestplate.mcpskins.MCPSkins;
 import sun.misc.Unsafe;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Copies a {@link GunDisplayInstance} with an overridden texture, icon or HUD icon. Geometry is
- * not a simple field once loaded, so {@link GunModelPatcher} handles that separately.
- * <p>
- * The class is neither {@code Cloneable} nor a record, and its constructor does real asset
- * loading, so copies go through {@code Unsafe#allocateInstance} plus a reflective field copy.
- * Each override applies independently: one failing field leaves the rest working.
- * <p>
- * Never forces the lazy texture load, which raced with resource pack reloads;
- * {@link #isBaseReadyToPatch} waits for TACZ's own flags instead.
+ * Copies a {@link GunDisplayInstance} (Unsafe allocation plus field copy, since the constructor
+ * loads assets) with texture, icon or HUD overrides, each applied independently. Never forces
+ * the lazy texture load, which races resource reloads. Geometry is {@link GunModelPatcher}'s job.
+ * Field names must exist on both TACZ ports; see docs/ai/tacz-integration.md.
  */
 public final class GunDisplayInstancePatcher {
 
     private static final String TEXTURE_FIELD_NAME = "modelTexture";
     private static final String HUD_FIELD_NAME = "hudTexture";
     private static final String HUD_EMPTY_FIELD_NAME = "hudEmptyTexture";
+
+    // The official port caches meshes (texture included) by this id, so a re-textured copy needs its own.
+    private static final String DISPLAY_ID_FIELD_NAME = "displayId";
+
+    // Official-port per-instance state that a copy must not share with its base.
+    private static final String SHELL_RENDERER_CLASS = "com.tacz.guns.client.renderer.external.ExternalShellRenderer";
+    private static final String LOAD_LOCK_FIELD_NAME = "loadLock";
 
     private static final String MODEL_LOADED_FIELD_NAME = "modelLoaded";
     private static final String MODEL_LOAD_FAILED_FIELD_NAME = "modelLoadFailed";
@@ -48,7 +52,7 @@ public final class GunDisplayInstancePatcher {
     private GunDisplayInstancePatcher() {
     }
 
-    /** Directly, not through the getter, which would force the lazy load as a side effect. */
+    // Reads the field, not the getter, which would force the lazy load.
     public static ResourceLocation getTexture(GunDisplayInstance instance) {
         if (instance == null) return null;
         Field field = resolveTextureField();
@@ -107,7 +111,7 @@ public final class GunDisplayInstancePatcher {
         }
     }
 
-    /** The getter is fine here: {@code hudTexture} is set synchronously, with no lazy load. */
+    // The getter is safe: hudTexture is not lazily loaded.
     public static ResourceLocation getHud(GunDisplayInstance instance) {
         return instance != null ? instance.getHUDTexture() : null;
     }
@@ -155,10 +159,6 @@ public final class GunDisplayInstancePatcher {
 
     private static final Set<String> WARNED_WRITE_FAILURES = ConcurrentHashMap.newKeySet();
 
-    /**
-     * @param  instance any override may be null to leave that asset untouched
-     * @return null only if the original isn't ready to copy yet, or the copy itself failed
-     */
     public static GunDisplayInstance withOverrides(GunDisplayInstance instance, ResourceLocation textureOverride,
                                                    ResourceLocation iconOverride, ResourceLocation hudOverride, ResourceLocation hudEmptyOverride) {
         if (instance == null) return null;
@@ -175,6 +175,10 @@ public final class GunDisplayInstancePatcher {
 
         if (textureOverride != null) {
             tryWriteField(copy, TEXTURE_FIELD_NAME, textureOverride);
+            ResourceLocation displayId = textureDisplayId(instance, textureOverride);
+            if (displayId != null) {
+                tryWriteField(copy, DISPLAY_ID_FIELD_NAME, displayId);
+            }
         }
         if (iconOverride != null) {
             Field iconField = resolveIconField();
@@ -253,19 +257,30 @@ public final class GunDisplayInstancePatcher {
         }
     }
 
+    private static ResourceLocation textureDisplayId(GunDisplayInstance base, ResourceLocation texture) {
+        try {
+            Field field = findField(GunDisplayInstance.class, DISPLAY_ID_FIELD_NAME);
+            field.setAccessible(true);
+            if (!(field.get(base) instanceof ResourceLocation baseId)) return null;
+            return ResourceLocation.tryBuild(MCPSkins.MOD_ID, "skin_texture/" + baseId.getNamespace() + "/"
+                    + baseId.getPath() + "/" + texture.getNamespace() + "/" + texture.getPath());
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
+    }
+
     private static GunDisplayInstance shallowCopy(GunDisplayInstance instance) {
         try {
             Unsafe unsafe = getUnsafe();
             Object rawCopy = unsafe.allocateInstance(GunDisplayInstance.class);
             GunDisplayInstance copy = (GunDisplayInstance) rawCopy;
-            // The whole superclass chain: allocateInstance leaves every field at its default,
-            // so an inherited one would silently stay null in the copy.
+            // Whole superclass chain: allocateInstance leaves inherited fields at their defaults.
             for (Class<?> current = GunDisplayInstance.class; current != null && current != Object.class;
                  current = current.getSuperclass()) {
                 for (Field field : current.getDeclaredFields()) {
                     if (Modifier.isStatic(field.getModifiers())) continue;
                     field.setAccessible(true);
-                    field.set(copy, field.get(instance));
+                    field.set(copy, ownCopyOf(field, field.get(instance)));
                 }
             }
             return copy;
@@ -276,7 +291,23 @@ public final class GunDisplayInstancePatcher {
         }
     }
 
-    /** Resolved once - this sits on a path that runs per weapon per frame. */
+    // Fields a copy must not share: warm-up futures are nulled so the copy loads for itself; the load
+    // lock and shell renderer are fresh. External-model tasks stay shared on purpose.
+    private static Object ownCopyOf(Field field, Object value) {
+        if (value instanceof CompletableFuture<?>) return null;
+        if (LOAD_LOCK_FIELD_NAME.equals(field.getName()) && field.getType() == Object.class) return new Object();
+        if (value != null && SHELL_RENDERER_CLASS.equals(value.getClass().getName())) {
+            try {
+                Constructor<?> constructor = value.getClass().getDeclaredConstructor();
+                constructor.setAccessible(true);
+                return constructor.newInstance();
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                return value;
+            }
+        }
+        return value;
+    }
+
     private static volatile Unsafe cachedUnsafe;
 
     private static Unsafe getUnsafe() throws ReflectiveOperationException {

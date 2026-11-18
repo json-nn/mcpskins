@@ -15,15 +15,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.util.Optional;
 
 /**
- * Swaps a skin's texture and inventory icon into LesRaisins Tactical Equipments' display lookups,
- * the same way {@link TimelessAPIMixin} does for TACZ.
- * <p>
- * Targeted by name rather than by class: the addon is optional and is not on a public maven, so
- * there is nothing to compile against. Every injector is {@code require = 0}, which makes the
- * whole mixin inert when the mod is absent instead of failing to apply.
- * <p>
- * Its renderer resolves a display through {@code getDisplayId(stack)} before falling back to the
- * item id, so intercepting the API covers every place an item is drawn.
+ * Texture and icon skins for LesRaisins Tactical Equipments, like {@link TimelessAPIMixin} for TACZ.
+ * Targeted by name (optional mod, no public maven); keep every injector {@code require = 0} so the
+ * mixin is inert without it. Its renderers all resolve displays through this API.
  */
 @Mixin(targets = "me.xjqsh.lrtactical.api.LrTacticalAPI", remap = false)
 public class LrTacticalAPIMixin {
@@ -52,7 +46,7 @@ public class LrTacticalAPIMixin {
         mcpskins$apply(stack, cir);
     }
 
-    /** Shared because all three display types expose the same texture and slotTexture fields. */
+    // All three display types share the texture and slotTexture fields.
     private static void mcpskins$apply(ItemStack stack, CallbackInfoReturnable<Optional<Object>> cir) {
         Optional<Object> original = cir.getReturnValue();
         if (original == null || original.isEmpty()) return;
@@ -74,7 +68,7 @@ public class LrTacticalAPIMixin {
         ResourceLocation iconOverride = (icon != null && !icon.equals(baseIcon)) ? icon : null;
 
         if (textureOverride == null && iconOverride == null) {
-            return; // no art for this skin in any active pack
+            return;
         }
 
         Object patched = LrDisplayPatcher.patch(base, baseId, skinId, textureOverride, iconOverride);

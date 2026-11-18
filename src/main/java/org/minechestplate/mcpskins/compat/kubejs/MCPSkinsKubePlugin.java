@@ -8,20 +8,19 @@ import net.neoforged.neoforge.common.NeoForge;
 import org.minechestplate.mcpskins.api.CollectionProgress;
 import org.minechestplate.mcpskins.api.MCPSkinsAPI;
 import org.minechestplate.mcpskins.api.SkinInfo;
+import org.minechestplate.mcpskins.api.SkinLevelInfo;
+import org.minechestplate.mcpskins.api.SkinProgressInfo;
 import org.minechestplate.mcpskins.api.UnlockResult;
 import org.minechestplate.mcpskins.api.event.CollectionCompletedEvent;
 import org.minechestplate.mcpskins.api.event.SkinEquipEvent;
 import org.minechestplate.mcpskins.api.event.SkinFuseEvent;
+import org.minechestplate.mcpskins.api.event.SkinLevelUpEvent;
 import org.minechestplate.mcpskins.api.event.SkinRevokedEvent;
 import org.minechestplate.mcpskins.api.event.SkinUnlockEvent;
 
 /**
- * Exposes {@link MCPSkinsAPI} to scripts and forwards the mod's NeoForge events into the
- * {@code MCPSkinsEvents} group.
- * <p>
- * KubeJS finds this class through {@code kubejs.plugins.txt} and loads it itself, so nothing in
- * this package is touched when KubeJS is not installed. It holds no game logic: every decision
- * still belongs to the core mod.
+ * Binds {@link MCPSkinsAPI} as {@code MCPSkins} and forwards the NeoForge events to {@code MCPSkinsEvents}.
+ * Loaded only by KubeJS through {@code kubejs.plugins.txt}; keep game logic out of this package.
  */
 public class MCPSkinsKubePlugin implements KubeJSPlugin {
 
@@ -34,6 +33,7 @@ public class MCPSkinsKubePlugin implements KubeJSPlugin {
         NeoForge.EVENT_BUS.addListener(MCPSkinsKubePlugin::onEquip);
         NeoForge.EVENT_BUS.addListener(MCPSkinsKubePlugin::onFusePre);
         NeoForge.EVENT_BUS.addListener(MCPSkinsKubePlugin::onFusePost);
+        NeoForge.EVENT_BUS.addListener(MCPSkinsKubePlugin::onLevelUp);
     }
 
     @Override
@@ -46,13 +46,14 @@ public class MCPSkinsKubePlugin implements KubeJSPlugin {
         registry.register(MCPSkinsKubeEvents.GROUP);
     }
 
-    /** So scripts can name the returned types, for example in {@code instanceof} style checks. */
     @Override
     public void registerClasses(ClassFilter filter) {
         filter.allow(MCPSkinsAPI.class);
         filter.allow(SkinInfo.class);
         filter.allow(CollectionProgress.class);
         filter.allow(UnlockResult.class);
+        filter.allow(SkinProgressInfo.class);
+        filter.allow(SkinLevelInfo.class);
     }
 
     private static void onUnlockPre(SkinUnlockEvent.Pre event) {
@@ -81,5 +82,9 @@ public class MCPSkinsKubePlugin implements KubeJSPlugin {
 
     private static void onFusePost(SkinFuseEvent.Post event) {
         MCPSkinsKubeEvents.FUSED.post(new SkinFusedKubeEvent(event));
+    }
+
+    private static void onLevelUp(SkinLevelUpEvent event) {
+        MCPSkinsKubeEvents.LEVEL_UP.post(new SkinLevelUpKubeEvent(event));
     }
 }

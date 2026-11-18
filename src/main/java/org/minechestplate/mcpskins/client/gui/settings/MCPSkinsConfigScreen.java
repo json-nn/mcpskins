@@ -13,13 +13,7 @@ import org.minechestplate.mcpskins.config.MCPSkinsServerConfig;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Client-side settings screen. Server-authoritative values are shown read-only at the
- * bottom for reference.
- * <p>
- * Rows live in a scrollable region between the title and a reserved bottom strip
- * (server info + "Done") - see {@link #scrollRows}. Rows can never scroll into that strip.
- */
+/** Client settings in a scroll region above a fixed strip with the read-only server values and Done. */
 public class MCPSkinsConfigScreen extends Screen {
 
     private static final int ROW_WIDTH = 300;
@@ -88,8 +82,6 @@ public class MCPSkinsConfigScreen extends Screen {
         updateRowPositions();
     }
 
-    // Row construction
-
     private int addToggleRow(int y, int centerX, String labelKey, ModConfigSpec.BooleanValue value, boolean fallback) {
         boolean current = MCPSkinsClientConfig.SPEC.isLoaded() ? value.get() : fallback;
         Button button = Button.builder(toggleLabel(labelKey, current), b -> {
@@ -141,17 +133,12 @@ public class MCPSkinsConfigScreen extends Screen {
         return y + ROW_HEIGHT;
     }
 
-    /**
-     * Registers a widget as scrollable content: added to {@code children()} so it still
-     * gets input, but not to {@code renderables} - it's rendered manually in {@link #render}
-     * inside a scissor box, at a Y that tracks {@link #scrollOffset}.
-     */
+    // Input only, not a renderable: render draws scroll rows itself inside a scissor.
     private void addScrollWidget(AbstractWidget widget, int baseY) {
         this.addWidget(widget);
         scrollRows.add(new ScrollRow(widget, baseY));
     }
 
-    /** Applies scroll offset to every row and hides/disables rows outside the viewport. */
     private void updateRowPositions() {
         for (ScrollRow row : scrollRows) {
             row.widget.setY(row.baseY - scrollOffset);
@@ -162,8 +149,6 @@ public class MCPSkinsConfigScreen extends Screen {
         }
     }
 
-    // Scrolling
-
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (maxScroll > 0 && mouseY >= viewportTop && mouseY <= viewportBottom) {
@@ -173,8 +158,6 @@ public class MCPSkinsConfigScreen extends Screen {
         }
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
-
-    // Rendering
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
@@ -215,12 +198,11 @@ public class MCPSkinsConfigScreen extends Screen {
         guiGraphics.fill(barX0, thumbY, barX1, thumbY + thumbHeight, 0x90FFFFFF);
     }
 
-    /** No-op - avoids the vanilla blurred background under our own opaque fill. */
+    // No-op: skips the vanilla blur under our opaque fill.
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
     }
 
-    /** A scrollable row widget plus the Y it sits at when {@code scrollOffset == 0}. */
     private static final class ScrollRow {
         final AbstractWidget widget;
         final int baseY;

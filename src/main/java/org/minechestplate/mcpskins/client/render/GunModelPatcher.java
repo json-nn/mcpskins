@@ -7,6 +7,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.neoforged.neoforge.client.extensions.common.IClientItemExtensions;
 import org.minechestplate.mcpskins.MCPSkins;
 import sun.misc.Unsafe;
 
@@ -21,33 +22,25 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Builds a full geometry replacement for a skin, main model plus TACZ's separate LOD.
- * <p>
- * Geometry is a parsed {@code BedrockGunModel} rather than a swappable field, so this copies the
- * base weapon's {@code GunDisplay} config with the model fields replaced and re-runs
- * {@code GunDisplayInstance}'s constructor. The new instance owns an uninitialized state machine,
- * so a held weapon needs {@link #primeAnimation} or it renders at its bind pose.
+ * Geometry, LOD and animation overrides: copies the gun's {@code GunDisplay} with those locations
+ * replaced and re-runs the {@code GunDisplayInstance} constructor. The new instance's state
+ * machine starts uninitialized ({@link #primeAnimation}). See docs/ai/tacz-integration.md.
  */
 public final class GunModelPatcher {
 
-    /**
-     * Keyed on the overrides as requested, before {@link #getOrCreate}'s filtering.
-     * {@code generation} only retries negative entries: a model TACZ has not registered yet
-     * leaves the overrides identical.
-     */
+    // Overrides as requested, before filtering; generation only retries null results.
     private record CacheEntry(ResourceLocation modelOverride,
                               ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride,
+                              ResourceLocation animationOverride,
                               int generation, GunDisplayInstance result) {
     }
 
     private static final Map<String, CacheEntry> CACHE = new ConcurrentHashMap<>();
 
-    // cacheKeys mid-build on this thread. TACZ's context refresh and primeAnimation's tryInit
-    // both re-enter getGunDisplay for a key still building; unguarded that races a second
-    // instance with its own state machine ("State machine is already initialized" on login).
+    // Keys mid-build on this thread. TACZ's context refresh and tryInit re-enter getGunDisplay;
+    // unguarded, a second instance gets built ("State machine is already initialized").
     private static final ThreadLocal<Set<String>> BUILDING = ThreadLocal.withInitial(HashSet::new);
 
-    // -1 = not checked, 0 = discovery failed, 1 = discovery succeeded. Checked once per session.
     private static volatile int supportState = -1;
     private static volatile boolean unsupportedWarningLogged = false;
 
@@ -56,8 +49,7 @@ public final class GunModelPatcher {
     private static volatile Field configField;        // GunDisplayInstance -> GunDisplay
     private static volatile Field modelLocationField; // GunDisplay -> ResourceLocation (model)
 
-    // Discovered independently of the above; a fork missing these still gets full
-    // main-model/texture/icon/HUD re-skinning.
+    // LOD and animation are discovered independently, so either can fail alone.
     private static volatile boolean lodSupported = false;
     private static volatile boolean lodUnsupportedWarningLogged = false;
     private static volatile Field lodConfigField; // GunDisplay -> GunLod (null on weapons with no "lod" block)
@@ -65,7 +57,10 @@ public final class GunModelPatcher {
     private static volatile Field lodModelField;   // GunLod -> ResourceLocation (model)
     private static volatile Field lodTextureField; // GunLod -> ResourceLocation (texture)
 
-    // A file existing in a resource pack doesn't mean TACZ's model registry picked it up.
+    private static volatile boolean animationSupported = false;
+    private static volatile boolean animationUnsupportedWarningLogged = false;
+    private static volatile Field animationLocationField; // GunDisplay -> ResourceLocation (animation)
+
     private static volatile Object clientAssetsManagerInstance;
     private static volatile Method getBedrockModelPOJOMethod;
     private static volatile boolean assetsManagerProbeDone = false;
@@ -74,22 +69,19 @@ public final class GunModelPatcher {
     private GunModelPatcher() {
     }
 
-    /**
-     * @param cacheKey stable key for the (weapon, skin) pair
-     * @param base     config template for the build. Not part of the hit check - TACZ's base
-     *                 instance identity isn't stable (see {@link PatchedGunDisplayCache})
-     * @param stack    only used to prime the new instance's animation state machine
-     * @return the patched instance, or {@code null} if nothing was applied (unsupported fork,
-     *         unrecognized model, or all overrides filtered out)
-     */
+    // base is a config template, kept out of the hit check (unstable identity). animationOverride must
+    // already be registered by SkinAnimationInjector.
     public static GunDisplayInstance getOrCreate(String cacheKey, GunDisplayInstance base, ItemStack stack, ResourceLocation modelOverride,
-                                                 ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride) {
+                                                 ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride,
+                                                 ResourceLocation animationOverride) {
         if (base == null) return null;
-        if (modelOverride == null && lodModelOverride == null && lodTextureOverride == null) return null;
+        if (modelOverride == null && lodModelOverride == null && lodTextureOverride == null
+                && animationOverride == null) return null;
         if (!ensureSupported(base)) return null;
 
         ResourceLocation requestedModel = modelOverride;
         ResourceLocation requestedLodModel = lodModelOverride;
+        ResourceLocation requestedAnimation = animationOverride;
 
         int generation = ClientSkinAssetCache.generation();
         CacheEntry existing = CACHE.get(cacheKey);
@@ -97,11 +89,11 @@ public final class GunModelPatcher {
                 && Objects.equals(existing.modelOverride(), requestedModel)
                 && Objects.equals(existing.lodModelOverride(), requestedLodModel)
                 && Objects.equals(existing.lodTextureOverride(), lodTextureOverride)
+                && Objects.equals(existing.animationOverride(), requestedAnimation)
                 && (existing.result() != null || existing.generation() == generation)) {
             return existing.result();
         }
 
-        // Reentrant call for a key already building further down this stack - see BUILDING.
         Set<String> building = BUILDING.get();
         if (building.contains(cacheKey)) {
             return existing != null ? existing.result() : null;
@@ -115,20 +107,28 @@ public final class GunModelPatcher {
             warnUnrecognized(cacheKey, "LOD model", lodModelOverride);
             lodModelOverride = null;
         }
-        if (modelOverride == null && lodModelOverride == null && lodTextureOverride == null) {
-            CACHE.put(cacheKey, new CacheEntry(requestedModel, requestedLodModel, lodTextureOverride, generation, null));
+        if (animationOverride != null && !animationSupported) {
+            animationOverride = null;
+        }
+        if (modelOverride == null && lodModelOverride == null && lodTextureOverride == null
+                && animationOverride == null) {
+            CACHE.put(cacheKey, new CacheEntry(requestedModel, requestedLodModel, lodTextureOverride,
+                    requestedAnimation, generation, null));
             return null;
         }
 
         building.add(cacheKey);
         try {
-            GunDisplayInstance created = createInstance(base, modelOverride, lodModelOverride, lodTextureOverride);
-            // Cache before priming: priming re-enters this method, and the entry has to be
-            // visible for that call to resolve as a hit.
-            CACHE.put(cacheKey, new CacheEntry(requestedModel, requestedLodModel, lodTextureOverride, generation, created));
+            GunDisplayInstance created = createInstance(base, modelOverride, lodModelOverride, lodTextureOverride,
+                    animationOverride);
+            // Cache before priming: priming re-enters this method and must hit.
+            CACHE.put(cacheKey, new CacheEntry(requestedModel, requestedLodModel, lodTextureOverride,
+                    requestedAnimation, generation, created));
             if (created != null) {
-                MCPSkins.LOGGER.info("[MCPSkins] Built geo-model skin for '{}' (model: {}, lodModel: {}, lodTexture: {}).",
-                        cacheKey, modelOverride, lodModelOverride, lodTextureOverride);
+                boolean animationOnly = modelOverride == null && lodModelOverride == null && lodTextureOverride == null;
+                MCPSkins.LOGGER.info("[MCPSkins] Built {} skin for '{}' (model: {}, lodModel: {}, lodTexture: {}, animation: {}).",
+                        animationOnly ? "animation" : "geo-model", cacheKey,
+                        modelOverride, lodModelOverride, lodTextureOverride, animationOverride);
                 primeAnimation(created, stack);
             }
             return created;
@@ -137,35 +137,30 @@ public final class GunModelPatcher {
         }
     }
 
-    // Second line of defence behind the cache-first ordering in getOrCreate.
+    // Backstop for the cache-before-prime ordering in getOrCreate.
     private static final ThreadLocal<Boolean> PRIMING = ThreadLocal.withInitial(() -> false);
     private static volatile boolean primeWarningLogged = false;
 
-    /**
-     * Runs TACZ's init/draw sequence to get a new instance's state machine out of its bind pose.
-     * No-op once initialized.
-     * <p>
-     * Held stack only: {@code tryInit} ends in {@code trigger("draw")}, and that animation carries
-     * sound keyframes, so priming the Armory's preview stacks fired a draw sound per skin browsed.
-     */
+    // Runs TACZ's init so the new state machine leaves bind pose. Held stack only: tryInit
+    // triggers "draw", whose sound keyframes would play for every Armory preview.
     private static void primeAnimation(GunDisplayInstance created, ItemStack stack) {
         if (stack == null || stack.isEmpty()) return;
         if (Boolean.TRUE.equals(PRIMING.get())) return;
 
-        GunItemRendererWrapper renderer = GunItemRendererWrapper.INSTANCE;
+        // Not GunItemRendererWrapper.INSTANCE: the official port has no singleton.
+        if (!(IClientItemExtensions.of(stack).getCustomRenderer() instanceof GunItemRendererWrapper renderer)) return;
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
-        if (renderer == null || player == null) return;
+        if (player == null) return;
 
-        // Identity, not equality - a preview stack can carry the same gun and skin. Missing a
-        // real held stack is harmless; FirstPersonAnimationFix re-inits it next frame.
+        // Identity: a preview stack can equal the held one. A miss is harmless; FirstPersonAnimationFix catches it.
         if (stack != player.getMainHandItem()) return;
 
         LuaAnimationStateMachine<?> stateMachine;
         try {
             stateMachine = created.getAnimationStateMachine();
         } catch (RuntimeException e) {
-            return; // already logged/handled by the eager load in createInstance
+            return; // createInstance's eager load already reported it
         }
         if (stateMachine == null || stateMachine.isInitialized()) return;
 
@@ -202,7 +197,7 @@ public final class GunModelPatcher {
         WARNED_UNRECOGNIZED.clear();
     }
 
-    /** Read off the config rather than guessed: gunpacks use their own namespaces and folders. */
+    // Read from the config, never guessed: gunpacks use their own namespaces and folders.
     public static ResourceLocation getBaseModelLocation(GunDisplayInstance base) {
         if (base == null) return null;
         if (!ensureSupported(base)) return null;
@@ -216,14 +211,25 @@ public final class GunModelPatcher {
         }
     }
 
-    /** Null when the fork has no LOD support, or this weapon has no {@code "lod"} block. */
     public static ResourceLocation getBaseLodModelLocation(GunDisplayInstance base) {
         return readLocation(baseLodConfig(base), lodModelField);
     }
 
-    /** See {@link #getBaseLodModelLocation}. */
     public static ResourceLocation getBaseLodTexture(GunDisplayInstance base) {
         return readLocation(baseLodConfig(base), lodTextureField);
+    }
+
+    public static boolean isAnimationOverrideSupported(GunDisplayInstance base) {
+        return base != null && ensureSupported(base) && animationSupported;
+    }
+
+    public static ResourceLocation getBaseAnimationLocation(GunDisplayInstance base) {
+        if (!isAnimationOverrideSupported(base)) return null;
+        try {
+            return readLocation(configField.get(base), animationLocationField);
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
     }
 
     private static Object baseLodConfig(GunDisplayInstance base) {
@@ -314,7 +320,7 @@ public final class GunModelPatcher {
         }
     }
 
-    /** {@code getModelLocation()} is the one member this class has to find by name. */
+    // Everything is found by type or value except getModelLocation().
     private static boolean discover(GunDisplayInstance sample) throws ReflectiveOperationException {
         Constructor<?> constructor = findDisplayConstructor();
         if (constructor == null) return false;
@@ -339,14 +345,42 @@ public final class GunModelPatcher {
         configField = foundConfigField;
         modelLocationField = foundModelField;
 
-        // Independent of everything above: no LOD support still leaves full main-model skinning.
         try {
             lodSupported = discoverLod(displayClass);
         } catch (ReflectiveOperationException | RuntimeException e) {
             lodSupported = false;
         }
         if (!lodSupported) warnLodUnsupportedOnce();
+
+        try {
+            animationSupported = discoverAnimation(displayClass);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            animationSupported = false;
+        }
+        if (!animationSupported) warnAnimationUnsupportedOnce();
         return true;
+    }
+
+    // Sentinel probe like discoverLod: several fields share the type and the sample may have no animation.
+    private static boolean discoverAnimation(Class<?> displayClass) throws ReflectiveOperationException {
+        Method getter = findMethod(displayClass, "getAnimationLocation");
+        if (getter == null || getter.getReturnType() != ResourceLocation.class) return false;
+        getter.setAccessible(true);
+
+        Object probe = getUnsafe().allocateInstance(displayClass);
+        ResourceLocation sentinel = ResourceLocation.fromNamespaceAndPath(MCPSkins.MOD_ID, "animation_discovery_probe");
+        for (Field field : displayClass.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers()) || field.getType() != ResourceLocation.class) continue;
+            field.setAccessible(true);
+            field.set(probe, sentinel);
+            boolean match = sentinel.equals(getter.invoke(probe));
+            field.set(probe, null);
+            if (match) {
+                animationLocationField = field;
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Constructor<?> findDisplayConstructor() {
@@ -369,7 +403,7 @@ public final class GunModelPatcher {
         return null;
     }
 
-    /** equals, not ==: the getter may hand back a rebuilt copy rather than the field itself. */
+    // equals, not ==: the getter may return a rebuilt copy.
     private static Field findFieldByValue(Class<?> owner, Class<?> type, Object instance, Object value)
             throws ReflectiveOperationException {
         for (Field field : owner.getDeclaredFields()) {
@@ -380,11 +414,8 @@ public final class GunModelPatcher {
         return null;
     }
 
-    /**
-     * By type rather than value, since the sample weapon may have no {@code "lod"} block. Its two
-     * {@code ResourceLocation} fields are told apart by writing a sentinel into each and seeing
-     * which getter reflects it back.
-     */
+    // By type, since the sample gun may have no "lod" block; the model and texture fields
+    // are told apart by writing a sentinel into each and seeing which getter returns it.
     private static boolean discoverLod(Class<?> displayClass) throws ReflectiveOperationException {
         Field foundLodField = null;
         Class<?> foundLodClass = null;
@@ -435,7 +466,8 @@ public final class GunModelPatcher {
     }
 
     private static GunDisplayInstance createInstance(GunDisplayInstance base, ResourceLocation modelOverride,
-                                                     ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride) {
+                                                     ResourceLocation lodModelOverride, ResourceLocation lodTextureOverride,
+                                                     ResourceLocation animationOverride) {
         try {
             Object baseConfig = configField.get(base);
             Object configCopy = shallowCopy(baseConfig, gunDisplayClass);
@@ -444,8 +476,11 @@ public final class GunModelPatcher {
             if (modelOverride != null) {
                 modelLocationField.set(configCopy, modelOverride);
             }
+            if (animationOverride != null) {
+                animationLocationField.set(configCopy, animationOverride);
+            }
             if (lodSupported && (lodModelOverride != null || lodTextureOverride != null)) {
-                // Nested object - copy rather than mutate, or it leaks into the base weapon.
+                // Copy, never mutate: the nested object is shared with the base gun.
                 Object baseLod = lodConfigField.get(configCopy);
                 if (baseLod != null) {
                     Object lodCopy = shallowCopy(baseLod, lodClass);
@@ -455,33 +490,61 @@ public final class GunModelPatcher {
                         lodConfigField.set(configCopy, lodCopy);
                     }
                 }
-                }
+            }
 
+            // Must be unique per skin: the official port caches meshes by this id.
             ResourceLocation identitySource = modelOverride != null ? modelOverride
-                    : lodModelOverride != null ? lodModelOverride : lodTextureOverride;
+                    : lodModelOverride != null ? lodModelOverride
+                    : lodTextureOverride != null ? lodTextureOverride : animationOverride;
             ResourceLocation identity = syntheticIdentity(identitySource);
             Object instance = displayInstanceConstructor.newInstance(identity, configCopy);
             GunDisplayInstance created = (GunDisplayInstance) instance;
 
-            // Force the lazy load now so the mixin never sees a half-loaded instance. TACZ
-            // reads that as the weapon changing and retriggers the equip pose - most visible
-            // on the refit screen, which doesn't tick weapon animation.
+            // Force the lazy load now: a half-loaded instance makes TACZ replay the equip pose.
             created.getAnimationStateMachine();
 
+            // Both ports record a lazy-load failure in a flag instead of throwing.
+            String failure = loadFailure(created);
+            if (failure != null) {
+                MCPSkins.LOGGER.warn(
+                        "[MCPSkins] Skin override (model: {}, lodModel: {}, lodTexture: {}, animation: {}) "
+                                + "failed TACZ's {} load - see TACZ's warning above. A geo-model's bone "
+                                + "names must match the animations it plays. Skin keeps the weapon's base "
+                                + "geometry and animations.",
+                        modelOverride, lodModelOverride, lodTextureOverride, animationOverride, failure);
+                return null;
+            }
             return created;
         } catch (Throwable t) {
             rethrowIfFatal(t);
-            // Usually checkAnimation() rejecting a skeleton mismatch - degrade, don't crash.
+            // Usually checkAnimation() rejecting a skeleton mismatch.
             MCPSkins.LOGGER.warn(
-                    "[MCPSkins] Failed to build geo-model (model: {}, lodModel: {}, lodTexture: {}) - "
-                            + "the skin's geo-model skeleton likely doesn't match the base weapon's "
+                    "[MCPSkins] Failed to build skin override (model: {}, lodModel: {}, lodTexture: {}, animation: {}) - "
+                            + "the skin's geo-model skeleton likely doesn't match the weapon's "
                             + "animations (bone names must match). Skin will keep the weapon's base geometry.",
-                    modelOverride, lodModelOverride, lodTextureOverride, t);
+                    modelOverride, lodModelOverride, lodTextureOverride, animationOverride, t);
             return null;
         }
     }
 
-    /** The build path catches {@link Throwable}; a dying JVM is not something to swallow. */
+    private static final String[] LOAD_FAILED_FLAGS = {"modelLoadFailed", "animationLoadFailed"};
+
+    // A missing flag counts as success.
+    private static String loadFailure(GunDisplayInstance instance) {
+        for (String name : LOAD_FAILED_FLAGS) {
+            try {
+                Field field = GunDisplayInstance.class.getDeclaredField(name);
+                field.setAccessible(true);
+                if (field.getBoolean(instance)) {
+                    return name.substring(0, name.indexOf("LoadFailed"));
+                }
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+            }
+        }
+        return null;
+    }
+
+    // The build path catches Throwable; never swallow a dying JVM.
     private static void rethrowIfFatal(Throwable t) {
         if (t instanceof VirtualMachineError || t instanceof LinkageError || t instanceof ThreadDeath) {
             throw (Error) t;
@@ -519,7 +582,6 @@ public final class GunModelPatcher {
         return local;
     }
 
-    /** A synthetic identity for the constructed instance, distinct from any real GunId. */
     private static ResourceLocation syntheticIdentity(ResourceLocation modelOverride) {
         String path = "geo_skin/" + modelOverride.getNamespace() + "/" + modelOverride.getPath();
         ResourceLocation built = ResourceLocation.tryBuild(MCPSkins.MOD_ID, path);
@@ -560,5 +622,14 @@ public final class GunModelPatcher {
                         + "reflectively locate the required GunLod internals for this TACZ "
                         + "version. Main-model, texture, icon, and HUD re-skinning are "
                         + "unaffected - only the distant/third-person low-poly model is affected.");
+    }
+
+    private static void warnAnimationUnsupportedOnce() {
+        if (animationUnsupportedWarningLogged) return;
+        animationUnsupportedWarningLogged = true;
+        MCPSkins.LOGGER.warn(
+                "[MCPSkins] Skin animation overrides disabled: could not reflectively locate "
+                        + "GunDisplay's animation field for this TACZ version. Every other skin "
+                        + "override is unaffected - only '.animation.json' skin files are ignored.");
     }
 }

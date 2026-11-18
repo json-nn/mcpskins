@@ -4,13 +4,9 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 
-/**
- * Geometry for {@link SkinArmoryScreen}: it decides where every zone sits for one frame, so
- * drawing and hit-testing read the same numbers instead of each computing their own.
- */
+/** Per-frame geometry for {@link SkinArmoryScreen}; drawing and hit-testing must both read it. */
 final class ArmoryLayout {
 
-    /** Column widths and type sizes per panel width. */
     enum Tier {
         WIDE(132, 128, 2.0f, 17, true),
         MID(112, 112, 1.5f, 17, false),
@@ -55,18 +51,20 @@ final class ArmoryLayout {
     static final int INFO_ROW_H = 9;
     static final int EQUIP_H = 17;
     static final int ICON = 8;
-    /** Past the stage frame, so a zoomed model cannot paint over its border. */
+    // Past the stage frame, so a zoomed model cannot paint over its border.
     static final int STAGE_INSET = 3;
     static final int CHIP_PAD = 8;
+    static final int SWATCH = 18;
+    static final int SWATCH_GAP = 2;
+    static final int MAX_SWATCH_ROWS = 3;
+    static final int PROGRESS_ROW_H = 10;
+    // Below this, the info block gives rows back before the tiles lose their last row.
+    static final int MIN_INFO_ROWS = 2;
     static final int SEARCH_MIN_W = 46;
 
-    /**
-     * Smallest share of the header the search field keeps. A fixed floor was not enough: the
-     * panel is capped in width, so at a high resolution a set of long translated captions ate
-     * everything down to that floor and left the field unusable.
-     */
+    // Share of the header the search field keeps; long translated captions can eat any fixed floor.
     static final float SEARCH_MIN_SHARE = 0.30f;
-    /** Enough for an ellipsis plus a glyph, so a squeezed chip still reads as a button. */
+    // Enough for an ellipsis plus a glyph, so a squeezed chip still reads as a button.
     static final int MIN_CHIP_W = 18;
 
     private ArmoryLayout() {
@@ -86,7 +84,6 @@ final class ArmoryLayout {
         }
     }
 
-    /** The chip captions as measured, so what is drawn is exactly what was laid out. */
     record HeaderLabels(String[] filters, String custom, String sort,
                         int filterW, int customW, int sortW) {
 
@@ -96,9 +93,31 @@ final class ArmoryLayout {
         }
     }
 
-    /** Every zone for this frame. */
     record Layout(Tier tier, HeaderLabels labels, Rect panel, Rect search, Rect[] filters, Rect custom, Rect sort,
-                  Rect rail, Rect railList, Rect stage, Rect tiles, Rect info, Rect equip) {
+                  Rect rail, Rect railList, Rect stage, Rect tiles, Rect variants, Rect progress, Rect info,
+                  Rect equip) {
+
+        int infoRows() {
+            return info.height() / INFO_ROW_H;
+        }
+
+        int progressRows() {
+            return progress.height() / PROGRESS_ROW_H;
+        }
+    }
+
+    record DetailContent(int infoRows, int swatches, int progressRows) {
+        static final DetailContent PLAIN = new DetailContent(MIN_INFO_ROWS, 0, 0);
+    }
+
+    static int swatchesPerRow(int detailWidth) {
+        return Math.max(1, (detailWidth + SWATCH_GAP) / (SWATCH + SWATCH_GAP));
+    }
+
+    static int variantStripHeight(int detailWidth, int swatches) {
+        if (swatches <= 0) return 0;
+        int rows = Math.min(MAX_SWATCH_ROWS, (swatches + swatchesPerRow(detailWidth) - 1) / swatchesPerRow(detailWidth));
+        return SECTION_H + rows * SWATCH + (rows - 1) * SWATCH_GAP;
     }
 
     static Tier tierFor(int screenWidth) {
@@ -106,8 +125,12 @@ final class ArmoryLayout {
         return panelW >= TIER_WIDE_MIN ? Tier.WIDE : panelW >= TIER_MID_MIN ? Tier.MID : Tier.COMPACT;
     }
 
-    /** Recomputed every frame; cheaper than caching and risking staleness after a resize. */
     static Layout compute(int screenWidth, int screenHeight, Font font, SortMode sortMode) {
+        return compute(screenWidth, screenHeight, font, sortMode, DetailContent.PLAIN);
+    }
+
+    // Recomputed every frame, not cached, so a resize can never leave it stale.
+    static Layout compute(int screenWidth, int screenHeight, Font font, SortMode sortMode, DetailContent content) {
         int panelW = Mth.clamp(screenWidth - PANEL_MARGIN * 2, PANEL_MIN_W, PANEL_MAX_W);
         int panelH = Mth.clamp(screenHeight - PANEL_MARGIN * 2, PANEL_MIN_H, PANEL_MAX_H);
         int px = (screenWidth - panelW) / 2;
@@ -119,8 +142,7 @@ final class ArmoryLayout {
         int innerX1 = panel.x1() - PAD;
         int headerY = panel.y0() + PAD;
 
-        // Laid out from the right edge inward, and measured rather than assumed: a translated
-        // caption can be far wider than the English one.
+        // Right to left, measured: a translated caption can be far wider than the English one.
         int headerW = innerX1 - innerX0;
         int searchMin = Math.max(SEARCH_MIN_W, Math.round(headerW * SEARCH_MIN_SHARE));
 
@@ -154,15 +176,41 @@ final class ArmoryLayout {
         Rect detail = new Rect(innerX1 - tier.detailWidth, contentY0, innerX1, contentY1);
         Rect stage = new Rect(rail.x1() + GAP, contentY0, detail.x0() - GAP, contentY1);
 
-        // Stacked bottom-up: Equip pinned to the floor, info above it, tiles take the rest.
+        // Bottom-up: Equip, info, progress, variants, tiles. To keep one tile row, shed info rows first, then progress lines.
         Rect equip = new Rect(detail.x0(), detail.y1() - EQUIP_H, detail.x1(), detail.y1());
-        int infoRows = 2;
+        int infoRows = Math.max(MIN_INFO_ROWS, content.infoRows());
+        int progressRows = content.progressRows();
+        int variantH = variantStripHeight(detail.width(), content.swatches());
+        int room = equip.y0() - (detail.y0() + SECTION_H + TILE_H);
+        while (stackHeight(infoRows, progressRows, variantH) > room) {
+            if (infoRows > MIN_INFO_ROWS) {
+                infoRows--;
+            } else if (progressRows > 1) {
+                progressRows--;
+            } else {
+                break;
+            }
+        }
+
         Rect info = new Rect(detail.x0(), equip.y0() - GAP_TIGHT - infoRows * INFO_ROW_H,
                 detail.x1(), equip.y0() - GAP_TIGHT);
+        int progressH = progressRows * PROGRESS_ROW_H;
+        Rect progress = new Rect(detail.x0(), info.y0() - (progressH > 0 ? GAP_TIGHT + progressH : 0),
+                detail.x1(), info.y0() - (progressH > 0 ? GAP_TIGHT : 0));
+        Rect variants = new Rect(detail.x0(), progress.y0() - (variantH > 0 ? GAP_TIGHT + variantH : 0),
+                detail.x1(), progress.y0() - (variantH > 0 ? GAP_TIGHT : 0));
         Rect tiles = new Rect(detail.x0(), detail.y0() + SECTION_H,
-                detail.x1(), Math.max(detail.y0() + SECTION_H + TILE_H, info.y0() - GAP_TIGHT));
+                detail.x1(), Math.max(detail.y0() + SECTION_H + TILE_H, variants.y0() - GAP_TIGHT));
 
-        return new Layout(tier, labels, panel, search, filters, custom, sort, rail, railList, stage, tiles, info, equip);
+        return new Layout(tier, labels, panel, search, filters, custom, sort, rail, railList, stage, tiles,
+                variants, progress, info, equip);
+    }
+
+    private static int stackHeight(int infoRows, int progressRows, int variantH) {
+        int height = GAP_TIGHT + infoRows * INFO_ROW_H + GAP_TIGHT;
+        if (progressRows > 0) height += progressRows * PROGRESS_ROW_H + GAP_TIGHT;
+        if (variantH > 0) height += variantH + GAP_TIGHT;
+        return height;
     }
 
     private static HeaderLabels headerLabels(Font font, Tier tier, SortMode sortMode) {
@@ -177,10 +225,7 @@ final class ArmoryLayout {
         return new HeaderLabels(filters, custom, sort, filterW, chipWidth(font, custom), chipWidth(font, sort));
     }
 
-    /**
-     * Last resort when even the short captions overrun the header: shrink every chip by the same
-     * factor and cut its caption to match, rather than let the row overlap the search field.
-     */
+    // Last resort when even short captions overrun: shrink every chip by one factor and truncate.
     private static HeaderLabels squeeze(Font font, HeaderLabels labels, int available) {
         int count = StatusFilter.values().length;
         int gaps = GAP_TIGHT * count + GAP;

@@ -2,10 +2,7 @@ package org.minechestplate.mcpskins.config;
 
 import net.neoforged.neoforge.common.ModConfigSpec;
 
-/**
- * Local client preferences - not synced, purely cosmetic/UI. Editable by hand in
- * {@code mcpskins-client.toml} or in-game via {@code MCPSkinsConfigScreen}.
- */
+/** Local, unsynced UI preferences: {@code mcpskins-client.toml}, or in game through {@code MCPSkinsConfigScreen}. */
 public class MCPSkinsClientConfig {
     public static final ModConfigSpec SPEC;
 
@@ -39,8 +36,7 @@ public class MCPSkinsClientConfig {
         REFIT_BUTTON_ANCHOR = builder
                 .comment("Screen corner the offsets below are measured from.")
                 .defineEnum("anchor", ScreenAnchor.TOP_RIGHT);
-        // Default offsetX 120 / offsetY 10 / size 18 (TOP_RIGHT) places the button directly
-        // left of TACZ's own attachment row, which starts at x = width-120, y = 10
+        // The defaults put the button just left of TACZ's attachment row (x = width - 120, y = 10).
         REFIT_BUTTON_OFFSET_X = builder
                 .comment("Horizontal offset in pixels from the anchor corner.")
                 .defineInRange("offsetX", 120, 0, 4000);
@@ -100,8 +96,7 @@ public class MCPSkinsClientConfig {
     private MCPSkinsClientConfig() {
     }
 
-    // Accessors go through SPEC.isLoaded() since ConfigValue#get() throws until the
-    // config file is actually loaded (e.g. the mod list "Config" screen can open earlier).
+    // ConfigValue#get() throws until the file is loaded, and the mod list Config screen can open earlier.
 
     public static boolean refitButtonEnabled() {
         return safe(REFIT_BUTTON_ENABLED, true);
@@ -167,7 +162,6 @@ public class MCPSkinsClientConfig {
         return safe(FUSION_ANIM_SOUND, true);
     }
 
-    /** No-op once loaded fails silently instead of crashing while the spec isn't ready. */
     public static <T> void trySet(ModConfigSpec.ConfigValue<T> value, T newValue) {
         if (SPEC.isLoaded()) {
             value.set(newValue);

@@ -23,20 +23,16 @@ import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 
 /**
- * Client half of the skin asset protocol. Requests an asset the first time
- * {@link SkinAssetResolver} needs it, reassembles the chunked response, and either registers
- * it as a texture or hands it to {@link TaczGeoModelInjector}.
- * <p>
- * Reads are safe from any thread. Writes (onChunk/onMissing/onThrottled) must run on the
- * client main thread - texture registration is a GL call.
+ * Client half of asset streaming: requests on first need, reassembles chunks, then registers a
+ * texture or hands off to {@link TaczGeoModelInjector} / {@link SkinAnimationInjector}.
+ * Reads are thread-safe; onChunk, onMissing and onThrottled are main thread only (GL calls).
  */
 public final class ClientSkinAssetCache {
 
     private enum State { PENDING, PRESENT, MISSING }
 
-    private enum Kind { TEXTURE, COMPANION, GEO_MODEL }
+    private enum Kind { TEXTURE, COMPANION, GEO_MODEL, ANIMATION }
 
-    /** @param attempts consecutive unanswered sends; only widens the backoff */
     private record PendingRequest(Kind kind, ResourceLocation target,
                                   long retryAtMillis, int attempts, long firstSentAtMillis) {
         PendingRequest resent(long now) {
@@ -46,7 +42,7 @@ public final class ClientSkinAssetCache {
             return new PendingRequest(kind, target, now + delay, nextAttempt, firstSentAtMillis);
         }
 
-        /** Server asked us to wait. Restarts the backoff - it answered, so it isn't the case backoff is for. */
+        // Server throttled us. Resets the backoff: it answered, so it is alive.
         PendingRequest deferredUntil(long deadline) {
             return new PendingRequest(kind, target, deadline, 0, firstSentAtMillis);
         }
@@ -66,10 +62,7 @@ public final class ClientSkinAssetCache {
     private static final Map<Long, Transfer> TRANSFERS = new ConcurrentHashMap<>();
     private static final Set<ResourceLocation> REGISTERED_TEXTURES = ConcurrentHashMap.newKeySet();
 
-    /**
-     * Registering before the blocking companions land would show an animated skin as an
-     * un-sliced strip, or let a shader cache a missing PBR map for the rest of the session.
-     */
+    // Holds a texture until its blocking companions settle (unsliced strip, cached PBR miss otherwise).
     private static final class Assembly {
         byte[] texture;
         final Map<String, byte[]> companions = new ConcurrentHashMap<>();
@@ -89,10 +82,7 @@ public final class ClientSkinAssetCache {
     private static final Map<String, Assembly> ASSEMBLIES = new ConcurrentHashMap<>();
     private static final Set<String> WARNED_DECODE_FAILURES = ConcurrentHashMap.newKeySet();
 
-    /**
-     * Bumped whenever a key leaves PENDING. The render caches store the generation they were
-     * built at and rebuild when it moves, so a late asset still gets picked up.
-     */
+    // Bumped whenever a key leaves PENDING; render caches rebuild when it moves, so late assets show up.
     private static final AtomicInteger GENERATION = new AtomicInteger();
 
     public static int generation() {
@@ -104,10 +94,7 @@ public final class ClientSkinAssetCache {
     private static final long INITIAL_RETRY_DELAY_MILLIS = 15_000;
     private static final long MAX_RETRY_DELAY_MILLIS = 60_000;
 
-    /**
-     * Retries are driven from the render path, so an expired deadline means "no frames lately",
-     * not "no answer": an attempt cap here would blank skins after an ordinary client stall.
-     */
+    // A time limit, not an attempt cap: retries ride on render calls, which stop during a client stall.
     private static final long GIVE_UP_AFTER_MILLIS = 5 * 60_000L;
 
     private ClientSkinAssetCache() {
@@ -129,12 +116,13 @@ public final class ClientSkinAssetCache {
         return present;
     }
 
-    /**
-     * @param physical          real asset path; the request and cache key
-     * @param collapsedIdentity key TACZ's model registry looks the parsed model up by
-     */
+    // physical is the fetched path and cache key; collapsedIdentity is the key TACZ's model registry uses.
     public static boolean checkOrRequestGeoModel(ResourceLocation physical, ResourceLocation collapsedIdentity) {
         return checkOrRequest(physical.toString(), Kind.GEO_MODEL, collapsedIdentity);
+    }
+
+    public static boolean checkOrRequestAnimation(ResourceLocation physical) {
+        return checkOrRequest(physical.toString(), Kind.ANIMATION, physical);
     }
 
     private static boolean checkOrRequest(String key, Kind kind, ResourceLocation target) {
@@ -142,8 +130,7 @@ public final class ClientSkinAssetCache {
         if (state == State.PRESENT) return true;
         if (state == State.MISSING) return false;
 
-        // Rendering outlives a disconnect by a frame or two, and sendToServer throws on a null
-        // connection. State is left untouched, so the next frame retries for free.
+        // Rendering outlives a disconnect by a frame or two; sendToServer throws without a connection.
         if (Minecraft.getInstance().getConnection() == null) return false;
 
         long now = System.currentTimeMillis();
@@ -172,14 +159,13 @@ public final class ClientSkinAssetCache {
                 MCPSkins.LOGGER.warn(
                         "[MCPSkins] Giving up on skin asset '{}' - no reply in {} ms across {} attempt(s).",
                         key, now - meta.firstSentAtMillis(), meta.attempts());
-                // A companion nobody answered must still release its texture, or the skin
-                // waits for something that is never coming.
+                // An unanswered companion must still release its texture.
                 settleCompanion(key, null);
             }
             return;
         }
 
-        // CAS, so concurrent render calls can't turn one overdue request into a burst.
+        // CAS, so concurrent render calls send one retry, not a burst.
         if (PENDING_META.replace(key, meta, meta.resent(now))) {
             PacketDistributor.sendToServer(new RequestSkinAssetPayload(key));
         }
@@ -199,15 +185,12 @@ public final class ClientSkinAssetCache {
         resolve(path, State.MISSING);
     }
 
-    /**
-     * Replies run through {@code enqueueWork}, so one queued at disconnect lands after
-     * {@link #clearAll()} and would write a terminal MISSING for a key nobody asked about.
-     */
+    // A reply queued at disconnect lands after clearAll() and must not write a terminal state.
     private static boolean isStaleArrival(String path) {
         return STATE.get(path) != State.PENDING;
     }
 
-    /** Every transition out of PENDING goes through here so the generation stays accurate. */
+    // Every transition out of PENDING goes through here, to keep the generation accurate.
     private static void resolve(String key, State state) {
         STATE.put(key, state);
         PENDING_META.remove(key);
@@ -217,7 +200,7 @@ public final class ClientSkinAssetCache {
     public static void onChunk(long transferId, String path, int index, int totalChunks, byte[] data) {
         if (isStaleArrival(path)) return;
 
-        // totalChunks is an unbounded VAR_INT that sizes the array below - bound it first.
+        // totalChunks is an unbounded VAR_INT that sizes the array below.
         if (totalChunks <= 0 || totalChunks > ServerSkinAssetStore.MAX_CHUNKS
                 || index < 0 || index >= totalChunks) {
             MCPSkins.LOGGER.warn("[MCPSkins] Dropping malformed skin asset chunk for '{}' ({}/{})", path, index, totalChunks);
@@ -229,8 +212,7 @@ public final class ClientSkinAssetCache {
         Transfer transfer = TRANSFERS.computeIfAbsent(transferId,
                 id -> new Transfer(path, totalChunks, new byte[totalChunks][], System.currentTimeMillis()));
 
-        // index was checked against this packet's totalChunks; the array was sized by the one
-        // that opened the transfer. Both must agree before writing.
+        // index was checked against this packet's totalChunks; the array was sized by the first packet's.
         if (transfer.totalChunks() != totalChunks || !transfer.path().equals(path)) {
             MCPSkins.LOGGER.warn(
                     "[MCPSkins] Dropping inconsistent skin asset chunk on transfer {}: got '{}' ({} chunks), expected '{}' ({} chunks)",
@@ -275,7 +257,7 @@ public final class ClientSkinAssetCache {
         return out;
     }
 
-    /** Bounded inflate - a hostile server can ship a few KiB that expands to gigabytes. */
+    // Bounded: a hostile server can send a few KiB that inflate to gigabytes.
     private static byte[] decompress(byte[] compressed) throws IOException {
         Inflater inflater = new Inflater();
         try (InflaterInputStream in = new InflaterInputStream(new ByteArrayInputStream(compressed), inflater)) {
@@ -297,7 +279,7 @@ public final class ClientSkinAssetCache {
     private static void finish(String path, byte[] rawBytes) {
         PendingRequest meta = PENDING_META.get(path);
         if (meta == null) {
-            // Shouldn't happen. Leave the state alone so the retry path can repair it.
+            // Leave the state alone so the retry path can repair it.
             MCPSkins.LOGGER.debug("[MCPSkins] Received asset '{}' with no pending request metadata; ignoring.", path);
             return;
         }
@@ -310,6 +292,8 @@ public final class ClientSkinAssetCache {
             case COMPANION -> settleCompanion(path, rawBytes);
             case GEO_MODEL -> resolve(path, TaczGeoModelInjector.inject(meta.target(), rawBytes)
                     ? State.PRESENT : State.MISSING);
+            case ANIMATION -> resolve(path, SkinAnimationInjector.accept(meta.target(), rawBytes)
+                    ? State.PRESENT : State.MISSING);
         }
     }
 
@@ -317,11 +301,6 @@ public final class ClientSkinAssetCache {
         return ASSEMBLIES.computeIfAbsent(texturePath, key -> new Assembly());
     }
 
-    /**
-     * Records a companion's outcome, present or absent, and lets its texture proceed.
-     *
-     * @return true if {@code path} was a companion at all
-     */
     private static boolean settleCompanion(String path, byte[] bytes) {
         TextureCompanion companion = TextureCompanion.matching(path);
         if (companion == null) return false;
@@ -341,7 +320,6 @@ public final class ClientSkinAssetCache {
         return true;
     }
 
-    /** Builds and registers the texture once nothing blocking is still outstanding. */
     private static void tryBuild(String texturePath, ResourceLocation location) {
         Assembly assembly = ASSEMBLIES.get(texturePath);
         if (assembly == null || !assembly.readyToBuild()) return;
@@ -349,10 +327,7 @@ public final class ClientSkinAssetCache {
         resolve(texturePath, register(location, assembly) ? State.PRESENT : State.MISSING);
     }
 
-    /**
-     * Through the streamed pack rather than straight to the GPU: a shader looks the PBR maps up
-     * by resource path when the texture first binds.
-     */
+    // Through the streamed pack, because a shader looks PBR maps up by resource path on first bind.
     private static boolean register(ResourceLocation location, Assembly assembly) {
         SkinTextureAnimator.forget(location);
         try {
@@ -365,8 +340,7 @@ public final class ClientSkinAssetCache {
                 }
             }
 
-            // A plain SimpleTexture on purpose: a shader mod attaches its PBR maps to this
-            // exact class, and a subclass measurably stopped it looking them up at all.
+            // Must stay a plain SimpleTexture: with a subclass, shaders stop loading PBR maps.
             SkinAnimationMeta animation = parseAnimation(location, assembly);
             Minecraft.getInstance().getTextureManager().register(location, new SimpleTexture(location));
             REGISTERED_TEXTURES.add(location);
@@ -410,7 +384,7 @@ public final class ClientSkinAssetCache {
     }
 
 
-    /** Client main thread only. Called on resource reload and on disconnect. */
+    // Main thread only.
     public static void clearAll() {
         STATE.clear();
         PENDING_META.clear();
@@ -420,8 +394,7 @@ public final class ClientSkinAssetCache {
         SkinTextureAnimator.clear();
         ClientSkinResourcePack.clear();
 
-        // release() unregisters and closes; leaving them behind stranded one dead texture
-        // per asset of every server visited.
+        // release() unregisters and closes; otherwise every server visited leaks its textures.
         TextureManager textureManager = Minecraft.getInstance().getTextureManager();
         for (ResourceLocation location : REGISTERED_TEXTURES) {
             textureManager.release(location);

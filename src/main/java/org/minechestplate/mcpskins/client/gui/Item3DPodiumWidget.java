@@ -21,20 +21,19 @@ import org.minechestplate.mcpskins.client.render.ClientAttachmentIndexPatcher;
 import org.minechestplate.mcpskins.skin.TACZSkinHelper;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 /**
- * Mouse-controlled 3D preview of an {@link ItemStack}: drag to rotate, scroll to zoom, with a
- * fallback to a flat icon if rendering throws. {@code FIXED} is the only
- * {@link ItemDisplayContext} that neither clips nor flattens long weapon models here.
+ * 3D item preview: drag to rotate, scroll to zoom, flat icon if rendering throws. {@code FIXED}
+ * is the only {@link ItemDisplayContext} that neither clips nor flattens long guns here.
  */
 public final class Item3DPodiumWidget {
 
     private static final ItemDisplayContext RENDER_CONTEXT = ItemDisplayContext.FIXED;
 
-    /** Bedrock units to blocks, the scale model bounds are measured in. */
+    // Bedrock units (model bounds) to blocks.
     private static final double CENTER_SCALE = 1 / 16.0;
 
-    /** How much of the panel a fitted model spans, leaving room for it to turn. */
     private static final double FIT_FILL = 0.8;
 
     private static final int FULL_BRIGHT_PACKED_LIGHT = 0xF000F0;
@@ -49,7 +48,6 @@ public final class Item3DPodiumWidget {
     private ItemStack stack = ItemStack.EMPTY;
     private int x, y, width, height;
 
-    /** False when the caller frames the podium itself. */
     private boolean chrome = true;
 
     private float yaw = 25f;
@@ -130,7 +128,7 @@ public final class Item3DPodiumWidget {
         long now = System.nanoTime();
         float deltaSeconds = lastFrameNanos < 0 ? 0f : (now - lastFrameNanos) / 1_000_000_000f;
         lastFrameNanos = now;
-        deltaSeconds = Mth.clamp(deltaSeconds, 0f, 0.25f); // caps a lag spike from snapping rotation forward
+        deltaSeconds = Mth.clamp(deltaSeconds, 0f, 0.25f); // a lag spike must not snap the rotation
 
         if (!dragging && !userHasInteracted) {
             yaw += AUTO_ROTATE_DEG_PER_SEC * deltaSeconds;
@@ -142,9 +140,7 @@ public final class Item3DPodiumWidget {
 
         guiGraphics.enableScissor(x, y, x + width, y + height);
         try {
-            // A long gun scaled up and turned edge-on reaches past the panel behind it and
-            // fails the depth test. glClear honours the scissor, so this clears the podium
-            // only, and the model keeps its full range for self-occlusion.
+            // An edge-on long gun reaches behind the panel; glClear honours the scissor, so only the podium's depth clears.
             RenderSystem.depthMask(true);
             GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
 
@@ -182,18 +178,17 @@ public final class Item3DPodiumWidget {
         try {
             pose.translate(centerX, centerY, 150.0);
             float scale = baseScale * zoom;
-            // Y is mirrored to keep the item right-side up under FIXED.
+            // Y mirrored to keep the item upright under FIXED.
             pose.scale(scale, -scale, scale);
             pose.mulPose(Axis.XP.rotationDegrees(pitch));
             pose.mulPose(Axis.YP.rotationDegrees(yaw));
             applyAttachmentCentering(pose);
 
             Lighting.setupFor3DItems();
-            RenderSystem.disableCull(); // the mirror above flips winding order
+            RenderSystem.disableCull(); // keep: the mirror flips winding, and culling breaks every model
 
-            // Or TACZ serves the LOD model here: its high-poly check wants a recent GUI render
-            // timestamp. GunSmithTableScreen does the same before its own preview.
-            RenderDistance.markGuiRenderTimestamp();
+            // MUKSC serves the LOD model without it; official treats any screen draw as high-poly.
+            openHighPolyHint();
             try {
                 mc.getItemRenderer().renderStatic(
                         stack,
@@ -205,7 +200,7 @@ public final class Item3DPodiumWidget {
                         mc.level,
                         0
                 );
-                guiGraphics.flush(); // avoids buffered draw calls surfacing over the next frame
+                guiGraphics.flush(); // or buffered draws surface in the next frame
             } finally {
                 closeHighPolyHint();
                 RenderSystem.enableCull();
@@ -216,15 +211,8 @@ public final class Item3DPodiumWidget {
         }
     }
 
-    /**
-     * Attachment geometry is authored around its mount point, so spinning it about the item
-     * origin swings a long one out of the panel. Applied after the rotations, the space the item
-     * renderer receives, so it holds at every angle.
-     * <p>
-     * The axis swap comes from TACZ's own {@code scale(-1, -1, 1)} plus a turn about Y under
-     * {@code FIXED}. These signs were measured, not derived: do not change them without
-     * re-measuring where a known offset lands.
-     */
+    // Attachments centre on their mount point, after the rotations. The axis swap and signs were
+    // measured; re-measure before changing them.
     private void applyAttachmentCentering(PoseStack pose) {
         BedrockModelBounds.Bounds bounds = attachmentBounds();
         if (bounds == null) return;
@@ -232,11 +220,7 @@ public final class Item3DPodiumWidget {
         pose.translate(center.z * CENTER_SCALE, -center.y * CENTER_SCALE, center.x * CENTER_SCALE);
     }
 
-    /**
-     * Measured for attachments, so an unusually large or small one still opens fully in frame.
-     * Weapons keep the fixed factor, since TACZ scales those per gun in a display config this
-     * has no view of. Zoom multiplies whatever comes back either way.
-     */
+    // Fitted to measured bounds for attachments; guns keep a fixed factor (TACZ scales them per gun).
     private float baseScale() {
         float fallback = Math.min(width, height) * 0.55f;
         BedrockModelBounds.Bounds bounds = attachmentBounds();
@@ -262,12 +246,29 @@ public final class Item3DPodiumWidget {
         return modelLocation == null ? null : BedrockModelBounds.of(modelLocation);
     }
 
-    /**
-     * Closes the 100ms window {@link RenderDistance#markGuiRenderTimestamp()} opens, which would
-     * otherwise force full geometry for every 16px gun icon too. Optional: if TACZ moves the
-     * field, the hint just stays open as it did before.
-     */
-    private static final Field GUI_RENDER_TIMESTAMP = resolveTimestampField();
+    // MUKSC's RenderDistance.markGuiRenderTimestamp(); null on the official port.
+    private static final Method MARK_GUI_RENDER = resolveMarkMethod();
+
+    // Closes the 100ms high-poly window MARK_GUI_RENDER opens, or every 16px gun icon renders full geometry.
+    private static final Field GUI_RENDER_TIMESTAMP = MARK_GUI_RENDER == null ? null : resolveTimestampField();
+
+    private static Method resolveMarkMethod() {
+        try {
+            return RenderDistance.class.getMethod("markGuiRenderTimestamp");
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static void openHighPolyHint() {
+        if (MARK_GUI_RENDER == null) {
+            return;
+        }
+        try {
+            MARK_GUI_RENDER.invoke(null);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+        }
+    }
 
     private static Field resolveTimestampField() {
         try {
@@ -301,7 +302,7 @@ public final class Item3DPodiumWidget {
         guiGraphics.fillGradient(x, y, x1, y1, 0xE0141414, 0xF2060606);
     }
 
-    /** Drawn last, depth test off, so it stays above long weapon models. */
+    // Last, depth test off, so it stays above long guns.
     private void renderFrame(GuiGraphics guiGraphics, int accentColor) {
         int x1 = x + width;
         int y1 = y + height;

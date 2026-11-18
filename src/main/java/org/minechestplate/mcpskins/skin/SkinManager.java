@@ -1,6 +1,7 @@
 package org.minechestplate.mcpskins.skin;
 
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import net.minecraft.resources.ResourceLocation;
@@ -10,7 +11,9 @@ import net.minecraft.util.profiling.ProfilerFiller;
 import org.minechestplate.mcpskins.MCPSkins;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.HashSet;
 import java.util.Locale;
@@ -18,22 +21,14 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Loads skin definitions from {@code data/<namespace>/skins/} and exposes them by base item id.
- * A file targets one item through whichever {@code base_*} key names its family;
- * see {@link SkinnableItemType}.
- * <p>
- * A skin's id doubles as its texture file name and its unlock key in
- * {@link SkinAttachment#UNLOCKED_SKINS}, a set shared across every item, so ids must be
- * globally unique rather than unique per weapon.
+ * Loads {@code data/<namespace>/skins/*.json}, one file per base item (picked by a {@code base_*}
+ * key, see {@link SkinnableItemType}). Skin ids are file names and owned-set keys, so they must be
+ * globally unique. Schema in docs/ai/data-and-ownership.md.
  */
 public class SkinManager extends SimpleJsonResourceReloadListener {
     public static final SkinManager INSTANCE = new SkinManager();
 
-    /**
-     * Everything the registry is looked up by, published as one immutable unit.
-     *
-     * @param baseGunById skin id, with and without a {@code default:} prefix, to owning base id
-     */
+    // baseGunById holds each skin id both with and without its default: prefix.
     private record Snapshot(Map<String, SkinDataModels.WeaponSkins> registry,
                             Map<String, SkinDataModels.SkinLookupResult> skinsById,
                             Map<String, String> baseGunById,
@@ -41,13 +36,10 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         static final Snapshot EMPTY = new Snapshot(Map.of(), Map.of(), Map.of(), Set.of());
     }
 
-    /** Replaced wholesale, never mutated: written on reload and network threads, read on render. */
+    // Replaced wholesale, never mutated: written on reload and network threads, read while rendering.
     private volatile Snapshot snapshot = Snapshot.EMPTY;
 
-    /**
-     * Memoized availability-filtered registry. {@link #getRegistry()} sits on the refit overlay's
-     * per-frame path, so it must not rebuild the map on every call.
-     */
+    // Memoized: getRegistry() is on the refit overlay's per-frame path.
     private record FilteredView(Snapshot source, int generation, boolean filtering,
                                 Map<String, SkinDataModels.WeaponSkins> registry) {
     }
@@ -58,9 +50,17 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         super(new GsonBuilder().create(), "skins");
     }
 
+    private record RawSkin(SkinDataModels.SkinEntry entry, List<String> variants, JsonArray levels) {
+    }
+
+    private record ParsedFile(ResourceLocation location, String baseGun, SkinDataModels.SkinTarget target,
+                              List<RawSkin> skins) {
+    }
+
     @Override
     protected void apply(Map<ResourceLocation, JsonElement> objectIn, ResourceManager resourceManager, ProfilerFiller profilerIn) {
-        Map<String, SkinDataModels.WeaponSkins> registry = new HashMap<>();
+        // Links resolve after every file is parsed, to tell "in another file" from "unknown".
+        Map<String, ParsedFile> files = new HashMap<>();
         objectIn.forEach((location, element) -> {
             try {
                 JsonObject json = element.getAsJsonObject();
@@ -83,11 +83,8 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                 String baseGun = json.get(type.jsonKey()).getAsString();
                 SkinDataModels.SkinTarget target = type.target();
 
-                List<SkinDataModels.SkinEntry> skins = new ArrayList<>();
-
-                skins.add(new SkinDataModels.SkinEntry(
-                        "default:" + baseGun, "Default", 0xFFFFFF,
-                        SkinDataModels.DEFAULT_RARITY_ID, "", "", false, 1, "", true));
+                String fileAuthor = json.has("author") ? json.get("author").getAsString() : "";
+                List<RawSkin> skins = new ArrayList<>();
 
                 json.getAsJsonArray("skins").forEach(skinElement -> {
                     JsonObject skinObj = skinElement.getAsJsonObject();
@@ -105,13 +102,35 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                     String lockedText = skinObj.has("locked_text")
                             ? skinObj.get("locked_text").getAsString() : "";
                     boolean unlocked = skinObj.has("unlocked") && skinObj.get("unlocked").getAsBoolean();
+                    String author = skinObj.has("author") ? skinObj.get("author").getAsString() : fileAuthor;
+                    String subtitle = skinObj.has("subtitle") ? skinObj.get("subtitle").getAsString() : "";
+                    boolean limited = skinObj.has("limited") && skinObj.get("limited").getAsBoolean();
 
-                    skins.add(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection,
-                            description, isNew, weight, lockedText, unlocked));
+                    List<String> variants = new ArrayList<>();
+                    if (skinObj.has("variants")) {
+                        if (skinObj.get("variants").isJsonArray()) {
+                            skinObj.getAsJsonArray("variants").forEach(v -> variants.add(v.getAsString()));
+                        } else {
+                            MCPSkins.LOGGER.warn("Skin '{}' in {}: \"variants\" is not an array; ignoring it.",
+                                    id, location);
+                        }
+                    }
+                    JsonArray levels = new JsonArray();
+                    if (skinObj.has("levels")) {
+                        if (skinObj.get("levels").isJsonArray()) {
+                            levels = skinObj.getAsJsonArray("levels");
+                        } else {
+                            MCPSkins.LOGGER.warn("Skin '{}' in {}: \"levels\" is not an array; ignoring it.",
+                                    id, location);
+                        }
+                    }
+
+                    skins.add(new RawSkin(new SkinDataModels.SkinEntry(id, name, color, rarityId, collection,
+                            description, isNew, weight, lockedText, unlocked, author, subtitle, limited,
+                            List.of(), "", List.of()), variants, levels));
                 });
 
-                SkinDataModels.WeaponSkins previous =
-                        registry.put(baseGun, new SkinDataModels.WeaponSkins(baseGun, skins, target));
+                ParsedFile previous = files.put(baseGun, new ParsedFile(location, baseGun, target, skins));
                 if (previous != null) {
                     MCPSkins.LOGGER.warn("Two skin configs both target '{}'; {} wins.", baseGun, location);
                 }
@@ -119,11 +138,162 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                 MCPSkins.LOGGER.error("Failed to parse skin config: {}", location, e);
             }
         });
+
+        Set<String> allIds = new HashSet<>();
+        for (ParsedFile file : files.values()) {
+            for (RawSkin raw : file.skins()) {
+                allIds.add(raw.entry().id());
+            }
+        }
+
+        Map<String, SkinDataModels.WeaponSkins> registry = new HashMap<>();
+        for (ParsedFile file : files.values()) {
+            registry.put(file.baseGun(),
+                    new SkinDataModels.WeaponSkins(file.baseGun(), resolveFile(file, allIds), file.target()));
+        }
         publish(registry);
         MCPSkins.LOGGER.info("Loaded {} skin config(s).", registry.size());
     }
 
-    /** Builds the lookup indices and publishes the new state as one atomic replacement. */
+    // Drops bad variant and level links (the skin stays), orders variants after their root, prepends the stock entry.
+    private static List<SkinDataModels.SkinEntry> resolveFile(ParsedFile file, Set<String> allIds) {
+        ResourceLocation location = file.location();
+        Map<String, RawSkin> byId = new LinkedHashMap<>();
+        for (RawSkin raw : file.skins()) {
+            byId.putIfAbsent(raw.entry().id(), raw);
+        }
+
+        Map<String, String> rootOf = new HashMap<>();
+        Map<String, List<String>> keptVariants = new HashMap<>();
+        Map<String, List<SkinDataModels.SkinLevel>> keptLevels = new HashMap<>();
+
+        for (RawSkin raw : file.skins()) {
+            String id = raw.entry().id();
+            if (keptVariants.containsKey(id)) continue;
+            List<String> kept = new ArrayList<>();
+            for (String variant : raw.variants()) {
+                if (SkinAttachment.isDefaultEntry(variant)) {
+                    MCPSkins.LOGGER.warn("Skin '{}' in {} lists the stock entry '{}' as a variant; ignoring it.",
+                            id, location, variant);
+                } else if (variant.equals(id)) {
+                    MCPSkins.LOGGER.warn("Skin '{}' in {} lists itself as a variant; ignoring it.", id, location);
+                } else if (!byId.containsKey(variant)) {
+                    if (allIds.contains(variant)) {
+                        MCPSkins.LOGGER.warn("Skin '{}' in {} lists variant '{}', which is defined in another "
+                                + "file; variants must share their root's file. Ignoring it.", id, location, variant);
+                    } else {
+                        MCPSkins.LOGGER.warn("Skin '{}' in {} lists unknown variant '{}'; ignoring it.",
+                                id, location, variant);
+                    }
+                } else if (!byId.get(variant).variants().isEmpty()) {
+                    MCPSkins.LOGGER.warn("Skin '{}' in {} lists variant '{}', which has variants of its own; "
+                            + "variants go one level deep. Ignoring it.", id, location, variant);
+                } else if (rootOf.containsKey(variant)) {
+                    MCPSkins.LOGGER.warn("Variant '{}' in {} is claimed by both '{}' and '{}'; keeping the first.",
+                            variant, location, rootOf.get(variant), id);
+                } else if (!kept.contains(variant)) {
+                    kept.add(variant);
+                    rootOf.put(variant, id);
+                }
+            }
+            keptVariants.put(id, kept);
+            keptLevels.put(id, parseLevels(id, location, raw.levels(), kept));
+        }
+
+        List<SkinDataModels.SkinEntry> out = new ArrayList<>();
+        out.add(new SkinDataModels.SkinEntry(
+                "default:" + file.baseGun(), "Default", 0xFFFFFF,
+                SkinDataModels.DEFAULT_RARITY_ID, "", "", false, 1, "", true));
+        Set<String> emitted = new HashSet<>();
+        for (RawSkin raw : file.skins()) {
+            String id = raw.entry().id();
+            if (rootOf.containsKey(id) || !emitted.add(id)) continue;
+            List<String> variants = keptVariants.getOrDefault(id, List.of());
+            out.add(withLinks(raw.entry(), variants, "", keptLevels.getOrDefault(id, List.of())));
+            for (String variant : variants) {
+                if (emitted.add(variant)) {
+                    out.add(withLinks(byId.get(variant).entry(), List.of(), id, List.of()));
+                }
+            }
+        }
+        return out;
+    }
+
+    private static List<SkinDataModels.SkinLevel> parseLevels(String rootId, ResourceLocation location,
+                                                              JsonArray levels, List<String> variants) {
+        List<SkinDataModels.SkinLevel> out = new ArrayList<>();
+        Set<String> used = new HashSet<>();
+        for (int i = 0; i < levels.size(); i++) {
+            JsonElement element = levels.get(i);
+            if (!element.isJsonObject()) {
+                MCPSkins.LOGGER.warn("Skin '{}' in {}: level entry {} is not an object; ignoring it.",
+                        rootId, location, i);
+                continue;
+            }
+            JsonObject level = element.getAsJsonObject();
+            String variant = level.has("variant") && level.get("variant").isJsonPrimitive()
+                    ? level.get("variant").getAsString() : null;
+            if (variant == null || !variants.contains(variant)) {
+                MCPSkins.LOGGER.warn("Skin '{}' in {}: level entry {} names '{}', which is not one of its "
+                        + "variants; ignoring that level.", rootId, location, i, variant);
+                continue;
+            }
+            if (!used.add(variant)) {
+                MCPSkins.LOGGER.warn("Skin '{}' in {}: variant '{}' is used by two levels; ignoring the second.",
+                        rootId, location, variant);
+                continue;
+            }
+            if (!level.has("requires") || !level.get("requires").isJsonObject()) {
+                MCPSkins.LOGGER.warn("Skin '{}' in {}: level '{}' has no \"requires\" object; ignoring that level.",
+                        rootId, location, variant);
+                used.remove(variant);
+                continue;
+            }
+
+            Map<SkinDataModels.LevelCounter, Integer> requires = new EnumMap<>(SkinDataModels.LevelCounter.class);
+            boolean valid = true;
+            for (Map.Entry<String, JsonElement> condition : level.getAsJsonObject("requires").entrySet()) {
+                SkinDataModels.LevelCounter counter = SkinDataModels.LevelCounter.byKey(condition.getKey());
+                if (counter == null) {
+                    MCPSkins.LOGGER.warn("Skin '{}' in {}: level '{}' requires unknown counter '{}'; "
+                            + "ignoring that level.", rootId, location, variant, condition.getKey());
+                    valid = false;
+                    break;
+                }
+                int value;
+                try {
+                    value = condition.getValue().getAsInt();
+                } catch (RuntimeException e) {
+                    value = -1;
+                }
+                if (value < 1) {
+                    MCPSkins.LOGGER.warn("Skin '{}' in {}: level '{}' needs a positive whole number for '{}'; "
+                            + "ignoring that level.", rootId, location, variant, condition.getKey());
+                    valid = false;
+                    break;
+                }
+                requires.put(counter, value);
+            }
+            if (!valid || requires.isEmpty()) {
+                if (valid) {
+                    MCPSkins.LOGGER.warn("Skin '{}' in {}: level '{}' requires nothing; ignoring that level.",
+                            rootId, location, variant);
+                }
+                used.remove(variant);
+                continue;
+            }
+            out.add(new SkinDataModels.SkinLevel(variant, requires));
+        }
+        return out;
+    }
+
+    private static SkinDataModels.SkinEntry withLinks(SkinDataModels.SkinEntry e, List<String> variants,
+                                                      String rootId, List<SkinDataModels.SkinLevel> levels) {
+        return new SkinDataModels.SkinEntry(e.id(), e.name(), e.labelColor(), e.rarityId(), e.collection(),
+                e.description(), e.isNew(), e.weight(), e.lockedText(), e.unlockedByDefault(),
+                e.author(), e.subtitle(), e.limited(), variants, rootId, levels);
+    }
+
     private void publish(Map<String, SkinDataModels.WeaponSkins> registry) {
         Map<String, SkinDataModels.SkinLookupResult> skinsById = new HashMap<>();
         Map<String, String> baseGunById = new HashMap<>();
@@ -136,7 +306,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                     defaultUnlocked.add(skin.id());
                 }
                 skinsById.putIfAbsent(skin.id(), new SkinDataModels.SkinLookupResult(weapon, skin));
-                // Both spellings, so getBaseGun still resolves a "default:" prefixed id.
+                // Both spellings, so getBaseGun resolves a "default:" id too.
                 baseGunById.putIfAbsent(skin.id(), weapon.baseGun());
                 baseGunById.putIfAbsent(TACZSkinHelper.bareSkinId(skin.id()), weapon.baseGun());
             }
@@ -146,7 +316,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
                 Set.copyOf(defaultUnlocked));
     }
 
-    /** Computed once per reload rather than scanned per player, then filtered on availability. */
+    // Computed per reload, filtered on availability per call.
     public Set<String> getDefaultUnlockedIds() {
         Set<String> ids = snapshot.defaultUnlockedIds();
         if (!SkinAvailability.isEnabled()) {
@@ -161,18 +331,12 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         return available;
     }
 
-    /** Whether a base id names an attachment. Unknown ids read as guns. */
     public SkinDataModels.SkinTarget targetOf(String baseId) {
         SkinDataModels.WeaponSkins weapon = snapshot.registry().get(TACZSkinHelper.bareSkinId(baseId));
         return weapon == null ? SkinDataModels.SkinTarget.GUN : weapon.target();
     }
 
-    /**
-     * Immutable - safe to hand around and iterate. A reload publishes a new map.
-     * <p>
-     * Items TACZ has not loaded are left out, so this is what gets synced to clients and what the
-     * UIs read. A client holds the already filtered copy it was sent.
-     */
+    // Immutable. Leaves out items TACZ has not loaded; this is what clients receive and the UIs read.
     public Map<String, SkinDataModels.WeaponSkins> getRegistry() {
         Snapshot current = snapshot;
         boolean filtering = SkinAvailability.isEnabled();
@@ -198,7 +362,6 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         return registry;
     }
 
-    /** The registry exactly as parsed, availability ignored. */
     public Map<String, SkinDataModels.WeaponSkins> getRawRegistry() {
         return snapshot.registry();
     }
@@ -207,7 +370,6 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         publish(new HashMap<>(networkData));
     }
 
-    /** Base item id for a skin or item id. An unknown id is echoed back verbatim. */
     public String getBaseGun(String skinOrGunId) {
         if (skinOrGunId == null) return "";
 
@@ -216,25 +378,29 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         return baseGun != null ? baseGun : skinOrGunId;
     }
 
-    /** @return the skin with the item it belongs to, or null if the id is unknown */
     public SkinDataModels.SkinLookupResult findSkin(String skinId) {
         SkinDataModels.SkinLookupResult lookup = findSkinRaw(skinId);
         return lookup != null && SkinAvailability.isAvailable(lookup.weapon()) ? lookup : null;
     }
 
-    /**
-     * Ignores availability. Only for callers that must tell an id no pack declares from one whose
-     * weapon simply is not installed; everything else wants {@link #findSkin}.
-     */
+    // Ignores availability: only to tell "unknown" from "not installed". Everything else wants findSkin.
     public SkinDataModels.SkinLookupResult findSkinRaw(String skinId) {
         if (skinId == null) return null;
         return snapshot.skinsById().get(skinId);
     }
 
-    /**
-     * Matched on the raw rarity id, so a skin pointing at an undefined tier stays in its own
-     * group rather than silently joining the fallback tier's fuse pool.
-     */
+    public SkinDataModels.SkinLookupResult findRoot(String skinId) {
+        SkinDataModels.SkinLookupResult lookup = findSkin(skinId);
+        if (lookup == null || !lookup.skin().isVariant()) return lookup;
+        return findSkin(lookup.skin().rootId());
+    }
+
+    public List<String> unconditionedVariantsOf(String skinId) {
+        SkinDataModels.SkinLookupResult lookup = findSkinRaw(skinId);
+        return lookup == null ? List.of() : lookup.skin().unconditionedVariants();
+    }
+
+    // Raw rarity id, so a skin with an undefined tier never joins the fallback tier's fuse pool.
     public List<SkinDataModels.SkinLookupResult> getSkinsByRarity(String rarityId) {
         List<SkinDataModels.SkinLookupResult> list = new ArrayList<>();
         for (SkinDataModels.SkinLookupResult result : snapshot.skinsById().values()) {
@@ -247,7 +413,6 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         return list;
     }
 
-    /** Every non-empty collection name in load order. Matched exactly, since they are free text. */
     public List<String> getCollections() {
         List<String> names = new ArrayList<>();
         for (SkinDataModels.WeaponSkins weapon : snapshot.registry().values()) {
@@ -261,7 +426,6 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         return names;
     }
 
-    /** Real skin ids in a collection, stock entries excluded. Empty when nothing matches. */
     public List<String> getSkinIdsInCollection(String collection) {
         List<String> ids = new ArrayList<>();
         if (collection == null || collection.isBlank()) return ids;
@@ -276,7 +440,7 @@ public class SkinManager extends SimpleJsonResourceReloadListener {
         return ids;
     }
 
-    /** For command tab-completion. Skins for items TACZ has not loaded are left out. */
+    // For command tab-completion. Skins for items TACZ has not loaded are left out.
     public List<String> getAllSkinIds() {
         List<String> list = new ArrayList<>();
         for (SkinDataModels.WeaponSkins weapon : snapshot.registry().values()) {

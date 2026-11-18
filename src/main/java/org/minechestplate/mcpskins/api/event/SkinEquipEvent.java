@@ -6,12 +6,10 @@ import net.neoforged.bus.api.Event;
 import net.neoforged.bus.api.ICancellableEvent;
 
 /**
- * Fired on {@code NeoForge.EVENT_BUS}, server side, when a player is about to change the skin on
- * the item they are holding. Fires after every ownership and validity check has passed and
- * before the stack is touched, so cancelling leaves the item exactly as it was.
+ * Server side, on {@code NeoForge.EVENT_BUS}: a held item's skin is about to change. Fires after
+ * every ownership and validity check, before the stack is touched; cancelling leaves it as it was.
  * <p>
- * There is deliberately no setter for the new skin: the ownership check runs before this event
- * and letting a listener swap the target afterwards would be a way around it.
+ * No setter for the new skin on purpose: ownership is checked before this fires, so a setter would bypass it.
  */
 public class SkinEquipEvent extends Event implements ICancellableEvent {
 
@@ -38,7 +36,6 @@ public class SkinEquipEvent extends Event implements ICancellableEvent {
         return hand;
     }
 
-    /** The TACZ gun or attachment id of the held item. */
     public String getBaseId() {
         return baseId;
     }
@@ -53,7 +50,6 @@ public class SkinEquipEvent extends Event implements ICancellableEvent {
         return newSkinId;
     }
 
-    /** Whether this is a removal rather than a change. */
     public boolean isUnequip() {
         return newSkinId == null;
     }

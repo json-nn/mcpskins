@@ -9,18 +9,15 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Caches patched {@link GunDisplayInstance} objects, so one is not rebuilt via Unsafe on every
- * {@code getGunDisplay} call.
- * <p>
- * Keyed by {@code (baseGunId, skinId)} plus the overrides. Not by {@code original}'s identity,
- * which TACZ changes within a frame, and not by the asset generation, which invalidated every
- * entry on any unrelated asset; a late asset shows up as a changed override anyway.
+ * Patched {@link GunDisplayInstance}s per (gun, skin), compared on the overrides and on the
+ * {@link GunModelPatcher} instance underneath. Never keyed on {@code original}'s identity (TACZ
+ * changes it within a frame) or on the asset generation. See docs/ai/tacz-integration.md.
  */
 public final class PatchedGunDisplayCache {
 
     private record CacheEntry(ResourceLocation texture, ResourceLocation icon,
                               ResourceLocation hud, ResourceLocation hudEmpty,
-                              GunDisplayInstance patched) {
+                              GunDisplayInstance rebuilt, GunDisplayInstance patched) {
     }
 
     private static final Map<String, CacheEntry> CACHE = new ConcurrentHashMap<>();
@@ -29,17 +26,15 @@ public final class PatchedGunDisplayCache {
     private PatchedGunDisplayCache() {
     }
 
-    /**
-     * @param cacheKey stable key for the (weapon, skin) pair, typically
-     *                 {@code baseGunId + "\u0000" + skinId}
-     */
-    public static GunDisplayInstance getOrCreate(String cacheKey, GunDisplayInstance original,
+    // rebuilt is original when it came from GunModelPatcher, null when it is TACZ's.
+    public static GunDisplayInstance getOrCreate(String cacheKey, GunDisplayInstance original, GunDisplayInstance rebuilt,
                                                  ResourceLocation texture, ResourceLocation icon,
                                                  ResourceLocation hud, ResourceLocation hudEmpty) {
         if (original == null) return null;
 
         CacheEntry existing = CACHE.get(cacheKey);
         if (existing != null
+                && existing.rebuilt() == rebuilt
                 && Objects.equals(existing.texture(), texture)
                 && Objects.equals(existing.icon(), icon)
                 && Objects.equals(existing.hud(), hud)
@@ -49,14 +44,14 @@ public final class PatchedGunDisplayCache {
 
         GunDisplayInstance patched = GunDisplayInstancePatcher.withOverrides(original, texture, icon, hud, hudEmpty);
         if (patched != null) {
-            CACHE.put(cacheKey, new CacheEntry(texture, icon, hud, hudEmpty, patched));
+            CACHE.put(cacheKey, new CacheEntry(texture, icon, hud, hudEmpty, rebuilt, patched));
             int count = RECREATE_COUNTS.merge(cacheKey, 1, Integer::sum);
             if (existing == null) {
                 MCPSkins.LOGGER.info(
                         "[MCPSkins] Built patched GunDisplayInstance for '{}' (build #{} this session).",
                         cacheKey, count);
             } else {
-                // An override changed - usually a late asset replacing a fallback.
+                // Usually a late asset replacing a fallback.
                 MCPSkins.LOGGER.info(
                         "[MCPSkins] Rebuilt patched GunDisplayInstance for '{}' (rebuild #{} this session) - "
                                 + "texture {} -> {}, icon {} -> {}, hud {} -> {}, hudEmpty {} -> {}.",
@@ -70,7 +65,6 @@ public final class PatchedGunDisplayCache {
         return patched;
     }
 
-    /** Clears the cache. Called on client resource reload. */
     public static void clear() {
         CACHE.clear();
         RECREATE_COUNTS.clear();

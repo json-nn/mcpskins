@@ -8,25 +8,18 @@ import java.util.List;
 import java.util.function.Predicate;
 
 /**
- * One family of skinnable item, described as data rather than hardcoded.
- * <p>
- * TACZ and its addons all share the same shape: a single registered "container" item whose real
- * identity lives in a {@code custom_data} tag. A TACZ rifle is {@code tacz:modern_kinetic_gun}
- * carrying {@code GunId}, and a LesRaisins knife is {@code lrtactical:melee} carrying
- * {@code MeleeWeaponId}. Describing that pair once is what lets the rest of the mod treat every
- * addon the same way.
+ * A skinnable family: one container item whose real id is a {@code custom_data} tag (e.g.
+ * {@code tacz:modern_kinetic_gun} with {@code GunId}). Adding an addon's family is one entry in {@link #ALL}.
  *
- * @param target    how the family is identified on the wire and in skin files
- * @param jsonKey   the key a skin pack uses to point at this family
+ * @param jsonKey   the {@code base_*} key a skin file uses
  * @param ownerMod  the mod that must be installed for this family to exist
  * @param itemId    the registered container item
  * @param idTag     the {@code custom_data} tag holding the real id
- * @param extraTags written alongside {@code idTag} when this mod builds a stack from scratch
+ * @param extraTags written alongside {@code idTag} when building a stack from scratch
  */
 public record SkinnableItemType(SkinDataModels.SkinTarget target, String jsonKey, String ownerMod,
                                 ResourceLocation itemId, String idTag, List<ExtraTag> extraTags) {
 
-    /** A fixed tag a freshly built stack needs in order to behave like a real one. */
     public record ExtraTag(String key, byte value) {
     }
 
@@ -44,12 +37,10 @@ public record SkinnableItemType(SkinDataModels.SkinTarget target, String jsonKey
             new SkinnableItemType(SkinDataModels.SkinTarget.CONSUMABLE, "base_consumable", "lrtactical",
                     ResourceLocation.parse("lrtactical:consumable"), "ConsumableId", List.of()));
 
-    /** Every family, whether or not the mod providing it is installed. */
     public static List<SkinnableItemType> all() {
         return ALL;
     }
 
-    /** Whether the mod that provides this family is present in this instance. */
     public boolean modPresent() {
         return ModList.get().isLoaded(ownerMod);
     }
@@ -58,17 +49,14 @@ public record SkinnableItemType(SkinDataModels.SkinTarget target, String jsonKey
         return find(type -> type.target() == target);
     }
 
-    /** The family a skin file's key names, or null when the key is not one of ours. */
     public static SkinnableItemType byJsonKey(String key) {
         return find(type -> type.jsonKey().equals(key));
     }
 
-    /** The family a container item belongs to, or null for anything else. */
     public static SkinnableItemType byItemId(ResourceLocation itemId) {
         return find(type -> type.itemId().equals(itemId));
     }
 
-    /** Applies this family's identity to a fresh tag. */
     public CompoundTag writeTo(CompoundTag tag, String baseId) {
         tag.putString(idTag, baseId);
         for (ExtraTag extra : extraTags) {

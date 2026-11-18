@@ -2,11 +2,7 @@ package org.minechestplate.mcpskins.client.gui;
 
 import net.minecraft.util.Mth;
 
-/**
- * Places a hover label under an element, keeping it on screen: centers when there's room,
- * otherwise hugs whichever edge has room, and flips above the element if it would run off
- * the bottom.
- */
+/** Places a hover label under an element, kept on screen; flips above it near the bottom edge. */
 public final class TooltipPlacement {
 
     public record Result(int x, int y) {

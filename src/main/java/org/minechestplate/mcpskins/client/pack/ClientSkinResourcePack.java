@@ -22,13 +22,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * A memory-backed client resource pack, so server-streamed assets can be found through the
- * normal {@code ResourceManager}. A shader locates a PBR map by appending {@code _n} or
- * {@code _s} to a texture's path and asking the resource manager, so bytes that exist only as a
- * GL texture are invisible to it.
- * <p>
- * Registered at startup so its namespace is known, but answered per call, so content arriving
- * long after the last reload is still served.
+ * Memory-backed client pack, so shaders can find streamed PBR maps through the resource manager
+ * (they look up {@code <texture>_n.png} by path). Registered at startup, answered per call.
  */
 public class ClientSkinResourcePack implements PackResources {
 
@@ -36,7 +31,7 @@ public class ClientSkinResourcePack implements PackResources {
 
     private static final Map<ResourceLocation, byte[]> CONTENT = new ConcurrentHashMap<>();
 
-    /** Counts lookups under our texture tree, to tell "asked and missed" from "never asked". */
+    // Lookups under our texture tree, to tell "asked and missed" from "never asked".
     private static final Map<String, Integer> LOOKUPS = new ConcurrentHashMap<>();
 
     private final PackLocationInfo location;
@@ -53,7 +48,6 @@ public class ClientSkinResourcePack implements PackResources {
         return CONTENT.containsKey(path);
     }
 
-    /** The stored bytes, for a caller that needs the file rather than a resource handle. */
     public static byte[] bytes(ResourceLocation path) {
         return CONTENT.get(path);
     }
@@ -90,13 +84,11 @@ public class ClientSkinResourcePack implements PackResources {
 
     @Override
     public Set<String> getNamespaces(PackType type) {
-        // Declared unconditionally: the namespace has to be known at reload for later lookups
-        // in it to reach this pack at all, and content arrives long after that.
+        // Unconditional: the namespace must be known at reload for later lookups to reach this pack.
         return type == PackType.CLIENT_RESOURCES ? Set.of(MCPSkins.MOD_ID) : Set.of();
     }
 
-    /** Must answer the pack section, or {@code Pack.readMetaAndCreate} yields null and the
-     *  repository trips over it on the first reload. */
+    // Must answer the pack section, or Pack.readMetaAndCreate yields null and the first reload trips over it.
     @Override
     @SuppressWarnings("unchecked")
     public <T> T getMetadataSection(MetadataSectionSerializer<T> deserializer) {
@@ -123,7 +115,7 @@ public class ClientSkinResourcePack implements PackResources {
     public void close() {
     }
 
-    /** Always on and at the top, so a player cannot switch off a server's skin assets. */
+    // Always on and at the top, so a player cannot switch off a server's skin assets.
     public static Pack createPack() {
         PackLocationInfo info = new PackLocationInfo(PACK_ID,
                 Component.literal("MCPSkins streamed assets"), PackSource.BUILT_IN, Optional.empty());

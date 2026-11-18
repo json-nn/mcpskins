@@ -2,10 +2,7 @@ package org.minechestplate.mcpskins.client.render;
 
 import net.neoforged.fml.ModList;
 
-/**
- * Whether shader PBR maps are worth fetching. Keyed on the mod being present rather than on a
- * pack being active, since a player can switch pack at any moment and a texture is fetched once.
- */
+/** Fetch PBR maps when a shader mod is present, not only when a pack is active: a texture is fetched once. */
 public final class PbrSupport {
 
     private static Boolean shaderModPresent;

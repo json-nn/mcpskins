@@ -15,15 +15,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
- * Bounding box of a Bedrock model's cubes, used to centre and size the Armory's 3D preview.
- * <p>
- * Helper bones are skipped: TACZ builds a scope's reticle as a plane a hundred units from the
- * optic, and counting it puts the centre nowhere near the model. Per-cube rotations are
- * ignored, which is close enough to frame a preview.
+ * Cube bounds of a Bedrock model, to frame the Armory preview. Skips helper bones (a scope's
+ * reticle plane sits about 100 units out) and ignores per-cube rotation.
  */
 public final class BedrockModelBounds {
 
-    /** Roots come from {@code BedrockAttachmentModel}; the numbered forms are its own suffixes. */
+    // Roots come from BedrockAttachmentModel; the numbered forms are its own suffixes.
     private static final Pattern HELPER_ROOT =
             Pattern.compile("^(division|laser_beam|scope_view)(_\\d+)?$");
 
@@ -33,7 +30,6 @@ public final class BedrockModelBounds {
             return min.add(max).scale(0.5);
         }
 
-        /** Farthest horizontal distance from {@code pivot} to the box, the radius a spin sweeps. */
         public double horizontalRadius(Vec3 pivot) {
             return Math.hypot(Math.max(max.x - pivot.x, pivot.x - min.x),
                     Math.max(max.z - pivot.z, pivot.z - min.z));
@@ -49,7 +45,7 @@ public final class BedrockModelBounds {
     private BedrockModelBounds() {
     }
 
-    /** Null until TACZ has registered the model, so callers retry rather than pin a bad value. */
+    // Null until TACZ has registered the model; not cached, so callers retry.
     public static Bounds of(ResourceLocation modelLocation) {
         if (modelLocation == null) return null;
         Bounds cached = CACHE.get(modelLocation);
@@ -102,10 +98,7 @@ public final class BedrockModelBounds {
         return new Bounds(new Vec3(min[0], min[1], min[2]), new Vec3(max[0], max[1], max[2]));
     }
 
-    /**
-     * Walks up the hierarchy, because the parts hung off a helper are named freely.
-     * {@code division_illuminated} is a child of {@code division} and just as far away.
-     */
+    // Walks up the parents: children of a helper are named freely (division_illuminated).
     private static boolean isHelper(String name, Map<String, String> parents) {
         for (int depth = 0; name != null && depth < 32; depth++) {
             if (HELPER_ROOT.matcher(name).matches()) return true;

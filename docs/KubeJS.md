@@ -53,9 +53,13 @@ it paints, so granting it would hand out something the player could never see. S
 | `MCPSkins.getSkinsByRarity(rarityId)` | list of `SkinInfo` |
 
 A `SkinInfo` has `id`, `name`, `baseId`, `attachment`, `target`, `rarityId`, `collection`,
-`description` and `isNew`. `baseId` is the item the skin belongs to, such as `tacz:m4a1` or
-`lrtactical:karambit`, and `target` names its family: `GUN`, `ATTACHMENT`, `MELEE`, `THROWABLE`
-or `CONSUMABLE`.
+`description`, `isNew`, `author`, `subtitle`, `limited`, `variants`, `rootId` and `levels`.
+`baseId` is the item the skin belongs to, such as `tacz:m4a1` or `lrtactical:karambit`, and
+`target` names its family: `GUN`, `ATTACHMENT`, `MELEE`, `THROWABLE` or `CONSUMABLE`.
+
+`variants` lists a root's variant ids and `rootId` is a variant's root, empty otherwise. Each
+`SkinLevelInfo` in `levels` has `level` (2 and up, the root is 1), `variantId`, `kills`,
+`headshots` and `playerKills`, where 0 means that counter is not required.
 
 > **`SkinInfo` and `CollectionProgress` are Java records**, so read them with a call, not a
 > property: `skin.id()`, not `skin.id`. Event fields are normal getters, so `event.player` and
@@ -71,6 +75,17 @@ or `CONSUMABLE`.
 
 `CollectionProgress` has `collection`, `owned`, `total` and `complete()`. A `total` of 0 means no
 loaded pack declares that collection. Names are free text and are matched exactly.
+
+### Leveling
+
+| Method | Returns |
+|---|---|
+| `MCPSkins.getProgress(player, skinId)` | `SkinProgressInfo`, or null for an unknown id |
+| `MCPSkins.getLevel(player, skinId)` | level, 0 for an unknown id |
+
+`SkinProgressInfo` has `rootId`, `kills`, `headshots`, `playerKills`, `level` and `maxLevel`. A
+variant reads its root's progress. A skin without levels reads as level 1 of 1. Read-only: progress
+only moves through kills.
 
 ### Item stacks
 
@@ -96,10 +111,11 @@ unknown id, and `applySkin` returns the stack unchanged if it is not a skinnable
 | `MCPSkinsEvents.equip` | yes | Before a held item's skin changes |
 | `MCPSkinsEvents.fuse` | yes | After the roll, before anything is spent |
 | `MCPSkinsEvents.fused` | no | After a fuse completed |
+| `MCPSkinsEvents.levelUp` | no | When a player reaches a new level on a skin |
 
 ### `unlock`
 
-`player`, `skinId`, `source`, `skin`. `source` is `COMMAND`, `UNLOCK_ITEM` or `API`. It only fires
+`player`, `skinId`, `source`, `skin`. `source` is `COMMAND`, `UNLOCK_ITEM`, `API` or `LEVEL_UP`. It only fires
 for single unlocks, and only once the skin is known to exist and to not already be owned. Bulk
 grants (`/mcpskins give all`, starter skins) never reach it.
 
@@ -108,7 +124,8 @@ the unlock item, and makes the command report failure.
 
 ### `unlocked`
 
-`player`, `skinId`, `source`, `skin`. `source` may also be `UNLOCK_ALL` or `DEFAULT_GRANT`.
+`player`, `skinId`, `source`, `skin`. `source` may also be `UNLOCK_ALL`, `DEFAULT_GRANT`, or
+`VARIANT` for a variant that came free with its root.
 
 ### `revoked`
 
@@ -142,6 +159,12 @@ blocked.
 
 `player`, `consumedSkinIds`, `resultSkinId`. `consumedSkinIds` has one entry per item spent, so
 the same id can appear more than once.
+
+### `levelUp`
+
+`player`, `rootId`, `variantId`, `level`, `variant`. Fires once per level reached, after the
+level's variant was unlocked. If an `unlock` handler cancels that `LEVEL_UP` unlock, the variant
+stays locked and the held gun is not switched, but the level still counts and this still fires.
 
 ## Examples
 
@@ -215,10 +238,10 @@ The KubeJS layer is a thin wrapper. Any mod can use the same contract without Ku
 - `org.minechestplate.mcpskins.api.MCPSkinsAPI` is the facade. Same methods as the binding above.
 - `org.minechestplate.mcpskins.api.event` holds the events, posted on `NeoForge.EVENT_BUS`:
   `SkinUnlockEvent.Pre` / `.Post`, `SkinRevokedEvent`, `CollectionCompletedEvent`,
-  `SkinEquipEvent`, and `SkinFuseEvent.Pre` / `.Post`. The cancellable ones implement
-  `ICancellableEvent`.
-- `SkinInfo`, `CollectionProgress`, `UnlockResult`, `UnlockSource` and `RevokeSource` are the
-  supporting types.
+  `SkinEquipEvent`, `SkinFuseEvent.Pre` / `.Post`, and `SkinLevelUpEvent`. The cancellable ones
+  implement `ICancellableEvent`.
+- `SkinInfo`, `SkinLevelInfo`, `SkinProgressInfo`, `CollectionProgress`, `UnlockResult`,
+  `UnlockSource` and `RevokeSource` are the supporting types.
 
 ```java
 NeoForge.EVENT_BUS.addListener((SkinUnlockEvent.Pre event) -> {

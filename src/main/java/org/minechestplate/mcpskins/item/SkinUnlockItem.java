@@ -27,11 +27,8 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Consumable item that unlocks one skin. The target is stored per-stack in a
- * {@code SkinToUnlock} custom data tag, since one item type serves every skin; prefer
- * {@code /mcpskins give item <player> <skinId>} over building that tag by hand.
- * <p>
- * Shift + right-click fuses instead, see {@link SkinFusion}.
+ * One item type for every skin: the target is the {@code SkinToUnlock} custom data string.
+ * Shift + right-click fuses instead ({@link SkinFusion}).
  */
 public class SkinUnlockItem extends Item {
 
@@ -39,7 +36,6 @@ public class SkinUnlockItem extends Item {
         super(properties);
     }
 
-    /** The one place the {@code SkinToUnlock} tag is written. */
     public static ItemStack create(String skinId) {
         ItemStack stack = new ItemStack(ModItems.SKIN_UNLOCK_ITEM.get());
         CompoundTag tag = new CompoundTag();
@@ -66,11 +62,9 @@ public class SkinUnlockItem extends Item {
             return;
         }
 
-        // Skin and weapon names are datapack content, so they go in as literals rather than keys.
         Component skinName = Component.literal(lookup.skin().name())
                 .withStyle(style -> style.withColor(lookup.skin().labelColor()));
 
-        // Built via createGunStack so the preview carries SKIN_ID and renders re-skinned.
         ItemStack previewGun = TACZSkinHelper.createGunStack(lookup.weapon().baseGun(), lookup.skin().id());
         MutableComponent line;
         if (!previewGun.isEmpty()) {
@@ -93,7 +87,6 @@ public class SkinUnlockItem extends Item {
         } else if (targets.isEmpty()) {
             hint = Component.translatable("tooltip.mcpskins.fuse_max_rarity_hint");
         } else {
-            // Heaviest target, so a weighted spread advertises its most likely outcome.
             SkinDataModels.Rarity likeliest = RarityManager.INSTANCE.get(
                     targets.stream().max(Comparator.comparingInt(SkinDataModels.FuseTarget::weight))
                             .orElse(targets.get(0)).rarityId());
@@ -116,8 +109,7 @@ public class SkinUnlockItem extends Item {
             return SkinFusion.attempt(this, level, player, hand, stack, skinId, !player.getAbilities().instabuild);
         }
 
-        // isOwnedOrDefault, not hasSkin: unlocking a weapon's stock entry would only put a
-        // "default:" id into the unlock set that nothing ever reads.
+        // isOwnedOrDefault, not hasSkin: a stock entry counts as owned, so no "default:" id is ever added.
         if (SkinAttachment.isOwnedOrDefault(player, skinId)) {
             if (!level.isClientSide()) {
                 player.sendSystemMessage(Component.translatable("message.mcpskins.already_have_skin").withStyle(ChatFormatting.RED));
@@ -125,8 +117,7 @@ public class SkinUnlockItem extends Item {
             return InteractionResultHolder.fail(stack);
         }
 
-        // Checked on both sides, like the ownership test above, so the client never predicts a
-        // consume the server is going to refuse. The registry is synced, so both agree.
+        // Both sides check, so the client never predicts a consume the server refuses.
         if (SkinManager.INSTANCE.findSkin(skinId) == null) {
             if (!level.isClientSide()) {
                 boolean exists = SkinManager.INSTANCE.findSkinRaw(skinId) != null;
@@ -138,11 +129,9 @@ public class SkinUnlockItem extends Item {
         }
 
         if (!level.isClientSide()) {
-            // Sync rides along inside unlockSkin, so nothing is sent twice.
             UnlockResult result = SkinAttachment.unlockSkin(player, skinId, UnlockSource.UNLOCK_ITEM);
             if (result != UnlockResult.UNLOCKED) {
-                // Only a listener cancelling gets this far, and only the server knows about it,
-                // so undo the client's optimistic consume.
+                // Cancelled by a listener, which only the server knows: undo the client's optimistic consume.
                 player.containerMenu.broadcastFullState();
                 return InteractionResultHolder.fail(stack);
             }

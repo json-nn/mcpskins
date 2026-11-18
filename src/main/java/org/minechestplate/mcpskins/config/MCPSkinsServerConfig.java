@@ -2,10 +2,7 @@ package org.minechestplate.mcpskins.config;
 
 import net.neoforged.neoforge.common.ModConfigSpec;
 
-/**
- * Server-authoritative settings. Registered as {@code ModConfig.Type.SERVER}, so values
- * live in {@code world/serverconfig/} and are pushed to every client on join.
- */
+/** Per-world ({@code serverconfig/}), synced to clients on join. */
 public class MCPSkinsServerConfig {
     public static final ModConfigSpec SPEC;
 
@@ -56,8 +53,7 @@ public class MCPSkinsServerConfig {
     private MCPSkinsServerConfig() {
     }
 
-    // Accessors go through SPEC.isLoaded() since ConfigValue#get() throws until a
-    // server/world is actually joined.
+    // ConfigValue#get() throws until a world is loaded or joined.
 
     public static boolean hideUnavailableSkins() {
         return safe(HIDE_UNAVAILABLE_SKINS, true);

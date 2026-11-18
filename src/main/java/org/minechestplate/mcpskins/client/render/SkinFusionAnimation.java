@@ -10,11 +10,8 @@ import org.joml.Vector3f;
 import java.util.List;
 
 /**
- * One running fusion effect: the consumed items lob out of the hands, orbit a point in front of
- * the player while the ring contracts, collapse to the centre, and the rolled skin pops out.
- * <p>
- * Pure state and geometry, driven entirely by one normalized progress value so the phases can't
- * drift apart at odd durations. The caller decides when to draw and how long it lasts.
+ * One fusion effect (launch, orbit, collapse, reveal). Pure state and geometry driven by a single
+ * normalized progress value, so phases cannot drift apart. {@link SkinFusionAnimator} draws it.
  */
 public final class SkinFusionAnimation {
 
@@ -31,8 +28,7 @@ public final class SkinFusionAnimation {
 
     private static final float TWO_PI = (float) (Math.PI * 2.0);
 
-    // Cumulative turns rather than a per-phase angular velocity. Velocity steps would show up
-    // as a visible hitch every time the phase changes.
+    // Cumulative turns, not per-phase velocity, which would hitch at every phase change.
     private static final float SPIN_BASE_TURNS = 0.75f;
     private static final float SPIN_ACCEL_TURNS = 2.25f;
 
@@ -43,7 +39,6 @@ public final class SkinFusionAnimation {
     private static final double RISE = 0.35;
     private static final double BOB = 0.12;
 
-    // Tips the ring off vertical so it reads as a disc in space instead of a flat cutout.
     private static final double TILT_BASE = 0.35;
     private static final double TILT_WOBBLE = 0.20;
 
@@ -54,8 +49,7 @@ public final class SkinFusionAnimation {
     private static final double HAND_SIDE = 0.42;
     private static final double LOB_HEIGHT = 0.55;
 
-    // A chest anchor sits inside the near plane in first person, so this aims off the eye along
-    // the full look vector, which also keeps the ring in frame when looking up or down.
+    // From the eye along the look vector: a chest anchor falls inside the first-person near plane.
     private static final double EYE_FORWARD = 1.60;
     private static final double EYE_DROP = 0.25;
     private static final double EYE_HAND_FORWARD = 0.40;
@@ -68,7 +62,6 @@ public final class SkinFusionAnimation {
     private static final float REVEAL_SHRINK_TO = 0.70f;
     private static final double REVEAL_LIFT = 0.15;
 
-    /** Anchor point of the ring plus the two horizontal axes it is built on. */
     public record Basis(Vec3 anchor, Vec3 right, Vec3 forward) {
     }
 
@@ -109,7 +102,6 @@ public final class SkinFusionAnimation {
         return ringStacks.size();
     }
 
-    /** Each orbiting item keeps the tint of the skin it was fused from. */
     public ItemStack ringStack(int index) {
         return ringStacks.get(index);
     }
@@ -130,7 +122,7 @@ public final class SkinFusionAnimation {
         return startGameTime;
     }
 
-    /** Absolute, so a lag spike jumps progress forward instead of letting an accumulator drift. */
+    // Absolute time, so a lag spike jumps forward instead of an accumulator drifting.
     public float progress(long gameTime, float partialTick) {
         double elapsed = (gameTime - startGameTime) + partialTick;
         if (elapsed < 0.0) {
@@ -143,7 +135,7 @@ public final class SkinFusionAnimation {
         return progress(gameTime, partialTick) >= 1.0f;
     }
 
-    /** Returns the phase if it changed since the last call, otherwise null. Drives one-shot cues. */
+    // The phase if it changed since the last call, else null. Drives one-shot cues.
     public Phase advanceTickedPhase(float t) {
         Phase phase = phaseOf(t);
         if (phase == lastTickedPhase) {
@@ -195,7 +187,7 @@ public final class SkinFusionAnimation {
         return new Basis(anchor, right, flat);
     }
 
-    /** Approximated: the real hand render position isn't reachable from the level render pass. */
+    // Approximate: the real hand position is not reachable from the level render pass.
     public Vec3 handOrigin(Player player, float partialTick, boolean firstPerson, Basis basis, int index) {
         double side = ((index & 1) == 0) == mainHand ? HAND_SIDE : -HAND_SIDE;
 
@@ -223,8 +215,7 @@ public final class SkinFusionAnimation {
             return slot;
         }
 
-        // Toward the live slot, spin included, so the item slides into a moving orbit rather
-        // than snapping when launch ends.
+        // Toward the live slot, spin included, so launch ends without a snap.
         return handOrigin.lerp(slot, easeOutCubic(p))
                 .add(0.0, LOB_HEIGHT * Math.sin(Math.PI * p), 0.0);
     }
@@ -311,7 +302,6 @@ public final class SkinFusionAnimation {
         return 1f - q * q * q * q * q;
     }
 
-    /** Overshoots past the target before settling, which gives the reveal its pop. */
     private static float easeOutBack(float p) {
         final float c1 = 1.70158f;
         final float c3 = c1 + 1f;
